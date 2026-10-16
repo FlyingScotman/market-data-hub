@@ -28,19 +28,23 @@
 
 - 0e3c7b1 OTC Monitor swap loader (swaps_otc_monitor, 15 min; ruonia_ois, key_rate_swap, cny_ruonia_xccy,
   NEW cny_rusfar_ois; CNY bounds -50..300). Live run 410 on seed: 4 snapshots stored.
-- Agent (same one) building andromeda CNY importer for owner's export (Downloads/andromeda_cny_swaps.zip,
-  extracted scratchpad/andromeda_in): cny_rusfar_ois 2023-12-12→, cny_ruonia_xccy 2023-07-10→, mid-only,
-  synthetic EOD fetched_at; 2026-10-16 row intraday. Then run on seed.
-- Owner chose AlgoPack option (b): drop obstats, keep tradestats+FUTOI rolling 90 days. Agent building
-  migration 0423 + retention + rolling-window quality; reload stopped (job_run marked failed). Then on seed:
-  apply 0423, delete >90d, reload last 90 days.
+- f7b1be2 AlgoPack option (b) (0423): obstats dropped; tradestats+FUTOI rolling 90 days (retention, gap scan,
+  backfill clamp). 3958372: backfill captures of pre-window dates purged by till=. Seed: 0423 applied,
+  >90d deleted, reloaded 2026-07-19→10-16 (run 414; 114 MB + 165 MB).
+- d83e380 andromeda CNY importer (`mdhub legacy andromeda-cny`, 0424 curve row history). Seed run 411:
+  cny_rusfar_ois 646 days (2023-12-12→), cny_ruonia_xccy 746 days (2023-07-10→); export time 18:05:15 MSK.
+- Final quality run 415 + backfill_worker 416: 0 open gaps. docs/SEED_REPORT.md regenerated (report now
+  honours rolling windows).
+- Snapshot layer (owner-started session hub-snapshot-layer, own worktree, migrations 0500+): contract v1,
+  as-known-at static readers, ops.published_snapshot, /v1/snapshots. See docs/SYSTEM_CONTEXT.md.
 
 ## Seed database (data/pgseed, pgserver PG 16.2, db `mdhub`; gitignored)
-- Migrations applied from frozen copies in data/pgseed_migs (0001…0422).
+- Migrations applied from frozen copies in data/pgseed_migs (0001…0424).
 - Loaded: bond static (16,055 bonds), CBR full history (key rate 2013+, RUONIA 2010+, FX 2020+, liquidity,
   meetings, calendars), ECB 2015+, legacy MD/BC verbatim (verified) + mapped (curves, intraday, zcyc,
   fixings, liquidity, 3 curated formulas).
-- Backfilled: bonds_eod 2024→, futures/fx EOD + fx_indicative 2024→, zcyc 2022→, indices 2022→; AlgoPack re-running.
+- Backfilled: bonds_eod 2024→, futures/fx EOD + fx_indicative 2024→, zcyc 2022→, indices 2022→; AlgoPack last 90 days.
+- Swaps: andromeda history (RUONIA OIS, KRS, CNY OIS/xccy), otc_monitor 2026-09→ + live, ratescalcs live.
 
 ## Remaining steps
 1. After backfills finish: re-run `mdhub calendar seed` (observed days from full history).

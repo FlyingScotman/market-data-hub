@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 
 from mdhub import cli
 from mdhub.cli_ext.report import EffectiveCalendar, build_seed_report, dataset_coverage
+from mdhub.config import Settings
 from mdhub.datasets import DatasetSpec, register_dataset, unregister_dataset
 
 Conn = psycopg.Connection[DictRow]
@@ -195,6 +196,28 @@ def test_dataset_coverage_history_start_before_first_row(seeded: Conn) -> None:
     cov = dataset_coverage(seeded, spec, today=TODAY, calendar=EffectiveCalendar.load(seeded))
     assert cov.total is not None
     assert cov.total.missing == [date(2026, 1, 1), date(2026, 1, 2), date(2026, 1, 9)]
+    seeded.rollback()
+
+
+def test_dataset_coverage_rolling_window(seeded: Conn) -> None:
+    """Days before a rolling window (deleted by retention) are not reported missing."""
+    spec = DatasetSpec(
+        name="zz_report_window",
+        table="md.report_test",
+        date_column="trade_date",
+        calendar="MOEX_STOCK",
+        frequency="business_daily",
+        max_lag_days=0,
+        description="rolling window",
+        history_start=date(2026, 1, 1),
+        rolling_window_setting="algopack_retention_days",
+    )
+    settings = Settings(algopack_retention_days=4)  # type: ignore[call-arg]  # from 01-09
+    cov = dataset_coverage(
+        seeded, spec, today=TODAY, calendar=EffectiveCalendar.load(seeded), settings=settings
+    )
+    assert cov.total is not None
+    assert cov.total.missing == [date(2026, 1, 9)]
     seeded.rollback()
 
 

@@ -189,9 +189,18 @@ def _summarize(
 
 
 def dataset_coverage(
-    conn: Conn, spec: DatasetSpec, *, today: date, calendar: CalendarPredicate
+    conn: Conn,
+    spec: DatasetSpec,
+    *,
+    today: date,
+    calendar: CalendarPredicate,
+    settings: Settings | None = None,
 ) -> DatasetCoverage:
-    """Coverage of ``spec`` (read-only; raises on SQL errors - callers use a savepoint)."""
+    """Coverage of ``spec`` (read-only; raises on SQL errors - callers use a savepoint).
+
+    A rolling-window dataset (``DatasetSpec.rolling_window_setting``, e.g. AlgoPack) is only
+    expected from the window start on: older days are deleted by retention, not missing."""
+    window_start = spec.window_start(today, settings or Settings())
     cov = DatasetCoverage(spec=spec)
     cov.expected_latest = exp = expected_latest(spec, today, calendar)
     try:
@@ -209,6 +218,8 @@ def dataset_coverage(
     counts = count_rows(conn, info, lo, hi) if first is not None else {}
     total_by_day = {d: n for (_s, d), n in counts.items()}
     total_start = spec.history_start or first
+    if window_start is not None:
+        total_start = max(total_start or window_start, window_start)
     cov.total = _summarize(
         spec,
         None,
