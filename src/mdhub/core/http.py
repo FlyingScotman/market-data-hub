@@ -244,6 +244,7 @@ def default_rate_limits(settings: Settings) -> dict[str, float]:
         "www.cbr.ru": 1.0,
         "cbr.ru": 1.0,
         "ratescalcs.ru": 1.0,
+        "otc-monitor.ru": 1.0,
         "ws2.cbonds.info": 2.0,
         "ws.cbonds.info": 2.0,
         "www.ecb.europa.eu": 2.0,

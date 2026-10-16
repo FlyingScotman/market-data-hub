@@ -337,7 +337,9 @@ def curve(
 ) -> Response:
     """One snapshot per source: the latest whose ``fetched_at`` <= ``as_of`` (snapshots are
     stored only when content changed, so it is the state the source showed at ``as_of``).
-    Quotes in % p.a. (``bid_pct``/``ask_pct``/``mid_pct``)."""
+    Quotes in % p.a. (``bid_pct``/``ask_pct``/``mid_pct``; mid-only quotes have NULL bid/ask).
+    Sources are never merged; a consumer that needs one picks it with ``source=`` (precedence
+    for ``ruonia_ois``/``key_rate_swap``/``cny_ruonia_xccy``: DESIGN §8 "Curve sources")."""
     at = require_aware(as_of, "as_of") or utc_now()
     where = Where().add(
         "dataset = %(dataset)s AND fetched_at <= %(at)s", dataset=dataset.lower(), at=at

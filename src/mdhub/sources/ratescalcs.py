@@ -84,11 +84,15 @@ class CurveQuote:
     tenor_days: int | None = None
     pillar_date: date | None = None
     extra: Mapping[str, str] | None = None
+    mid: Decimal | None = None
+    """Quoted mid of a mid-only quote (no bid/ask, e.g. OTC Monitor off-hours); ignored when
+    both bid and ask are present."""
 
     @property
     def mid_pct(self) -> Decimal | None:
+        """(bid+ask)/2 when both are present, else the quoted :attr:`mid` (``None`` if absent)."""
         if self.bid_pct is None or self.ask_pct is None:
-            return None
+            return self.mid
         return (self.bid_pct + self.ask_pct) / 2
 
 

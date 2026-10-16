@@ -25,7 +25,7 @@ Environment variables (DESIGN §7 plus a few operational knobs):
 ``MOEX_PASSPORT_LOGIN`` / ``_PASSWORD`` MOEX Passport credentials
 ``RATESCALC_USERNAME`` / ``_PASSWORD``  Ratescalcs basic auth
 ``CBONDS_LOGIN`` / ``CBONDS_PASSWORD``  Cbonds JSON API
-``OTC_MONITOR_TOKEN``               OTC Monitor token (future)
+``OTC_MONITOR_TOKEN``               OTC Monitor bearer token (``swaps_otc_monitor``)
 =================================== ====================================================
 """
 

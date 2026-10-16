@@ -28,8 +28,8 @@ the job's lock (a backfill of the same job, or a previous run, may hold it); bac
 to a waiting fire. A fire that still cannot run is recorded in ``ops.job_run`` as ``skipped``
 with an error starting ``lock_busy:``; job health reports it as ``missed`` and the ``quality``
 job re-runs it (rules with ``catch_up``). Polling rules (``_poll``: intraday snapshots,
-AlgoPack, Ratescalcs, the backfill worker) neither wait nor catch up - the next fire supersedes
-a missed one.
+AlgoPack, Ratescalcs, OTC Monitor, the backfill worker) neither wait nor catch up - the next
+fire supersedes a missed one.
 
 The scheduler skips rules whose job is not registered (with a warning), so loaders can be
 added incrementally.
@@ -92,6 +92,7 @@ KNOWN_JOBS: Final = (
     "cbr_meetings",
     "ecb_fx",
     "swaps_ratescalcs",
+    "swaps_otc_monitor",
     "quality",
     "backfill_worker",
     "maintenance",
@@ -227,6 +228,13 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
     "swaps_ratescalcs": (
         _poll("0,30 9-22 * * *", note="every 30 min 09:00-23:00; skip identical content"),
         _poll("0 23 * * *"),
+    ),
+    "swaps_otc_monitor": (
+        _poll(
+            "*/15 9-19 * * *",
+            note="every 15 min 09:00-20:00 (legacy collector 10:00-19:45); skip identical content",
+        ),
+        _poll("0 20 * * *"),
     ),
     "quality": (
         Rule(cron="30 8 * * *", catch_up=False),

@@ -59,7 +59,7 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
 | CBR `cbr.ru` | — | key rate, RUONIA, term RUONIA, official FX (all ccy), liquidity, meeting calendar | daily |
 | ECB eurofxref | — | G7 crosses (EUR base) daily + history since 1999 | daily ~16:00 CET |
 | Cbonds JSON API | `CBONDS_LOGIN/PASSWORD` | static enrichment (day count, floater conventions, ratings, offers). **Currently HTTP 401** (likely IP allow-list) → optional, auto-disabled on 401 | — |
-| OTC Monitor | `OTC_MONITOR_TOKEN` (not provided) | legacy history imported; live loader not ported (prod parser v3–5 not in git) | — |
+| OTC Monitor `otc-monitor.ru/api/bond/` | `OTC_MONITOR_TOKEN` (Bearer; 401 without) | RUONIA OIS (17 tenors 1W–10Y), KRS (13, 3M–10Y), CNY xccy vs RUONIA (14, 1W–5Y), CNY OIS vs RUSFAR CNY (8, 1W–1Y; new, live only) — one JSON list of ~440 rows (bonds, FX, spreads, curves); legacy history 2026-09-04 → 10-15 imported. **No history endpoint** (`?date` ignored, `/api/history` 404) | current state only, polled every 15 min; source clock `date_update` (MSK); two-sided during the day, mid-only off-hours and on some CNY tenors |
 | Andromeda | — | legacy history imported only (Playwright scraping is dropped) | — |
 
 ## 4. Data model (PostgreSQL schemas)
@@ -117,7 +117,7 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
 - `md.fx_official(effective_date, ccy, nominal, value, rate_per_unit, set_date, source='cbr', capture_id)` PK (effective_date, ccy)
 - `md.fx_indicative(trade_date, clearing ∈ {tc, mc}, ccy_pair, rate, source='moex', capture_id)` — MOEX indicative 14:00/19:00 (FX mark candidate).
 - `md.ecb_fx(rate_date, ccy, rate_per_eur, capture_id)`
-- `md.curve_snapshot(id, source, dataset ∈ {ruonia_ois, key_rate_swap, cny_ruonia_xccy, cny_futures_yields, cfets_fr007_irs, …}, quote_basis, fetched_at, snapshot_date, source_ts, market_closed, content_sha256, parser_version, label, meta jsonb, capture_id, legacy_id)` + `md.curve_quote(snapshot_id, tenor, position, tenor_months, tenor_days, pillar_date, bid_pct, ask_pct, mid_pct, extra jsonb)` — unchanged consecutive snapshots are not duplicated (content hash per source+dataset compared to previous).
+- `md.curve_snapshot(id, source, dataset ∈ {ruonia_ois, key_rate_swap, cny_ruonia_xccy, cny_rusfar_ois, cny_futures_yields, usd_futures_yields, cfets_fr007_irs, …}, quote_basis ∈ {bid_ask_mid (every quote two-sided), mid_only (at least one mid-only quote; two-sided quotes then carry `extra.quote_basis`)}, fetched_at, snapshot_date, source_ts, market_closed, content_sha256, parser_version, label, meta jsonb, capture_id, legacy_id)` + `md.curve_quote(snapshot_id, tenor, position, tenor_months, tenor_days, pillar_date, bid_pct, ask_pct, mid_pct, extra jsonb)` — unchanged consecutive snapshots are not duplicated (content hash per source+dataset compared to previous).
 - `md.zcyc_snapshot(trade_date, trade_time, source_ts, params jsonb (B1..B3,T1,G1..G9), standard_yields jsonb, check_max_error_bp, check_tolerance_bp, is_eod, capture_id)` PK (trade_date, trade_time) — published yields must be reproduced from the params; rejected publications go to `md.zcyc_reject(capture_id PK, trade_date, trade_time, max_error_bp, reason)`.
 - `md.cbr_liquidity(observed_on, …14 metrics (columns 2..15 by position, labels checked against the live header)…, methodology_version, revision_no, capture_id)` (+ revisions via row_history)
 - Read helpers (0410): `md.v_bond_eod` (EOD + yields), `md.v_fx_cbr_latest`, as-known-at functions `md.bond_eod_known_at`, `md.bond_eod_yield_known_at`, `md.fixing_known_at`, `md.v_bond_eod_known_at`.
@@ -138,7 +138,8 @@ src/mdhub/
                        timeutil.py, decimalutil.py, bizday.py, redact.py, errors.py,
                        iss.py (ISS block parsing + paging helpers)
   sources/             moex_iss.py, moex_apim.py, moex_passport.py, cbr.py, ecb.py,
-                       ratescalcs.py, cbonds.py, sdfi.py — pure fetch + parse, no DB
+                       ratescalcs.py, otc_monitor.py, cbonds.py, sdfi.py — pure fetch + parse,
+                       no DB
   loaders/             bonds_static.py, bonds_eod.py, bonds_intraday.py, fx_moex.py,
                        futures.py, indices.py, zcyc.py, cbr.py, ecb.py, swaps.py,
                        cbonds_enrich.py, calendar.py — fetch→capture→parse→upsert
@@ -173,12 +174,13 @@ Migration ownership (to avoid conflicts): `0001-0099` core/ops; `0100-0199` ref 
 | `cbr_meetings` | 09:10 on the 1st business day of the month (calendar refresh + meetings); 15:00 daily `post_meeting` (no-op unless a meeting in the last 4 days is unconfirmed) | CBR + MOEX ISS calendars | refreshes `ref.calendar_day` first, then meetings, then resolves effective dates |
 | `ecb_fx` | 18:30 (all days) | ECB | |
 | `swaps_ratescalcs` | every 30 min 09:00–23:00 | Ratescalcs | skip identical content |
+| `swaps_otc_monitor` | every 15 min 09:00–20:00 (MOEX_STOCK business days; legacy collector polled 10:00–19:45) | OTC Monitor `/api/bond/` (one GET) | datasets `ruonia_ois`, `key_rate_swap`, `cny_ruonia_xccy`, `cny_rusfar_ois` (source `otc_monitor`, `DatasetSpec` `otc_monitor_<dataset>`, frequency `event`). Exact tenor set and sanity bounds `lo ≤ bid ≤ offer ≤ hi` per curve (RUB 0–100; CNY −50–300: negative CNY rates and >200% RUSFARCNY spikes are real 2024 quotes): a failing curve is not stored and the run ends `partial`. Content-hash dedup per (source, dataset) continues the legacy-mapped history (same hash, tenor order and basis rules); one raw capture per fetch, only when a curve changed. Missing token → `skipped`; HTTP 401/403 → `failed` |
 | `quality` | 08:30 and 20:30 | DB | freshness & gap detection → `ops.data_gap` + `ops.backfill_task`; job health (only `schedule`/`catch_up` runs count as a fire that ran); re-runs scheduled fires skipped with `lock_busy` (trigger `catch_up`) |
 | `backfill_worker` | every 10 min (all days) | DB | processes backfill tasks (8-minute budget), yields to waiting scheduled runs |
 | `maintenance` | 02:00 `backup` (pg_dump, keep 14); 03:00 `retention` (all days) | DB | raw retention of `intraday:reread:` captures (7 days, `MDHUB_RAW_RETENTION_DAYS_REREAD`) and other `intraday:` captures (90 days), orphaned `running` job runs (>12 h) → failed, VACUUM ANALYZE |
 
 **Lock contention.** Every job holds advisory lock `mdhub.job:<name>`. A scheduled fire waits up to
-15 minutes for it (polling rules — intraday snapshots, AlgoPack, Ratescalcs, the backfill worker —
+15 minutes for it (polling rules — intraday snapshots, AlgoPack, Ratescalcs, OTC Monitor, the backfill worker —
 do not wait). Backfill tasks of heavy datasets are short and yield to a waiting scheduled run. A fire
 that still cannot run is recorded as `skipped` with error `lock_busy: …`; job health reports it as
 `missed` and the next `quality` run re-executes it (`days_back` resolved against the fire date).
@@ -212,7 +214,7 @@ read API bearer tokens), `MDHUB_ENABLE_SDFI=false`, `MDHUB_BACKUP_DIR=/var/backu
 (read-API connection pool), `MDHUB_LOG_LEVEL=INFO`, `MDHUB_HTTP_TIMEOUT=30`, plus source
 credentials: `MOEX_API_KEY`, `MOEX_PASSPORT_LOGIN`, `MOEX_PASSPORT_PASSWORD`,
 `RATESCALC_USERNAME`, `RATESCALC_PASSWORD`, `CBONDS_LOGIN`, `CBONDS_PASSWORD`,
-`OTC_MONITOR_TOKEN` (future). Empty values count as unset (`env_ignore_empty`).
+`OTC_MONITOR_TOKEN`. Empty values count as unset (`env_ignore_empty`).
 
 ## 8. Read API (v1, bearer token)
 
@@ -236,10 +238,23 @@ values as JSON numbers with exactly the stored digits (no float rounding); lists
 case-sensitive (FORTS `SiZ6`, index `2xEQT`) and matched exactly (`/v1/bonds/{secid}` falls back to a
 case-insensitive match only when unique). As-of: `known_at=` (offset required) reconstructs values
 as known at that time from `ops.row_history` (bonds EOD, fixings); `/v1/curves/{dataset}?as_of=`
-returns the latest snapshot with `fetched_at <= as_of`. TDM export rules: no forward fill; coupon
+returns the latest snapshot with `fetched_at <= as_of`, one per source. TDM export rules: no forward fill; coupon
 rate/amount only for `known` coupons (others empty, counted in `manifest.json` `withheld_values`);
 `md_bond_quotes.ytm` = MOEX effective yield only when its yield date is the nearest offer ahead
 (else maturity) and the bond is fixed/zero coupon, never YIELDCLOSE.
+
+**Curve sources.** `ruonia_ois`, `key_rate_swap` and `cny_ruonia_xccy` have two live sources —
+`ratescalcs` (dealer run pages every 30 min, no source clock; XCCY tenors ON–12M) and
+`otc_monitor` (every 15 min, source clock `date_update`; XCCY 1W–5Y) — plus legacy `andromeda`
+(mid-only history to 2026-09-10). They are separate series: the hub never merges or chooses, and
+`/v1/curves/{dataset}` returns one snapshot per source (`source=` filters). A consumer that needs
+one curve should take, at its cut `T`: (1) `otc_monitor` if its snapshot at `T` has a `source_ts`
+on T's Moscow business day and, for OIS/KRS, `quote_basis = bid_ask_mid` (a `mid_only` OIS/KRS
+snapshot is the provider's off-hours mark); else (2) `ratescalcs` if its snapshot at `T` was
+fetched on that day; else (3) no value for the day (no forward fill). `andromeda` serves history
+before the live sources only. `cny_rusfar_ois` (CNY OIS vs RUSFAR CNY) exists only from
+`otc_monitor`, live from 2026-10-16 with no history; `cny_futures_yields` / `usd_futures_yields`
+only from `ratescalcs`. The TDM export does not export swap curves (they need bootstrapping).
 
 ## 9. Deployment
 

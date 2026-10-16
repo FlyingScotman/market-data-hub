@@ -19,7 +19,7 @@
 | 7 | CBR `www.cbr.ru` (hd_base HTML, XML_daily, DailyInfo WSDL) | none | — | 200 (WSDL 500 if `?WSDL=`; plain `?WSDL` gives 200) | 80–410 ms | Daily, T+1 for RUONIA | **OK** |
 | 8 | ECB eurofxref daily XML and ECB Data API | none | — | 200 | ~300 ms | Daily, about 16:00 CET | **OK** |
 | 9 | Andromeda Terminal | not provided | Playwright personal session | — | — | — | **Not tested** (personal browser session, no API credentials) |
-| 10 | OTC Monitor `otc-monitor.ru/api/bond/` (used by market-data-store) | token file, not in env | Bearer | — | — | — | **Not tested** (no credential provided) |
+| 10 | OTC Monitor `otc-monitor.ru/api/bond/` (used by market-data-store) | `OTC_MONITOR_TOKEN` (in env, 32 chars) | `Authorization: Bearer` | 200 JSON (401 JSON without token) | — | ~440 rows `{isin, series, bid, offer, mid, date_update}` (MSK wall clock); current state only — **no history** (`?date=` ignored, `/api/history` 404). Curves: OIS RUONIA (17), IRS KeyRate (13), XCCY CNYRUONIA (14), OIS RUSFARCNY (8) | **OK** (verified 2026-10-16 ~18:00 MSK, read-only GET; correction of the 2026-10-15 "not tested": the token is in env) → loader `swaps_otc_monitor` |
 | — | APIM_KEY (duplicate) | not provided by design | — | — | — | — | n/a |
 
 ## 2. MOEX ISS public (no auth): details
@@ -256,4 +256,4 @@ cross = lambda base, quote: eur[quote] / eur[base]     # e.g. cross("USD","JPY")
 3. **MOEX APIM:** realtime covers shares and futures plus AlgoPack super candles and FUTOI. Bonds and FX are delayed, and there is no FX or bond order book. Realtime CNY spot should therefore come from APIM `fx/obstats` 5-min `mid_price`, CR futures, or a Passport FX subscription.
 4. **Swap curves:** evaluate a MOEX SDFI curves subscription for OIS RUONIA, IRS KEYRATE, XCS CNYRUB and OIS RUSFARCNY with bid/ask and history. Ratescalcs covers all three in the meantime.
 5. **G7 FX:** ECB eurofxref (free) for G7 crosses; MOEX `indicativerates` and CBR for RUB legs.
-6. **Not tested:** Andromeda (personal Playwright session) and OTC Monitor (no token in env).
+6. **Not tested:** Andromeda (personal Playwright session). OTC Monitor was re-tested on 2026-10-16 with `OTC_MONITOR_TOKEN` from env: 200 OK, no history endpoint (row 10); live loader `swaps_otc_monitor`.

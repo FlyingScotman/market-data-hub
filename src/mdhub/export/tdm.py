@@ -156,9 +156,14 @@ ABSENT: Final[dict[str, str]] = {
     "md_cds": "no licensed CDS source",
     "md_curves:RUB RUONIA,RUB KEY": (
         "need bootstrapping from swap quotes (analytics, not the hub); raw quotes at "
-        "/v1/curves/{dataset}"
+        "/v1/curves/{dataset} (ruonia_ois, key_rate_swap; sources ratescalcs, otc_monitor)"
     ),
-    "md_curves:USD SOFR,EUR ESTR,CHF SARON,CNY": "no source in the hub",
+    "md_curves:CNY": (
+        "need bootstrapping from swap quotes (analytics, not the hub); raw quotes at "
+        "/v1/curves/cny_rusfar_ois (OIS vs RUSFAR CNY, otc_monitor, from 2026-10-16) and "
+        "/v1/curves/cny_ruonia_xccy"
+    ),
+    "md_curves:USD SOFR,EUR ESTR,CHF SARON": "no source in the hub",
     "md_fixings:SOFR,€STR,SARON": "no source in the hub",
     "md_bond_quotes:z_spread_bp,g_spread_bp": (
         "left empty: the hub does not compute spread analytics (MOEX-published Z/G spreads "

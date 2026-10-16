@@ -20,11 +20,18 @@
 - backfill_worker run 204: all 4 Saturday sessions backfilled (bonds/yield/futures/fx/indicative/zcyc/indices).
   Unfillable (source confirms no data, verified vs ISS): RUSFAR* holiday/thin days, RUSFARCNY China holidays,
   some bond indices, zcyc 2022-01-07, bond yields 2024-02-08, CBR standing 2018-04-25, ECB TARGET holidays (57).
-- Agent adding TARGET calendar (observed from ECB + Easter rule) → migration 0422; ecb_fx gaps → not_expected.
+- c7a9d44 TARGET calendar (rule-only from 2002, ECB cross-check) → 0422 applied to seed; cbr_meetings run 399
+  wrote 9496 rule_target rows; 57 ecb_fx gaps → not_expected. Pushed main to GitHub (private).
+- Ratescalcs live snapshot loaded (run 394): all 5 curves present; swap history comes from legacy
+  (andromeda IRS RUONIA 2022-07→, key-rate 2022-10→; otc_monitor 2026-09→; cfets 1 day).
 - AlgoPack orphan stopped (owner OK); re-run 2024-01-03→2026-10-15 on 7354200 (algopack2.log).
 
+- Agent building OTC Monitor swap loader (owner request via forked session; OTC_MONITOR_TOKEN is in env):
+  ruonia_ois, key_rate_swap, cny_ruonia_xccy, NEW cny_rusfar_ois, every 15 min; no history at source.
+- Waiting on owner: AlgoPack scope (drop / 90-day tradestats+futoi / keep). Reload still running.
+
 ## Seed database (data/pgseed, pgserver PG 16.2, db `mdhub`; gitignored)
-- Migrations applied from frozen copies in data/pgseed_migs (0001…0421).
+- Migrations applied from frozen copies in data/pgseed_migs (0001…0422).
 - Loaded: bond static (16,055 bonds), CBR full history (key rate 2013+, RUONIA 2010+, FX 2020+, liquidity,
   meetings, calendars), ECB 2015+, legacy MD/BC verbatim (verified) + mapped (curves, intraday, zcyc,
   fixings, liquidity, 3 curated formulas).
@@ -42,7 +49,8 @@
 - Cbonds API → HTTP 401 for any login (likely IP allow-list of old server); hub auto-skips.
 - MOEX Passport login has no realtime entitlement; APIM realtime only for shares/futures.
 - MOEX SDFI swap curves (CNY OIS vs RUSFAR CNY, xccy) need a subscription.
-- OTC Monitor token not provided; prod parser v3–5 and ~/.hermes wrappers exist only on the old server.
+- OTC Monitor: token present in env (audit 05 was wrong); live loader being added; no history endpoint.
+- andromeda (EOD swap archive, stopped 2026-09-10) not connected — personal browser session on old server.
 - Ratescalcs credentials are trivially guessable (username = common word, password = site URL path
   segment) — ask provider to rotate.
 - Not in hub (no source): SOFR/€STR/SARON fixings & curves, CDS, issuer ratings (Cbonds), CPI index.
