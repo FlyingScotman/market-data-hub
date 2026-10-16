@@ -15,6 +15,7 @@ Environment variables (DESIGN §7 plus a few operational knobs):
 ``MDHUB_RAW_RETENTION_DAYS_INTRADAY`` raw capture retention for intraday data, default 90
 ``MDHUB_RAW_RETENTION_DAYS_REREAD`` retention of ``intraday:reread:`` captures, default 7
 ``MDHUB_ALGOPACK_FULL_REREAD_MINUTES`` AlgoPack whole-day re-read interval, default 30
+``MDHUB_ALGOPACK_RETENTION_DAYS``   AlgoPack rolling window in calendar days, default 90
 ``MDHUB_API_TOKENS``                comma-separated bearer tokens for the read API
 ``MDHUB_ENABLE_SDFI``               enable the MOEX SDFI curve loader, default false
 ``MDHUB_LOG_LEVEL``                 logging level, default ``INFO`` (extension)
@@ -96,6 +97,14 @@ class Settings(BaseSettings):
             "MDHUB_ALGOPACK_FULL_REREAD_MINUTES", "algopack_full_reread_minutes"
         ),
     )
+    algopack_retention_days: int = Field(
+        default=90,
+        ge=1,
+        validation_alias=AliasChoices("MDHUB_ALGOPACK_RETENTION_DAYS", "algopack_retention_days"),
+    )
+    """Rolling window of the AlgoPack datasets (tradestats, FUTOI) in calendar days ending
+    today (MSK): older rows and raw captures are deleted by ``maintenance mode=retention``,
+    the gap scan and backfill ignore older days (:mod:`mdhub.datasets`)."""
     backup_dir: str = Field(
         default="/var/backups/mdhub",
         validation_alias=AliasChoices("MDHUB_BACKUP_DIR", "backup_dir"),

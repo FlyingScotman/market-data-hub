@@ -66,6 +66,11 @@ src/mdhub/
   `capture_id bigint REFERENCES ops.raw_capture (id) ON DELETE SET NULL`; a capture still
   referenced through any other FK (NO ACTION or a NOT NULL column, e.g. `md.zcyc_reject`) is
   skipped by retention, never deleted.
+- **Rolling-window datasets.** A dataset whose history is deliberately limited (AlgoPack
+  tradestats/FUTOI: `MDHUB_ALGOPACK_RETENTION_DAYS`, 90 calendar days) sets
+  `DatasetSpec.rolling_window_setting` to the `Settings` field holding the window; quality, the
+  backfill worker and the loader's backfill then respect it, and `maintenance mode=retention`
+  deletes rows, row-history images and raw captures before it (DESIGN §6).
 - **SECIDs are case-sensitive** (`SiZ6`, `2xEQT`): never upper-case them (API filters match
   exactly); board and currency codes may be normalized.
 - **Fail closed.** Parsers validate blocks/columns/types (`parse_block(..., required=...)`,

@@ -19,7 +19,13 @@ from typing import Any
 
 from mdhub.datasets import DatasetSpec, all_datasets, get_dataset
 from mdhub.jobs import REGISTRY, JobContext, JobParamError, job, run_job
-from mdhub.quality.checks import DatasetCheck, queue_backfill, scan_dataset, sync_gaps
+from mdhub.quality.checks import (
+    DatasetCheck,
+    apply_rolling_window,
+    queue_backfill,
+    scan_dataset,
+    sync_gaps,
+)
 from mdhub.quality.health import JobHealth, catch_up_params, job_health
 from mdhub.quality.report import QualityReport, store_report
 from mdhub.schedule import SCHEDULED_LOCK_WAIT_S
@@ -49,13 +55,32 @@ def _check_one(
 ) -> DatasetCheck:
     with ctx.connection() as conn:
         check = scan_dataset(
-            conn, spec, today=today, calendar=ctx.calendar, lookback_days=lookback_days
+            conn,
+            spec,
+            today=today,
+            calendar=ctx.calendar,
+            lookback_days=lookback_days,
+            settings=ctx.settings,
         )
         synced = sync_gaps(conn, spec, check, run_id=ctx.run.id)
-        check.gaps_opened, check.gaps_closed = synced.opened, synced.closed
+        closed, cancelled = apply_rolling_window(
+            conn, spec, today=today, settings=ctx.settings, run_id=ctx.run.id
+        )
+        if closed or cancelled:
+            ctx.logger.info(
+                "dataset %s: rolling window from %s: %d gap(s) -> not_expected, "
+                "%d task(s) cancelled",
+                spec.name,
+                check.window_start,
+                closed,
+                cancelled,
+            )
+        check.gaps_opened, check.gaps_closed = synced.opened, synced.closed + closed
         if queue and spec.backfill_job:
             if spec.backfill_job in REGISTRY:
-                check.tasks_queued = queue_backfill(conn, spec, ctx.calendar)
+                check.tasks_queued = queue_backfill(
+                    conn, spec, ctx.calendar, today=today, settings=ctx.settings
+                )
             elif check.gaps:
                 check.problem = f"backfill job {spec.backfill_job} is not registered"
     return check

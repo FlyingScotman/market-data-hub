@@ -15,6 +15,15 @@ Everything is driven by :class:`mdhub.datasets.DatasetSpec`:
   own first stored date; without a list, every series seen in the window is checked between
   its first and last date in the window (holes only - a series that ended is not a gap).
   ``intraday`` datasets are scanned over the last :data:`INTRADAY_SCAN_DAYS` days only.
+  A dataset with a **rolling window** (``DatasetSpec.rolling_window_setting``, e.g. AlgoPack:
+  ``MDHUB_ALGOPACK_RETENTION_DAYS``) is never scanned before its window start
+  (:meth:`DatasetSpec.window_start`, calendar days), whatever ``lookback_days`` says.
+* **rolling window** (:func:`apply_rolling_window`): ``open`` gaps of such a dataset dated
+  before the window start become ``not_expected`` (the hub no longer keeps those days: they
+  are neither filled nor confirmed empty by the source, so not ``backfilled``/``unfillable``;
+  ``unfillable`` gaps stay as they are) and its ``pending`` backfill tasks that end before the
+  window start are ``cancelled``. :func:`queue_backfill` never queues days before the window
+  and :func:`reconcile_gaps` closes such days as ``not_expected``.
 * **gap bookkeeping** (:func:`sync_gaps`): new gaps are inserted ``open``; gaps that the scan
   no longer reports are re-counted: with at least ``min_rows_per_day`` rows they become
   ``backfilled`` (also ``unfillable`` ones: data that appears later is recognised), without
@@ -47,6 +56,7 @@ from psycopg import sql
 from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 
+from mdhub.config import Settings, get_settings
 from mdhub.core.bizday import CalendarPredicate
 from mdhub.core.gaps import db_business_days, no_data_status
 from mdhub.core.timeutil import MSK, add_business_days, date_range, is_weekday, msk_today
@@ -60,6 +70,7 @@ __all__ = [
     "Gap",
     "GapSync",
     "TableInfo",
+    "apply_rolling_window",
     "compress_ranges",
     "count_rows",
     "day_predicate",
@@ -76,6 +87,7 @@ __all__ = [
     "scan_dataset",
     "split_range",
     "sync_gaps",
+    "window_start",
 ]
 
 INTRADAY_SCAN_DAYS: Final = 14
@@ -144,6 +156,14 @@ def expected_days(
         return out
     pred = day_predicate(spec, calendar)
     return [d for d in date_range(start, end) if pred(d)]
+
+
+def window_start(spec: DatasetSpec, today: date, settings: Settings | None = None) -> date | None:
+    """First day of ``spec``'s rolling window on ``today`` (``None``: full history). Without
+    ``settings`` the window is read from the environment (:func:`mdhub.config.get_settings`)."""
+    if spec.rolling_window_setting is None:
+        return None
+    return spec.window_start(today, settings or get_settings())
 
 
 def max_task_days(spec: DatasetSpec) -> int:
@@ -446,6 +466,7 @@ class DatasetCheck:
     stale_series: list[str] = field(default_factory=list)
     scan_from: date | None = None
     scan_to: date | None = None
+    window_start: date | None = None
     gaps: list[Gap] = field(default_factory=list)
     problem: str | None = None
     gaps_opened: int = 0
@@ -471,6 +492,7 @@ class DatasetCheck:
             "stale_series": self.stale_series,
             "scan_from": _iso(self.scan_from),
             "scan_to": _iso(self.scan_to),
+            "window_start": _iso(self.window_start),
             "gap_count": len(self.gaps),
             "gap_days": len(days),
             "gap_first": _iso(days[0]) if days else None,
@@ -493,8 +515,10 @@ def scan_dataset(
     today: date,
     calendar: CalendarPredicate,
     lookback_days: int | None = None,
+    settings: Settings | None = None,
 ) -> DatasetCheck:
-    """Freshness check and gap scan of one dataset (read-only)."""
+    """Freshness check and gap scan of one dataset (read-only); a rolling-window dataset is
+    scanned from its window start at the earliest (``settings``: see :func:`window_start`)."""
     check = DatasetCheck(
         dataset=spec.name,
         table=spec.table,
@@ -523,6 +547,9 @@ def scan_dataset(
         lookback_days = INTRADAY_SCAN_DAYS
     if lookback_days is not None:
         start = max(start, today - timedelta(days=lookback_days))
+    check.window_start = window = window_start(spec, today, settings)
+    if window is not None:
+        start = max(start, window)
     if spec.frequency == "monthly":
         start = month_start(start)
     if start > exp:
@@ -692,20 +719,27 @@ def _insert_task(
 
 
 def queue_backfill(
-    conn: Conn, spec: DatasetSpec, calendar: CalendarPredicate
+    conn: Conn,
+    spec: DatasetSpec,
+    calendar: CalendarPredicate,
+    *,
+    today: date | None = None,
+    settings: Settings | None = None,
 ) -> list[tuple[date, date]]:
-    """Queue backfill tasks for the dataset's open gaps; returns the ranges inserted."""
+    """Queue backfill tasks for the dataset's open gaps (never before its rolling window);
+    returns the ranges inserted."""
     if not spec.backfill_job:
         return []
+    window = window_start(spec, today or msk_today(), settings)
     with conn.cursor(row_factory=tuple_row) as cur:
         days = [
             r[0]
             for r in cur.execute(
                 """
                 SELECT DISTINCT gap_date FROM ops.data_gap
-                WHERE dataset = %s AND status = 'open' ORDER BY 1
+                WHERE dataset = %s AND status = 'open' AND gap_date >= %s ORDER BY 1
                 """,
-                (spec.name,),
+                (spec.name, window or date.min),
             ).fetchall()
         ]
     covered = _task_ranges(conn, job_datasets(spec))
@@ -715,6 +749,49 @@ def queue_backfill(
         if _insert_task(conn, spec.name, lo, hi, "quality") is not None:
             inserted.append((lo, hi))
     return inserted
+
+
+def apply_rolling_window(
+    conn: Conn,
+    spec: DatasetSpec,
+    *,
+    today: date,
+    settings: Settings | None = None,
+    run_id: int | None = None,
+) -> tuple[int, int]:
+    """Close ``open`` gaps dated before ``spec``'s rolling window as ``not_expected`` and cancel
+    its ``pending`` backfill tasks that end before the window (module docstring). No-op for a
+    dataset without a window. Returns ``(gaps closed, tasks cancelled)``."""
+    window = window_start(spec, today, settings)
+    if window is None:
+        return 0, 0
+    days = spec.rolling_window_days(settings or get_settings())
+    with conn.cursor(row_factory=tuple_row) as cur:
+        closed = cur.execute(
+            """
+            UPDATE ops.data_gap SET status = 'not_expected', note = %s
+            WHERE dataset = %s AND status = 'open' AND gap_date < %s
+            """,
+            (
+                f"outside the rolling {days}-day window (from {window}; quality run {run_id}): "
+                "the hub no longer keeps this day",
+                spec.name,
+                window,
+            ),
+        ).rowcount
+        cancelled = cur.execute(
+            """
+            UPDATE ops.backfill_task SET status = 'cancelled', done_at = now(), last_error = %s
+            WHERE dataset = %s AND status = 'pending' AND params ? 'date_to'
+              AND (params ->> 'date_to') < %s
+            """,
+            (
+                f"range ends before the rolling {days}-day window (from {window})",
+                spec.name,
+                window.isoformat(),
+            ),
+        ).rowcount
+    return closed, cancelled
 
 
 def queue_range(
@@ -737,17 +814,20 @@ def reconcile_gaps(
     run_id: int | None,
     mark_unfillable: bool,
     today: date | None = None,
+    settings: Settings | None = None,
 ) -> tuple[int, int]:
     """After a backfill run over ``[date_from, date_to]``: re-count rows for every open gap
     in the range. Filled gaps -> ``backfilled``; still-missing gaps -> ``unfillable`` when
     ``mark_unfillable`` (the run succeeded, so the source has no data for that day, e.g. a
     holiday missing from the calendar) and the no-data grace period is over
     (:data:`mdhub.core.gaps.NO_DATA_GRACE_DAYS` business days of the dataset's calendar),
-    otherwise they stay open with a note.
+    otherwise they stay open with a note. Still-missing gaps before the dataset's rolling
+    window (the backfill job clamps its range to it) become ``not_expected``.
 
     :returns: ``(backfilled, unfillable)`` counts.
     """
     today = today or msk_today()
+    window = window_start(spec, today, settings)
     with conn.cursor(row_factory=tuple_row) as cur:
         gaps = cur.execute(
             """
@@ -772,6 +852,9 @@ def reconcile_gaps(
             if n >= spec.min_rows_per_day:
                 status, note = "backfilled", f"loaded by run {run_id} (rows={n})"
                 filled += 1
+            elif window is not None and day < window:
+                status = "not_expected"
+                note = f"outside the rolling window (from {window}; run {run_id}, rows={n})"
             elif mark_unfillable and no_data_status(day, today, is_bday) == "unfillable":
                 status = "unfillable"
                 note = (

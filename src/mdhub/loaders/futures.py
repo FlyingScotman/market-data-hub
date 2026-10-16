@@ -11,17 +11,24 @@ Jobs (names fixed by :data:`mdhub.schedule.KNOWN_JOBS`):
   marketdata; on any APIM failure (no key, 401, ``EntitlementError``, transport) falls back
   to public ISS (15-min delayed, ``source_variant='iss_public'``) and marks the run partial.
   Change-only.
-* ``algopack_fx_futures`` - AlgoPack FO tradestats/obstats and FUTOI for FX futures. Without
-  dates (scheduled polls, business days and weekend sessions): incremental polls read the
-  latest bar of every contract (``latest=1``, all contracts in one paged request per dataset)
-  and FUTOI ``latest=1``; every ``MDHUB_ALGOPACK_FULL_REREAD_MINUTES`` (default 30) - and
-  whenever :func:`interval_holes` reports holes - the poll re-reads the whole current trading
-  day per FX contract and FUTOI ticker (``from=<first weekend-session day before today, else
+* ``algopack_fx_futures`` - AlgoPack FO tradestats and FUTOI for FX futures (order-book
+  obstats are not collected: owner decision, dropped by migration 0423). Without dates
+  (scheduled polls, business days and weekend sessions): incremental polls read the latest bar
+  of every contract (``latest=1``, all contracts in one paged request) and FUTOI ``latest=1``;
+  every ``MDHUB_ALGOPACK_FULL_REREAD_MINUTES`` (default 30) - and whenever
+  :func:`interval_holes` reports holes - the poll re-reads the whole current trading day per
+  FX contract and FUTOI ticker (``from=<first weekend-session day before today, else
   today>``, ``till=today``), so bars published late or missed by failed polls are filled. See
   :func:`_algopack_poll` for request counts. With ``date_from/date_to``: per-contract
-  ``from/till`` backfill (history from 2020-01-03). Dedup by primary key ``(secid,
-  interval_ts)`` - polling the same interval twice is a no-op. FUTOI answers of 1000 rows fail
-  closed (possible truncation).
+  ``from/till`` backfill, clamped to the rolling window (``MDHUB_ALGOPACK_RETENTION_DAYS``,
+  default 90 calendar days; a range wholly before it is refused). Dedup by primary key
+  ``(secid, interval_ts)`` - polling the same interval twice is a no-op. FUTOI answers of 1000
+  rows fail closed (possible truncation).
+
+**Rolling window.** Both AlgoPack datasets keep only the last
+``MDHUB_ALGOPACK_RETENTION_DAYS`` calendar days (:func:`mdhub.datasets.rolling_window_start`):
+``maintenance mode=retention`` deletes older rows (:data:`ALGOPACK_RETENTION_TABLES`) and raw
+captures (:data:`ALGOPACK_RAW_ENDPOINTS`).
 
 Normalized prices (``*_rub_per_unit`` = raw x STEPPRICE / MINSTEP / LOTVOLUME): RUB-quoted
 FX contracts always (their STEPPRICE is constant; an expired contract without a spec uses a
@@ -54,19 +61,16 @@ from mdhub.core.iss import (
 )
 from mdhub.core.timeutil import MSK, msk_now
 from mdhub.core.upsert import UpsertResult, touch_last_seen, upsert_rows
-from mdhub.datasets import DatasetSpec, register_dataset
-from mdhub.jobs import JobContext, JobSkipped, job
+from mdhub.datasets import DatasetSpec, register_dataset, rolling_window_start
+from mdhub.jobs import JobContext, JobParamError, JobSkipped, job
 from mdhub.loaders.fx_moex import only_changed, resolve_dates
 from mdhub.sources.moex_apim import (
-    ALGOPACK_FO_OBSTATS,
-    ALGOPACK_FO_OBSTATS_SECID,
     ALGOPACK_FO_TRADESTATS,
     ALGOPACK_FO_TRADESTATS_SECID,
     FUTOI_ALL,
     FUTOI_TICKER,
     apim_headers,
     parse_futoi,
-    parse_obstats,
     parse_tradestats,
 )
 from mdhub.sources.moex_apim import PARSER_VERSION as APIM_PARSER_VERSION
@@ -87,8 +91,12 @@ from mdhub.sources.moex_fx import (
 )
 
 __all__ = [
+    "ALGOPACK_RAW_ENDPOINTS",
+    "ALGOPACK_RETENTION_TABLES",
+    "ALGOPACK_WINDOW_SETTING",
     "ContractSpec",
     "algopack_fx_futures",
+    "algopack_window",
     "full_reread_due",
     "futures_eod",
     "futures_intraday",
@@ -127,6 +135,25 @@ DEFAULT_FUTOI_TICKERS: Final = frozenset(
     {"Si", "Eu", "CR", "ED", "UC", "USDRUBF", "EURRUBF", "CNYRUBF"}
 )
 """FX FUTOI tickers seen 2026-10-16; merged with tickers derived from ref.futures_contract."""
+ALGOPACK_WINDOW_SETTING: Final = "algopack_retention_days"
+"""Settings field (``MDHUB_ALGOPACK_RETENTION_DAYS``) holding the AlgoPack rolling window."""
+ALGOPACK_RETENTION_TABLES: Final = (
+    ("md.algopack_fo_tradestats", "trade_date"),
+    ("md.algopack_futoi", "trade_date"),
+)
+"""``(table, business-date column)`` of the AlgoPack datasets: rows older than the rolling
+window are deleted by ``maintenance mode=retention``."""
+ALGOPACK_RAW_ENDPOINTS: Final = (
+    "intraday:algopack_fo_tradestats",
+    "intraday:futoi",
+    f"{REREAD_ENDPOINT_PREFIX}algopack_fo_tradestats",
+    f"{REREAD_ENDPOINT_PREFIX}futoi",
+    "algopack_fo_tradestats_history",
+    "futoi_history",
+)
+"""``ops.raw_capture.endpoint`` values written by ``algopack_fx_futures`` (source
+``moex_apim``): captures fetched before the rolling window are deleted by retention - also the
+backfill (``*_history``) captures, which other raw retention keeps forever."""
 
 register_dataset(
     DatasetSpec(
@@ -155,9 +182,8 @@ register_dataset(
     )
 )
 for _name, _desc in (
-    ("algopack_fo_tradestats", "AlgoPack FO tradestats, FX futures, 5-min"),
-    ("algopack_fo_obstats", "AlgoPack FO obstats, FX futures, 5-min"),
-    ("algopack_futoi", "FUTOI open interest by client group, FX assets, 5-min"),
+    ("algopack_fo_tradestats", "AlgoPack FO tradestats, FX futures, 5-min (rolling window)"),
+    ("algopack_futoi", "FUTOI open interest by client group, FX assets, 5-min (rolling window)"),
 ):
     register_dataset(
         DatasetSpec(
@@ -172,6 +198,7 @@ for _name, _desc in (
             min_rows_per_day=100,
             max_task_days=3,
             description=_desc,
+            rolling_window_setting=ALGOPACK_WINDOW_SETTING,
         )
     )
 
@@ -554,43 +581,33 @@ def _fx_tickers(specs: Mapping[str, ContractSpec]) -> set[str]:
 def _bars(
     parsed: list[dict[str, Any]],
     specs: Mapping[str, ContractSpec],
-    kind: str,
     capture_id: int,
     run_id: int,
 ) -> list[dict[str, Any]]:
+    """FX-contract tradestats bars with normalized prices and provenance."""
     out = []
     for r in parsed:
         spec = specs.get(r["secid"])
         if fx_asset(r["asset_code"]) is None and not (spec and spec.is_fx):
             continue
         factor = _session_factor(spec, r["trade_date"])
-        if kind == "tradestats":
-            r["pr_close_rub_per_unit"] = normalize_price(r["pr_close"], factor)
-            r["pr_vwap_rub_per_unit"] = normalize_price(r["pr_vwap"], factor)
-        else:
-            r["mid_price_rub_per_unit"] = normalize_price(r["mid_price"], factor)
+        r["pr_close_rub_per_unit"] = normalize_price(r["pr_close"], factor)
+        r["pr_vwap_rub_per_unit"] = normalize_price(r["pr_vwap"], factor)
         r["capture_id"] = capture_id
         r["run_id"] = run_id
         out.append(r)
     return out
 
 
-_DATASETS: Final = (
-    (
-        "tradestats",
-        ALGOPACK_FO_TRADESTATS,
-        ALGOPACK_FO_TRADESTATS_SECID,
-        "md.algopack_fo_tradestats",
-    ),
-    ("obstats", ALGOPACK_FO_OBSTATS, ALGOPACK_FO_OBSTATS_SECID, "md.algopack_fo_obstats"),
-)
+TRADESTATS_TABLE: Final = "md.algopack_fo_tradestats"
 
 
-def _parse_kind(kind: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return parse_tradestats(rows) if kind == "tradestats" else parse_obstats(rows)
+def algopack_window(ctx: JobContext) -> date:
+    """First day of the AlgoPack rolling window today (``MDHUB_ALGOPACK_RETENTION_DAYS``)."""
+    return rolling_window_start(ctx.today(), ctx.settings.algopack_retention_days)
 
 
-@job("algopack_fx_futures", "AlgoPack FO tradestats/obstats + FUTOI for FX futures")
+@job("algopack_fx_futures", "AlgoPack FO tradestats + FUTOI for FX futures (rolling window)")
 def algopack_fx_futures(
     ctx: JobContext,
     *,
@@ -599,26 +616,66 @@ def algopack_fx_futures(
     full: bool | None = None,
 ) -> dict[str, Any]:
     """Today's 5-minute intervals (scheduled polls), or a per-contract backfill of
-    ``date_from..date_to``.
+    ``date_from..date_to`` clamped to the rolling window (:func:`algopack_window`; a range
+    that ends before the window raises :class:`~mdhub.jobs.JobParamError`).
 
     :param full: poll mode - ``True`` whole-day re-read, ``False`` incremental (still a
         re-read when holes are found), ``None`` (schedule) automatic: re-read every
         ``MDHUB_ALGOPACK_FULL_REREAD_MINUTES`` and on holes.
     """
+    span = _backfill_span(ctx, date_from, date_to)
     if not ctx.settings.moex_api_key:
         raise JobSkipped("MOEX_API_KEY not set (AlgoPack needs APIM)")
     headers = apim_headers(ctx.settings.moex_api_key.get_secret_value())
     with ctx.connection() as conn:
         specs = load_specs(conn)
     with ctx.http(base_url=APIM_BASE_URL, headers=headers) as http:
-        if date_from is None and date_to is None:
+        if span is None:
             return _algopack_poll(ctx, http, specs, full=full)
-        start = date_from or date_to
-        end = date_to or date_from
-        assert start is not None
-        assert end is not None
+        start, end = span
         _algopack_backfill(ctx, http, specs, start, end)
-        return {"mode": "backfill", "date_from": start.isoformat(), "date_to": end.isoformat()}
+        result: dict[str, Any] = {
+            "mode": "backfill",
+            "date_from": start.isoformat(),
+            "date_to": end.isoformat(),
+        }
+        requested = date_from or date_to
+        if requested is not None and requested < start:
+            result["requested_from"] = requested.isoformat()
+        return result
+
+
+def _backfill_span(
+    ctx: JobContext, date_from: date | None, date_to: date | None
+) -> tuple[date, date] | None:
+    """Backfill range clamped to the rolling window (``None``: a scheduled poll).
+
+    :raises JobParamError: ``date_to`` before ``date_from``, or the whole range is before the
+        window (nothing to load).
+    """
+    start = date_from or date_to
+    end = date_to or date_from
+    if start is None or end is None:
+        return None
+    if end < start:
+        raise JobParamError("date_to is before date_from")
+    window = algopack_window(ctx)
+    if end < window:
+        raise JobParamError(
+            f"AlgoPack range {start}..{end} ends before the rolling window (from {window}, "
+            f"MDHUB_ALGOPACK_RETENTION_DAYS={ctx.settings.algopack_retention_days}): "
+            "nothing to load"
+        )
+    if start < window:
+        ctx.logger.warning(
+            "algopack backfill %s..%s clamped to the rolling window: %s..%s",
+            start,
+            end,
+            window,
+            end,
+        )
+        start = window
+    return start, end
 
 
 def _poll_secids(specs: Mapping[str, ContractSpec], today: date) -> list[str]:
@@ -665,20 +722,20 @@ def _algopack_poll(
 ) -> dict[str, Any]:
     """One scheduled poll: incremental, or a whole-day re-read.
 
-    * **incremental** (default): the ``latest=1`` all-contracts snapshot of tradestats and
-      obstats (FX contracts kept) and FUTOI ``latest=1`` - ~3-5 requests (paged answers);
-      captures ``intraday:algopack_fo_*`` / ``intraday:futoi`` (90-day retention).
+    * **incremental** (default): the ``latest=1`` all-contracts snapshot of tradestats (FX
+      contracts kept) and FUTOI ``latest=1`` - ~2-3 requests (paged answers); captures
+      ``intraday:algopack_fo_tradestats`` / ``intraday:futoi`` (rolling-window retention).
     * **re-read** - every ``MDHUB_ALGOPACK_FULL_REREAD_MINUTES`` (:func:`full_reread_due`),
       when :func:`interval_holes` finds holes before the poll, or ``full=True``: the whole
       current trading day per FX contract (``from=`` :func:`session_span_start`, ``till=today``)
       and per FUTOI ticker and day, filling bars published late or missed by failed polls.
-      2 requests per contract + 1 per FUTOI ticker and day (seed: 64 contracts, ~10 tickers:
-      ~140 requests); captures ``intraday:reread:*`` (short retention,
+      1 request per contract + 1 per FUTOI ticker and day (seed: 64 contracts, ~10 tickers:
+      ~75 requests); captures ``intraday:reread:*`` (short retention,
       ``MDHUB_RAW_RETENTION_DAYS_REREAD``, default 7 days).
 
     Daily volume with the default schedule (204 polls 07:01-23:56) and a 30-minute re-read: 34
-    re-reads x ~140 + 170 incremental polls x ~4 = **~5,400 APIM requests per trading day**
-    (whole-day re-read on every poll: ~28,000). Without known FX contracts (fresh database)
+    re-reads x ~75 + 170 incremental polls x ~3 = **~3,100 APIM requests per trading day**
+    (with obstats, dropped in 0423: ~5,400). Without known FX contracts (fresh database)
     the incremental snapshot is used (bootstrap). Ends with the interval completeness check.
     """
     today = ctx.today()
@@ -730,26 +787,24 @@ def _algopack_reread(
     run_id = ctx.run.id
     span = {"from": start.isoformat(), "till": today.isoformat()}
     for secid in secids:
-        for kind, _path, secid_path, table in _DATASETS:
-            with ctx.connection() as conn:
-                rows: list[dict[str, Any]] = []
-                for page in iter_pages(http, secid_path.format(secid=secid), span, block="data"):
-                    cap = record_capture(
-                        conn,
-                        run_id,
-                        "moex_apim",
-                        f"{REREAD_ENDPOINT_PREFIX}algopack_fo_{kind}",
-                        None,
-                        page.response,
-                        APIM_PARSER_VERSION,
-                    )
-                    rows.extend(_bars(_parse_kind(kind, page.rows), specs, kind, cap, run_id))
-                rows = [
-                    r for r in rows if r["secid"] == secid and start <= r["trade_date"] <= today
-                ]
-                ctx.run.add_counts(
-                    upsert_rows(conn, table, _dedup(rows, BAR_KEY), BAR_KEY, run_id=run_id)
+        path = ALGOPACK_FO_TRADESTATS_SECID.format(secid=secid)
+        with ctx.connection() as conn:
+            rows: list[dict[str, Any]] = []
+            for page in iter_pages(http, path, span, block="data"):
+                cap = record_capture(
+                    conn,
+                    run_id,
+                    "moex_apim",
+                    f"{REREAD_ENDPOINT_PREFIX}algopack_fo_tradestats",
+                    None,
+                    page.response,
+                    APIM_PARSER_VERSION,
                 )
+                rows.extend(_bars(parse_tradestats(page.rows), specs, cap, run_id))
+            rows = [r for r in rows if r["secid"] == secid and start <= r["trade_date"] <= today]
+            ctx.run.add_counts(
+                upsert_rows(conn, TRADESTATS_TABLE, _dedup(rows, BAR_KEY), BAR_KEY, run_id=run_id)
+            )
     tickers = sorted(_fx_tickers(specs))
     day = start
     while day <= today:
@@ -762,23 +817,22 @@ def _algopack_snapshot(
 ) -> None:
     """``latest=1`` snapshot of all contracts (bootstrap without known FX contracts)."""
     run_id = ctx.run.id
-    for kind, path, _secid_path, table in _DATASETS:
-        with ctx.connection() as conn:
-            rows: list[dict[str, Any]] = []
-            for page in iter_pages(http, path, {"latest": 1}, block="data"):
-                cap = record_capture(
-                    conn,
-                    run_id,
-                    "moex_apim",
-                    f"intraday:algopack_fo_{kind}",
-                    None,
-                    page.response,
-                    APIM_PARSER_VERSION,
-                )
-                rows.extend(_bars(_parse_kind(kind, page.rows), specs, kind, cap, run_id))
-            ctx.run.add_counts(
-                upsert_rows(conn, table, _dedup(rows, BAR_KEY), BAR_KEY, run_id=run_id)
+    with ctx.connection() as conn:
+        rows: list[dict[str, Any]] = []
+        for page in iter_pages(http, ALGOPACK_FO_TRADESTATS, {"latest": 1}, block="data"):
+            cap = record_capture(
+                conn,
+                run_id,
+                "moex_apim",
+                "intraday:algopack_fo_tradestats",
+                None,
+                page.response,
+                APIM_PARSER_VERSION,
             )
+            rows.extend(_bars(parse_tradestats(page.rows), specs, cap, run_id))
+        ctx.run.add_counts(
+            upsert_rows(conn, TRADESTATS_TABLE, _dedup(rows, BAR_KEY), BAR_KEY, run_id=run_id)
+        )
     tickers = _fx_tickers(specs)
     res = http.get_json(FUTOI_ALL, params={"iss.meta": "off", "latest": 1})
     with ctx.connection() as conn:
@@ -885,30 +939,28 @@ def _algopack_backfill(
     for c_start, c_end in _chunks(start, end):
         span = {"from": c_start.isoformat(), "till": c_end.isoformat()}
         for secid in secids:
-            for kind, _path, secid_path, table in _DATASETS:
-                with ctx.connection() as conn:
-                    rows: list[dict[str, Any]] = []
-                    for page in iter_pages(
-                        http, secid_path.format(secid=secid), span, block="data"
-                    ):
-                        cap = record_capture(
-                            conn,
-                            run_id,
-                            "moex_apim",
-                            f"algopack_fo_{kind}_history",
-                            None,
-                            page.response,
-                            APIM_PARSER_VERSION,
-                        )
-                        rows.extend(_bars(_parse_kind(kind, page.rows), specs, kind, cap, run_id))
-                    rows = [
-                        r
-                        for r in rows
-                        if r["secid"] == secid and c_start <= r["trade_date"] <= c_end
-                    ]
-                    ctx.run.add_counts(
-                        upsert_rows(conn, table, _dedup(rows, BAR_KEY), BAR_KEY, run_id=run_id)
+            path = ALGOPACK_FO_TRADESTATS_SECID.format(secid=secid)
+            with ctx.connection() as conn:
+                rows: list[dict[str, Any]] = []
+                for page in iter_pages(http, path, span, block="data"):
+                    cap = record_capture(
+                        conn,
+                        run_id,
+                        "moex_apim",
+                        "algopack_fo_tradestats_history",
+                        None,
+                        page.response,
+                        APIM_PARSER_VERSION,
                     )
+                    rows.extend(_bars(parse_tradestats(page.rows), specs, cap, run_id))
+                rows = [
+                    r for r in rows if r["secid"] == secid and c_start <= r["trade_date"] <= c_end
+                ]
+                ctx.run.add_counts(
+                    upsert_rows(
+                        conn, TRADESTATS_TABLE, _dedup(rows, BAR_KEY), BAR_KEY, run_id=run_id
+                    )
+                )
         tickers = sorted(_fx_tickers(specs))
         day = c_start
         while day <= c_end:

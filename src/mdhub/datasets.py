@@ -29,13 +29,24 @@ A day for which the source confirms that it has no data is reported with
 :func:`mdhub.core.gaps.record_no_data` (not ``mark_partial``); a loaded day may be closed with
 :func:`mdhub.core.gaps.close_gap`. Datasets sharing one ``backfill_job`` share its tasks: one
 task per (job, range) refills all of them.
+
+**Rolling window.** A dataset with ``rolling_window_setting`` keeps only the last N calendar
+days (N = that :class:`~mdhub.config.Settings` field, e.g. ``algopack_retention_days`` =
+``MDHUB_ALGOPACK_RETENTION_DAYS``): the window is :func:`rolling_window_start` (today - N + 1,
+MSK) .. today. Older rows are deleted by ``maintenance mode=retention``; the gap scan does
+not look before the window, open gaps before it are closed as ``not_expected``, pending
+backfill tasks wholly before it are cancelled and the backfill job clamps its range to it.
+Calendar days (not business days) so that the window does not depend on calendar data and
+matches the raw-capture retention arithmetic.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
 from typing import Final, Literal
+
+from mdhub.config import Settings
 
 Frequency = Literal["business_daily", "daily", "monthly", "intraday", "event"]
 """``business_daily``: one or more rows per business day of ``calendar``;
@@ -67,6 +78,9 @@ class DatasetSpec:
     """Longest backfill task range in calendar days (default: 31, a year for monthly data).
     Heavy jobs use short ranges so that one task finishes well within the backfill worker's
     time budget and does not hold the job's lock across a scheduled run."""
+    rolling_window_setting: str | None = None
+    """Name of an ``int`` :class:`~mdhub.config.Settings` field holding the dataset's rolling
+    window in calendar days (module docstring); ``None`` = full history is kept."""
 
     def __post_init__(self) -> None:
         if "." not in self.table:
@@ -77,6 +91,35 @@ class DatasetSpec:
             raise ValueError(f"{self.name}: series requires series_column")
         if self.max_task_days is not None and self.max_task_days < 1:
             raise ValueError(f"{self.name}: max_task_days must be >= 1")
+        if self.rolling_window_setting is not None:
+            field = Settings.model_fields.get(self.rolling_window_setting)
+            if field is None or field.annotation is not int:
+                raise ValueError(
+                    f"{self.name}: rolling_window_setting {self.rolling_window_setting!r} "
+                    "is not an int Settings field"
+                )
+
+    def rolling_window_days(self, settings: Settings) -> int | None:
+        """Rolling window in calendar days (``None``: full history)."""
+        if self.rolling_window_setting is None:
+            return None
+        days = int(getattr(settings, self.rolling_window_setting))
+        if days < 1:
+            raise ValueError(f"{self.name}: rolling window must be >= 1 day, got {days}")
+        return days
+
+    def window_start(self, today: date, settings: Settings) -> date | None:
+        """First day of the rolling window on ``today`` (``None``: no window)."""
+        days = self.rolling_window_days(settings)
+        return None if days is None else rolling_window_start(today, days)
+
+
+def rolling_window_start(today: date, days: int) -> date:
+    """First day of a rolling window of ``days`` calendar days ending on ``today`` (inclusive):
+    ``today - (days - 1)``; e.g. 90 days on 2026-10-16 -> 2026-07-19."""
+    if days < 1:
+        raise ValueError("rolling window must be >= 1 day")
+    return today - timedelta(days=days - 1)
 
 
 _REGISTRY: Final[dict[str, DatasetSpec]] = {}

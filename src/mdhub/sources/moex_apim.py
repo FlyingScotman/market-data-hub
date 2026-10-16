@@ -6,15 +6,16 @@ without entitlement answers HTTP 200 ``text/html`` ("subscribers only") which
 invalid token answers 401.
 
 Entitlement observed 2026-10-15/16: realtime FORTS marketdata (lag 0-1 s), AlgoPack ``fo``
-tradestats/obstats and FUTOI; FX and bonds marketdata stay 15-min delayed.
+tradestats/obstats and FUTOI; FX and bonds marketdata stay 15-min delayed. The hub uses
+tradestats and FUTOI only (order-book obstats dropped by owner decision, migration 0423).
 
 AlgoPack FO (verified 2026-10-16):
 
-* ``/datashop/algopack/fo/{tradestats,obstats}.json`` - all FORTS secids; ``latest=1`` = the
-  last 5-minute interval only; ``date=`` one day (block ``data`` + ``data.cursor``, 1000 rows
-  per page; tradestats ~30k rows/day, obstats ~100k rows/day). History from 2020-01-03.
-* ``/datashop/algopack/fo/{tradestats,obstats}/{SECID}.json?from=&till=`` - one contract,
-  date range (``date=`` is ignored there!), cursor-paged.
+* ``/datashop/algopack/fo/tradestats.json`` - all FORTS secids; ``latest=1`` = the last
+  5-minute interval only; ``date=`` one day (block ``data`` + ``data.cursor``, 1000 rows per
+  page; ~30k rows/day). History from 2020-01-03.
+* ``/datashop/algopack/fo/tradestats/{SECID}.json?from=&till=`` - one contract, date range
+  (``date=`` is ignored there!), cursor-paged.
 * ``/analyticalproducts/futoi/securities[/{ticker}].json`` - open interest by client group
   (``YUR``/``FIZ``) per asset ticker; ``latest=1`` / ``date=`` / ``from=&till=``; block
   ``futoi`` without a cursor (``start=`` paging until empty). History from 2020-01-03.
@@ -35,28 +36,22 @@ from mdhub.core.iss import IssFormatError, to_date, to_datetime, to_decimal, to_
 from mdhub.core.timeutil import MSK
 
 __all__ = [
-    "ALGOPACK_FO_OBSTATS",
-    "ALGOPACK_FO_OBSTATS_SECID",
     "ALGOPACK_FO_TRADESTATS",
     "ALGOPACK_FO_TRADESTATS_SECID",
     "FUTOI_ALL",
     "FUTOI_TICKER",
-    "OBSTATS_COLUMNS",
     "PARSER_VERSION",
     "TRADESTATS_COLUMNS",
     "apim_headers",
     "interval_ts",
     "parse_futoi",
-    "parse_obstats",
     "parse_tradestats",
 ]
 
 PARSER_VERSION: Final = "moex_apim/1"
 
 ALGOPACK_FO_TRADESTATS: Final = "/datashop/algopack/fo/tradestats.json"
-ALGOPACK_FO_OBSTATS: Final = "/datashop/algopack/fo/obstats.json"
 ALGOPACK_FO_TRADESTATS_SECID: Final = "/datashop/algopack/fo/tradestats/{secid}.json"
-ALGOPACK_FO_OBSTATS_SECID: Final = "/datashop/algopack/fo/obstats/{secid}.json"
 FUTOI_ALL: Final = "/analyticalproducts/futoi/securities.json"
 FUTOI_TICKER: Final = "/analyticalproducts/futoi/securities/{ticker}.json"
 
@@ -110,38 +105,6 @@ TRADESTATS_COLUMNS: Final[tuple[tuple[str, str], ...]] = (
     ("sec_pr_low", _NUM),
     ("sec_pr_close", _NUM),
 )
-OBSTATS_COLUMNS: Final[tuple[tuple[str, str], ...]] = (
-    ("mid_price", _NUM),
-    ("micro_price", _NUM),
-    ("spread_l1", _NUM),
-    ("spread_l2", _NUM),
-    ("spread_l3", _NUM),
-    ("spread_l5", _NUM),
-    ("spread_l10", _NUM),
-    ("spread_l20", _NUM),
-    ("levels_b", _INT),
-    ("levels_s", _INT),
-    ("vol_b_l1", _NUM),
-    ("vol_b_l2", _NUM),
-    ("vol_b_l3", _NUM),
-    ("vol_b_l5", _NUM),
-    ("vol_b_l10", _NUM),
-    ("vol_b_l20", _NUM),
-    ("vol_s_l1", _NUM),
-    ("vol_s_l2", _NUM),
-    ("vol_s_l3", _NUM),
-    ("vol_s_l5", _NUM),
-    ("vol_s_l10", _NUM),
-    ("vol_s_l20", _NUM),
-    ("vwap_b_l3", _NUM),
-    ("vwap_b_l5", _NUM),
-    ("vwap_b_l10", _NUM),
-    ("vwap_b_l20", _NUM),
-    ("vwap_s_l3", _NUM),
-    ("vwap_s_l5", _NUM),
-    ("vwap_s_l10", _NUM),
-    ("vwap_s_l20", _NUM),
-)
 _BASE_COLUMNS: Final = ("tradedate", "tradetime", "secid", "asset_code", "SYSTIME")
 
 
@@ -181,11 +144,6 @@ def parse_tradestats(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
     """AlgoPack FO tradestats ``data`` rows -> ``md.algopack_fo_tradestats`` rows
     (normalized columns are added by the loader)."""
     return _parse_bars(rows, TRADESTATS_COLUMNS, "tradestats")
-
-
-def parse_obstats(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
-    """AlgoPack FO obstats ``data`` rows -> ``md.algopack_fo_obstats`` rows."""
-    return _parse_bars(rows, OBSTATS_COLUMNS, "obstats")
 
 
 _FUTOI_REQUIRED: Final = (

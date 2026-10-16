@@ -166,14 +166,13 @@ def test_parse_algopack() -> None:
     ts = apim.parse_tradestats(rows_of(load("algopack_tradestats_latest.json"), "data"))
     assert ts[0]["interval_ts"].isoformat() == "2026-10-16T10:25:00+03:00"
     assert isinstance(ts[0]["trades"], int)
-    ob = apim.parse_obstats(rows_of(load("algopack_obstats_latest.json"), "data"))
-    assert all("mid_price" in r for r in ob)
     oi = apim.parse_futoi(rows_of(load("futoi_latest.json"), "futoi"))
     assert {r["clgroup"] for r in oi} == {"YUR", "FIZ"}
-    bad = rows_of(load("algopack_obstats_latest.json"), "data")
-    del bad[0]["mid_price"]
-    with pytest.raises(IssFormatError, match="mid_price"):
-        apim.parse_obstats(bad)
+    bad = rows_of(load("algopack_tradestats_latest.json"), "data")
+    del bad[0]["pr_close"]
+    with pytest.raises(IssFormatError, match="pr_close"):
+        apim.parse_tradestats(bad)
+    assert not hasattr(apim, "parse_obstats")  # order-book obstats dropped (0423)
     with pytest.raises(ValueError, match="empty"):
         apim.apim_headers("")
 
@@ -350,7 +349,6 @@ def _mock_day_poll(extra_ts: list[list[Any]] | None = None) -> dict[str, Any]:
     if extra_ts:
         ts_payload["data"]["data"] += extra_ts
         ts_payload["data.cursor"]["data"] = [[0, len(ts_payload["data"]["data"]), 1000]]
-    ob_payload = load("algopack_obstats_latest.json")
     futoi = load("futoi_latest.json")
     seen: dict[str, Any] = {"params": []}
 
@@ -373,9 +371,6 @@ def _mock_day_poll(extra_ts: list[list[Any]] | None = None) -> dict[str, Any]:
 
     respx.get(url__regex=r".*/datashop/algopack/fo/tradestats/\w+\.json").mock(
         side_effect=bars(ts_payload)
-    )
-    respx.get(url__regex=r".*/datashop/algopack/fo/obstats/\w+\.json").mock(
-        side_effect=bars(ob_payload)
     )
     respx.get(url__regex=r".*/analyticalproducts/futoi/securities/\w+\.json").mock(
         side_effect=futoi_handler
@@ -405,18 +400,12 @@ def test_algopack_poll_reads_whole_day_fx_only_and_dedup(
     endpoints = {
         r["endpoint"] for r in conn.execute("SELECT DISTINCT endpoint FROM ops.raw_capture")
     }
-    assert endpoints == {
-        "intraday:reread:algopack_fo_tradestats",
-        "intraday:reread:algopack_fo_obstats",
-        "intraday:reread:futoi",
-    }
+    assert endpoints == {"intraday:reread:algopack_fo_tradestats", "intraday:reread:futoi"}
     n_ts = count(conn, "SELECT count(*) FROM md.algopack_fo_tradestats")
-    n_ob = count(conn, "SELECT count(*) FROM md.algopack_fo_obstats")
     respx.clear()
     _mock_day_poll()
     run("algopack_fx_futures", {"full": True}, apim_settings, db)  # same day polled again
     assert count(conn, "SELECT count(*) FROM md.algopack_fo_tradestats") == n_ts
-    assert count(conn, "SELECT count(*) FROM md.algopack_fo_obstats") == n_ob
     assert count(conn, "SELECT count(*) FROM ops.row_history") == 0
 
     # a bar of an earlier interval shows up late (or its poll was missed): filled now
@@ -468,9 +457,6 @@ def test_algopack_bootstrap_uses_latest_snapshot_with_futoi_guard(
     respx.get(APIM_BASE_URL + apim.ALGOPACK_FO_TRADESTATS).mock(
         return_value=httpx.Response(200, json=load("algopack_tradestats_latest.json"))
     )
-    respx.get(APIM_BASE_URL + apim.ALGOPACK_FO_OBSTATS).mock(
-        return_value=httpx.Response(200, json=load("algopack_obstats_latest.json"))
-    )
     futoi = load("futoi_latest.json")
     full = copy.deepcopy(futoi)
     full["futoi"]["data"] = futoi["futoi"]["data"] * 125  # 1000 rows: may be truncated
@@ -494,10 +480,12 @@ def _empty_bars(kind_payload: dict[str, Any]) -> dict[str, Any]:
 
 
 @respx.mock
-def test_algopack_backfill_per_contract(apim_settings: Settings, db: Database, conn: Conn) -> None:
+def test_algopack_backfill_per_contract(
+    apim_settings: Settings, db: Database, conn: Conn, today_is: Callable[[date], None]
+) -> None:
+    today_is(date(2026, 10, 16))  # inside the 90-day rolling window
     seed_ref(conn)
     p0, p1 = load("algopack_tradestats_SiZ6_p0.json"), load("algopack_tradestats_SiZ6_p1.json")
-    ob_empty = _empty_bars(load("algopack_obstats_latest.json"))
     futoi_day = load("futoi_si_day.json")
     futoi_empty = {"futoi": {"columns": futoi_day["futoi"]["columns"], "data": []}}
 
@@ -513,9 +501,6 @@ def test_algopack_backfill_per_contract(apim_settings: Settings, db: Database, c
 
     ts_route = respx.get(url__regex=r".*/datashop/algopack/fo/tradestats/\w+\.json").mock(
         side_effect=tradestats
-    )
-    respx.get(url__regex=r".*/datashop/algopack/fo/obstats/\w+\.json").mock(
-        return_value=httpx.Response(200, json=ob_empty)
     )
     respx.get(url__regex=r".*/analyticalproducts/futoi/securities/\w+\.json").mock(
         side_effect=futoi
@@ -533,7 +518,7 @@ def test_algopack_backfill_per_contract(apim_settings: Settings, db: Database, c
         for r in conn.execute("SELECT DISTINCT endpoint FROM ops.raw_capture")
         if re.match("intraday:", r["endpoint"])
     }
-    assert endpoints == set()  # backfill captures are history, kept by retention
+    assert endpoints == set()  # backfill captures: *_history (rolling-window retention)
 
 
 @respx.mock

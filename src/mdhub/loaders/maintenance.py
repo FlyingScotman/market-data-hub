@@ -12,10 +12,18 @@
     :data:`REREAD_ENDPOINT_PREFIX`, ``intraday:reread:``: AlgoPack whole-day re-reads whose bars
     mostly repeat stored ones) older than ``MDHUB_RAW_RETENTION_DAYS_REREAD`` days (default 7)
     and of all other **intraday** endpoints older than ``MDHUB_RAW_RETENTION_DAYS_INTRADAY``
-    days (default 90) in batches, then runs
-    ``VACUUM (ANALYZE)`` (autocommit, outside a transaction) on ``ops.raw_capture`` and every
-    table in ``ops``/``ref``/``md`` larger than ``vacuum_min_mb``. EOD/static raw is kept
-    forever.
+    days (default 90) in batches; then applies the **AlgoPack rolling window**
+    (:func:`purge_algopack_window`, ``MDHUB_ALGOPACK_RETENTION_DAYS``, default 90 calendar
+    days): rows of ``md.algopack_fo_tradestats`` / ``md.algopack_futoi`` with a ``trade_date``
+    before the window start, their ``ops.row_history`` images, and AlgoPack raw captures
+    (incl. backfill ``*_history`` captures) fetched before the window start (00:00 MSK). Then
+    runs ``VACUUM (ANALYZE)`` (autocommit, outside a transaction) on ``ops.raw_capture`` and
+    every table in ``ops``/``ref``/``md`` larger than ``vacuum_min_mb``. Other EOD/static raw
+    is kept forever.
+
+    Row history: ``ops.track_changes()`` is an ``AFTER UPDATE`` trigger, so the retention
+    ``DELETE`` writes no ``ops.row_history`` rows (no churn); history images of rows before the
+    window are deleted with them (nothing older than the window is kept).
 
 Intraday classification convention (loaders must follow it): the ``endpoint`` of an
 intraday capture starts with :data:`INTRADAY_ENDPOINT_PREFIX` (``"intraday:"``), e.g.
@@ -31,8 +39,9 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, time
 from pathlib import Path
 from typing import Any, Final
 
@@ -43,8 +52,11 @@ from psycopg.rows import tuple_row
 
 from mdhub.core.capture import reap_orphaned_runs
 from mdhub.core.redact import sanitize_text
+from mdhub.core.timeutil import MSK
+from mdhub.datasets import rolling_window_start
 from mdhub.db.pool import Database
 from mdhub.jobs import JobContext, JobParamError, job
+from mdhub.loaders.futures import ALGOPACK_RAW_ENDPOINTS, ALGOPACK_RETENTION_TABLES
 
 __all__ = [
     "BACKUP_DIR_ENV",
@@ -57,7 +69,10 @@ __all__ = [
     "blocking_capture_refs",
     "is_intraday_endpoint",
     "maintenance",
+    "purge_algopack_window",
     "purge_intraday_raw",
+    "purge_raw_endpoints",
+    "purge_rows_before",
     "restore_command",
     "rotate_backups",
     "run_backup",
@@ -233,6 +248,37 @@ def blocking_capture_refs(conn: psycopg.Connection[Any]) -> list[tuple[str, str,
     return [(str(a), str(b), str(c)) for a, b, c in rows]
 
 
+def _purge_raw(db: Database, match: sql.Composable, params: Sequence[Any], batch: int) -> int:
+    """Delete raw captures ``r`` matching ``match`` in batches of ``batch`` (each committed),
+    keeping captures still referenced through a blocking foreign key
+    (:func:`blocking_capture_refs`); returns rows deleted."""
+    with db.connection() as conn:
+        refs = blocking_capture_refs(conn)
+    keep = sql.SQL("").join(
+        sql.SQL(" AND NOT EXISTS (SELECT 1 FROM {t} x WHERE x.{c} = r.id)").format(
+            t=sql.Identifier(schema, table), c=sql.Identifier(column)
+        )
+        for schema, table, column in refs
+    )
+    query = sql.SQL(
+        """
+        DELETE FROM ops.raw_capture WHERE id IN (
+            SELECT r.id FROM ops.raw_capture r
+            WHERE {match}{keep}
+            ORDER BY r.id
+            LIMIT %s
+        )
+        """
+    ).format(match=match, keep=keep)
+    total = 0
+    while True:
+        with db.connection() as conn:
+            n = conn.execute(query, [*params, batch]).rowcount
+        total += n
+        if n < batch:
+            return total
+
+
 def purge_intraday_raw(
     db: Database,
     retention_days: int,
@@ -250,34 +296,89 @@ def purge_intraday_raw(
     """
     if retention_days < 1:
         raise JobParamError("retention_days must be >= 1")
-    with db.connection() as conn:
-        refs = blocking_capture_refs(conn)
-    keep = sql.SQL("").join(
-        sql.SQL(" AND NOT EXISTS (SELECT 1 FROM {t} x WHERE x.{c} = r.id)").format(
-            t=sql.Identifier(schema, table), c=sql.Identifier(column)
-        )
-        for schema, table, column in refs
-    )
-    query = sql.SQL(
-        """
-        DELETE FROM ops.raw_capture WHERE id IN (
-            SELECT r.id FROM ops.raw_capture r
-            WHERE r.endpoint LIKE %s
-              AND r.fetched_at < now() - make_interval(days => %s){keep}
-            ORDER BY r.id
+    like = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    match = sql.SQL("r.endpoint LIKE %s AND r.fetched_at < now() - make_interval(days => %s)")
+    return _purge_raw(db, match, [like, retention_days], batch)
+
+
+def purge_raw_endpoints(
+    db: Database,
+    endpoints: Sequence[str],
+    before: datetime,
+    *,
+    source: str,
+    batch: int = DELETE_BATCH,
+) -> int:
+    """Delete raw captures of ``source`` with an endpoint in ``endpoints`` fetched before
+    ``before`` (same foreign-key safety and batching as :func:`purge_intraday_raw`)."""
+    if before.tzinfo is None:
+        raise ValueError("before must be timezone-aware")
+    match = sql.SQL("r.source = %s AND r.endpoint = ANY(%s) AND r.fetched_at < %s")
+    return _purge_raw(db, match, [source, list(endpoints), before], batch)
+
+
+def purge_rows_before(
+    db: Database, table: str, date_column: str, before: date, *, batch: int = DELETE_BATCH
+) -> tuple[int, int]:
+    """Delete rows of ``table`` with ``date_column < before`` one business date at a time
+    (each date committed separately; the date column is indexed), then the
+    ``ops.row_history`` images of rows of those dates (``old_row ->> date_column``) in batches.
+    Returns ``(rows deleted, history rows deleted)``.
+
+    ``DELETE`` does not fire the ``AFTER UPDATE`` history trigger (``ops.track_changes``), so
+    no row history is written by the deletion itself.
+    """
+    schema, name = table.split(".", 1)
+    ident = sql.Identifier(schema, name)
+    col = sql.Identifier(date_column)
+    first_q = sql.SQL("SELECT min({c}) FROM {t} WHERE {c} < %s").format(c=col, t=ident)
+    delete_q = sql.SQL("DELETE FROM {t} WHERE {c} = %s").format(c=col, t=ident)
+    rows = 0
+    while True:
+        with db.connection() as conn, conn.cursor(row_factory=tuple_row) as cur:
+            row = cur.execute(first_q, (before,)).fetchone()
+            day = row[0] if row else None
+            if day is None:
+                break
+            rows += cur.execute(delete_q, (day,)).rowcount
+    history_q = """
+        DELETE FROM ops.row_history WHERE id IN (
+            SELECT id FROM ops.row_history
+            WHERE table_name = %s AND (old_row ->> %s)::date < %s
+            ORDER BY id
             LIMIT %s
         )
-        """
-    ).format(keep=keep)
-    total = 0
+    """
+    history = 0
     while True:
         with db.connection() as conn:
-            like = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-            cur = conn.execute(query, (like, retention_days, batch))
-            n = cur.rowcount
-        total += n
+            n = conn.execute(history_q, (table, date_column, before, batch)).rowcount
+        history += n
         if n < batch:
-            return total
+            return rows, history
+
+
+def purge_algopack_window(db: Database, today: date, window_days: int) -> dict[str, Any]:
+    """AlgoPack rolling window (``MDHUB_ALGOPACK_RETENTION_DAYS``): delete tradestats/FUTOI
+    rows whose ``trade_date`` is before :func:`~mdhub.datasets.rolling_window_start`, their
+    row history, and AlgoPack raw captures fetched before 00:00 MSK of that day."""
+    if window_days < 1:
+        raise JobParamError("algopack window must be >= 1 day")
+    start = rolling_window_start(today, window_days)
+    out: dict[str, Any] = {"window_start": start.isoformat(), "rows_deleted": {}}
+    history = 0
+    for table, column in ALGOPACK_RETENTION_TABLES:
+        n, h = purge_rows_before(db, table, column, start)
+        out["rows_deleted"][table] = n
+        history += h
+    out["history_deleted"] = history
+    out["raw_deleted"] = purge_raw_endpoints(
+        db,
+        ALGOPACK_RAW_ENDPOINTS,
+        datetime.combine(start, time(0), tzinfo=MSK),
+        source="moex_apim",
+    )
+    return out
 
 
 def vacuum_tables(db: Database, *, min_mb: int = 64) -> list[str]:
@@ -313,6 +414,7 @@ def maintenance(
     backup_dir_path: str | None = None,
     retention_days: int | None = None,
     reread_retention_days: int | None = None,
+    algopack_retention_days: int | None = None,
     vacuum: bool = True,
     vacuum_min_mb: int = 64,
 ) -> dict[str, Any]:
@@ -322,6 +424,8 @@ def maintenance(
     :param backup_dir_path: override ``MDHUB_BACKUP_DIR``.
     :param retention_days: override ``MDHUB_RAW_RETENTION_DAYS_INTRADAY``.
     :param reread_retention_days: override ``MDHUB_RAW_RETENTION_DAYS_REREAD``.
+    :param algopack_retention_days: override ``MDHUB_ALGOPACK_RETENTION_DAYS`` (AlgoPack
+        rolling window, calendar days).
     :param vacuum: run ``VACUUM (ANALYZE)`` after retention.
     """
     secrets = ctx.settings.secret_values()
@@ -342,16 +446,19 @@ def maintenance(
     if mode == "retention":
         days = retention_days or ctx.settings.raw_retention_days_intraday
         reread_days = min(days, reread_retention_days or ctx.settings.raw_retention_days_reread)
+        algopack_days = algopack_retention_days or ctx.settings.algopack_retention_days
         result: dict[str, Any] = {
             "mode": mode,
             "retention_days": days,
             "reread_retention_days": reread_days,
+            "algopack_retention_days": algopack_days,
         }
         result["orphaned_runs_reaped"] = reap_orphaned_runs(ctx.db)
         try:
             result["raw_deleted"] = purge_intraday_raw(
                 ctx.db, reread_days, prefix=REREAD_ENDPOINT_PREFIX
             ) + purge_intraday_raw(ctx.db, days)
+            result["algopack"] = purge_algopack_window(ctx.db, ctx.today(), algopack_days)
         except psycopg.errors.ForeignKeyViolation as exc:
             diag = exc.diag.table_name or "?"
             ctx.run.mark_partial(
@@ -359,7 +466,11 @@ def maintenance(
                 "be declared ON DELETE SET NULL for intraday tables"
             )
             result["raw_deleted"] = None
-        ctx.logger.info("raw retention: deleted %s intraday capture(s)", result["raw_deleted"])
+        ctx.logger.info(
+            "raw retention: deleted %s intraday capture(s); algopack window %s",
+            result["raw_deleted"],
+            result.get("algopack"),
+        )
         if vacuum:
             result["vacuumed"] = vacuum_tables(ctx.db, min_mb=vacuum_min_mb)
         return result

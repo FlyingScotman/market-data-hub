@@ -12,7 +12,8 @@ the next 10-minute trigger) or ``max_tasks`` is used up. For a task the worker:
    ``backfilled``, days still empty after a *successful* run -> ``unfillable`` (the source
    has no data, e.g. a holiday missing from ``ref.calendar_day``) once they are older than the
    no-data grace period (:mod:`mdhub.core.gaps`; younger days stay open and are re-queued by
-   the next quality run). A ``partial`` run whose range still has open gaps counts as a failed
+   the next quality run); days before a rolling-window dataset's window (the job clamps its
+   range) -> ``not_expected``. A ``partial`` run whose range still has open gaps counts as a failed
    attempt (step 4), so a persistently failing day ends ``failed`` instead of looping; a
    ``partial`` run that filled the range marks the task done,
 4. on failure retries with exponential backoff (``not_before`` = now + 10 min * 2^(n-1));
@@ -286,6 +287,7 @@ def run_backfill_range(
                 run_id=outcome.run_id,
                 mark_unfillable=outcome.status == "succeeded",
                 today=today,
+                settings=settings,
             )
             filled += f
             unfillable += u

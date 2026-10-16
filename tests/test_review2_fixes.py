@@ -251,7 +251,6 @@ def test_session_span_start_covers_preceding_weekend_session(
 
 def _mock_algopack_day(seen: list[dict[str, str]]) -> None:
     ts_payload = load("algopack_tradestats_latest.json")
-    ob_payload = load("algopack_obstats_latest.json")
     futoi = load("futoi_latest.json")
 
     def bars(payload: dict[str, Any]) -> Callable[[httpx.Request], httpx.Response]:
@@ -272,9 +271,6 @@ def _mock_algopack_day(seen: list[dict[str, str]]) -> None:
 
     respx.get(url__regex=r".*/datashop/algopack/fo/tradestats/\w+\.json").mock(
         side_effect=bars(ts_payload)
-    )
-    respx.get(url__regex=r".*/datashop/algopack/fo/obstats/\w+\.json").mock(
-        side_effect=bars(ob_payload)
     )
     respx.get(url__regex=r".*/analyticalproducts/futoi/securities/\w+\.json").mock(
         side_effect=futoi_handler
@@ -633,15 +629,12 @@ def test_full_reread_due_every_30_minutes() -> None:
 def test_algopack_incremental_poll_uses_latest_snapshot(
     apim_settings: Settings, db: Database, conn: Conn, today_is: Callable[[date], None]
 ) -> None:
-    """N4: between re-reads a poll reads only the latest bars (all contracts, 1 request per
-    dataset + FUTOI) under the 90-day ``intraday:`` endpoints."""
+    """N4: between re-reads a poll reads only the latest bars (all contracts, 1 tradestats
+    request + FUTOI) under the ``intraday:`` endpoints (obstats dropped in 0423)."""
     today_is(FRI)
     seed_ref(conn)
     ts_route = respx.get(APIM_BASE_URL + apim.ALGOPACK_FO_TRADESTATS).mock(
         return_value=httpx.Response(200, json=load("algopack_tradestats_latest.json"))
-    )
-    respx.get(APIM_BASE_URL + apim.ALGOPACK_FO_OBSTATS).mock(
-        return_value=httpx.Response(200, json=load("algopack_obstats_latest.json"))
     )
     respx.get(APIM_BASE_URL + apim.FUTOI_ALL).mock(
         return_value=httpx.Response(200, json=load("futoi_latest.json"))
@@ -661,11 +654,7 @@ def test_algopack_incremental_poll_uses_latest_snapshot(
     assert not per_contract.called
     assert count(conn, "SELECT count(*) FROM md.algopack_fo_tradestats") > 0
     endpoints = {r["endpoint"] for r in conn.execute("SELECT endpoint FROM ops.raw_capture")}
-    assert endpoints == {
-        "intraday:algopack_fo_tradestats",
-        "intraday:algopack_fo_obstats",
-        "intraday:futoi",
-    }
+    assert endpoints == {"intraday:algopack_fo_tradestats", "intraday:futoi"}
 
 
 @respx.mock
