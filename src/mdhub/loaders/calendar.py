@@ -1,12 +1,14 @@
 """Business-day calendars -> ``ref.calendar_day`` (read by :class:`mdhub.core.bizday.DbCalendar`).
 
-Calendars and sources (``DbCalendar`` takes the row with the latest ``known_at`` per day):
+Calendars and sources (``DbCalendar`` / ``ref.calendar_effective`` take, per day, the row of
+the highest-priority source - :data:`SOURCE_PRIORITY`: observed > MOEX ISS calendar > curated >
+curated_unverified; ``known_at`` only breaks ties):
 
 =============== ============================ ===============================================
 calendar        past days (observed)          future days
 =============== ============================ ===============================================
-MOEX_STOCK      ``observed_moex_stock``: IMOEX ``moex_iss_calendar`` (current year, MOEX ISS
-                or RGBI has a history row     ``/engines/{engine}/calendar.json``), then
+MOEX_STOCK      ``observed_moex_stock``: IMOEX ``moex_iss_calendar`` (only the days MOEX ISS
+                or RGBI has a history row     ``/engines/{engine}/calendar.json`` lists), then
 MOEX_FX         ``observed_moex_fx``: CETS    ``curated`` / ``curated_unverified`` from the
                 CNYRUB_TOM history row        versioned file ``mdhub/data/calendar_curated.json``
 MOEX_FORTS      ``observed_moex_forts``: Si
@@ -15,12 +17,13 @@ RU_PRODUCTION   ``observed_cbr_ruonia``: a    ``curated`` (Government decrees on
                 RUONIA fixing exists (md.fixing)
 =============== ============================ ===============================================
 
-Observed rows cover every calendar day from the start date to the last observed trading day
-(days without trading -> ``false``); their ``known_at`` is the fetch time, so they supersede
-curated rows. Curated and ISS-calendar rows are written only for days after the last observed
-day of the calendar, so a later curated version never overrides observed history. A row is
-(re)written only when ``is_business_day`` changes (``known_at`` = when that became known; the
-old image goes to ``ops.row_history``).
+Observed rows cover every calendar day from the start date (:data:`OBSERVED_START`, 2019) to the
+last observed trading day (days without trading -> ``false``). Curated and ISS-calendar rows
+are written only for days after the last observed day of the calendar. A row is (re)written
+only when ``is_business_day`` changes (``known_at`` = when that became known; the old image
+goes to ``ops.row_history``). Repair on every refresh: ISS-calendar rows that the current ISS
+answer no longer lists are deleted (image kept in ``ops.row_history``), and an observed
+history that starts after :data:`OBSERVED_START` is extended backwards.
 
 Entry points: :func:`refresh_calendar` (called by ``cbr_meetings`` in ``calendar`` /
 ``calendar_full`` mode) and :func:`seed_calendar` (initial seeding without a scheduled job).
@@ -53,6 +56,7 @@ from mdhub.jobs import JobContext
 __all__ = [
     "CURATED_RESOURCE",
     "OBSERVED_START",
+    "SOURCE_PRIORITY",
     "CuratedCalendar",
     "CuratedYear",
     "iss_calendar_days",
@@ -65,7 +69,21 @@ __all__ = [
 log = logging.getLogger(__name__)
 
 CURATED_RESOURCE: Final = "calendar_curated.json"
-OBSERVED_START: Final = date(2021, 1, 1)
+OBSERVED_START: Final = date(2019, 1, 1)
+"""Observed calendars start here (CBR meeting history starts 2019: effective dates need the
+RU business-day calendar)."""
+ISS_SOURCE: Final = "moex_iss_calendar"
+SOURCE_PRIORITY: Final = {
+    "observed": 1,
+    ISS_SOURCE: 2,
+    "curated": 3,
+    "curated_unverified": 4,
+}
+"""Source precedence per (calendar, day), lower wins (``observed`` = any ``observed_*``):
+observed trading/fixings > days the official MOEX ISS calendar lists > curated file >
+unverified curated file > anything else; the weekday rule applies only when no row exists.
+Recency (``known_at``) only breaks ties within a rank. Mirrored by ``ref.calendar_source_rank``
+(migration 0420) used by ``ref.calendar_effective`` and :class:`mdhub.core.bizday.DbCalendar`."""
 INCREMENTAL_OVERLAP_DAYS: Final = 14
 PARSER_VERSION: Final = "1"
 KEY: Final = ["calendar", "day", "source"]
@@ -185,6 +203,42 @@ def write_calendar_days(
     return result + UpsertResult(unchanged=len(days) - len(rows))
 
 
+def _drop_unlisted(
+    conn: psycopg.Connection[Any],
+    calendar: str,
+    source: str,
+    keep: set[date],
+    *,
+    after: date | None,
+    run_id: int | None,
+) -> UpsertResult:
+    """Delete ``(calendar, source)`` rows after ``after`` whose day is not in ``keep``; the
+    deleted row images go to ``ops.row_history`` first (the history trigger covers updates
+    only). Counted as updates."""
+    with conn.cursor(row_factory=tuple_row) as cur:
+        cur.execute(
+            """
+            WITH gone AS (
+                DELETE FROM ref.calendar_day c
+                WHERE c.calendar = %(cal)s AND c.source = %(src)s
+                  AND (%(after)s::date IS NULL OR c.day > %(after)s::date)
+                  AND NOT (c.day = ANY(%(keep)s::date[]))
+                RETURNING c.*
+            )
+            INSERT INTO ops.row_history (table_name, row_key, old_row, replaced_by_run)
+            SELECT 'ref.calendar_day',
+                   jsonb_build_object('calendar', g.calendar, 'day', g.day, 'source', g.source),
+                   to_jsonb(g) || jsonb_build_object('_deleted', true), %(run)s
+            FROM gone g
+            """,
+            {"cal": calendar, "src": source, "after": after, "keep": sorted(keep), "run": run_id},
+        )
+        n = cur.rowcount
+    if n:
+        log.warning("calendar %s: removed %d %s row(s) no longer listed", calendar, n, source)
+    return UpsertResult(updated=max(n, 0))
+
+
 def _last_observed(conn: psycopg.Connection[Any], calendar: str) -> date | None:
     with conn.cursor(row_factory=tuple_row) as cur:
         row = cur.execute(
@@ -198,15 +252,21 @@ def _last_observed(conn: psycopg.Connection[Any], calendar: str) -> date | None:
 def _observed_start(
     conn: psycopg.Connection[Any], calendar: str, source: str, *, full: bool, since: date
 ) -> date:
+    """``since`` for a full refresh, when nothing is stored yet, or when the stored history
+    starts after ``since`` (it is extended backwards, e.g. to 2019 for the CBR meetings);
+    else the last observed day minus :data:`INCREMENTAL_OVERLAP_DAYS`."""
     if full:
         return since
     with conn.cursor(row_factory=tuple_row) as cur:
         row = cur.execute(
-            "SELECT max(day) FROM ref.calendar_day WHERE calendar = %s AND source = %s",
+            "SELECT min(day), max(day) FROM ref.calendar_day WHERE calendar = %s AND source = %s",
             (calendar, source),
         ).fetchone()
-    last = row[0] if row else None
-    return since if last is None else max(since, last - timedelta(days=INCREMENTAL_OVERLAP_DAYS))
+    first: date | None = row[0] if row else None
+    last: date | None = row[1] if row else None
+    if last is None or first is None or first > since:
+        return since
+    return max(since, last - timedelta(days=INCREMENTAL_OVERLAP_DAYS))
 
 
 def observed_days(traded: Iterable[date], start: date) -> dict[date, bool]:
@@ -313,21 +373,24 @@ def _observed_moex(
 
 
 def iss_calendar_days(rows: Iterable[Mapping[str, Any]], own: str) -> dict[date, bool]:
-    """Business days of every year present in ISS ``calendar`` rows of all engines.
+    """Business-day flags for exactly the days the ISS ``calendar`` rows *list* (``own``
+    engine, plus holidays of the ``currency`` engine) - never a synthesized year.
 
-    A day is a business day if it is a weekday, or a weekend listed with ``is_work_day=1``
-    whose session is not moved to another day (``reason != 'W'``) - unless any engine
-    (``own`` engine or ``currency``) lists it as a holiday (``is_work_day=0``). Weekend
-    sessions (``W``, attributed to Monday's ``trade_session_date``) are not business days.
+    * a day listed as a holiday (``is_work_day=0``) by ``own`` or ``currency`` -> ``False``,
+    * a weekend session (``reason='W'``, trading attributed to another session date) ->
+      ``False``,
+    * a weekend listed as a working day of ``own`` whose session is that day -> ``True``,
+    * a weekday listed as a working day of ``own`` -> ``True``.
+
+    Days the rows do not list are left to lower-priority sources (curated file, weekday
+    fallback): ISS often lists only part of a year (e.g. in December a few January days).
     """
     holidays: set[date] = set()
-    extra_work: set[date] = set()
-    years: set[int] = set()
+    flags: dict[date, bool] = {}
     for r in rows:
         d = to_date(r["date"], field="calendar date")
         if d is None:
             raise FormatDriftError("ISS calendar: empty date")
-        years.add(d.year)
         engine = str(r["engine"])
         if engine not in (own, "currency"):
             continue
@@ -336,15 +399,19 @@ def iss_calendar_days(rows: Iterable[Mapping[str, Any]], own: str) -> dict[date,
             raise FormatDriftError(f"ISS calendar: bad is_work_day {work!r}")
         if work == 0:
             holidays.add(d)
-        elif d.weekday() >= 5 and r["reason"] != "W" and engine == own:
+            continue
+        if engine != own:
+            continue
+        if r["reason"] == "W":
+            flags.setdefault(d, False)
+        elif d.weekday() >= 5:
             session = to_date(r["trade_session_date"]) if r["trade_session_date"] else None
-            if session in (None, d):
-                extra_work.add(d)
-    out: dict[date, bool] = {}
-    for y in sorted(years):
-        for d in date_range(date(y, 1, 1), date(y, 12, 31)):
-            out[d] = d not in holidays and (d.weekday() < 5 or d in extra_work)
-    return out
+            flags[d] = session in (None, d)
+        else:
+            flags[d] = True
+    for d in holidays:
+        flags[d] = False
+    return dict(sorted(flags.items()))
 
 
 def _fetch_iss_calendars(
@@ -453,10 +520,15 @@ def refresh_calendar(
                     for d, v in iss_calendar_days(rows, engine).items()
                     if last is None or d > last
                 }
+                # Repair: rows of earlier versions that ISS no longer lists (synthesized
+                # whole years) are removed - they would outrank the curated file.
+                total += _drop_unlisted(
+                    conn, cal, ISS_SOURCE, set(days), after=last, run_id=ctx.run.id
+                )
                 total += write_calendar_days(
                     conn,
                     cal,
-                    "moex_iss_calendar",
+                    ISS_SOURCE,
                     days,
                     known_at=known,
                     run_id=ctx.run.id,

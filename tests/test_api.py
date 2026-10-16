@@ -474,7 +474,7 @@ def test_zcyc_indices_calendar(seeded: TestClient) -> None:
     both = seeded.get("/v1/zcyc?date=2026-10-15&eod_only=false", headers=AUTH).json()["data"]
     assert [x["trade_time"] for x in both] == ["12:00:00", "18:54:59"]
 
-    idx = seeded.get("/v1/indices/eod?secid=rusfar,RUSFARCNY&date=2026-10-15", headers=AUTH)
+    idx = seeded.get("/v1/indices/eod?secid=RUSFAR,RUSFARCNY&date=2026-10-15", headers=AUTH)
     assert [(r["secid"], r["basis"]) for r in idx.json()["data"]] == [
         ("RUSFAR", "history"),
         ("RUSFARCNY", "marketdata"),

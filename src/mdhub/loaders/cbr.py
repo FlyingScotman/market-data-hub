@@ -25,7 +25,7 @@ year at 1 request/second), committed in :data:`FX_CHUNK_DAYS`-day chunks.
 ``cbr_meetings(mode="calendar")`` (first business day of the month) refreshes
 ``ref.cbr_meeting`` from ``/dkp/cal_mp/`` and the business-day calendars
 (:func:`mdhub.loaders.calendar.refresh_calendar`); ``mode="calendar_full"`` re-seeds the
-calendars from 2021; ``mode="post_meeting"`` (daily 15:00) is a no-op unless a meeting took place
+calendars from 2019; ``mode="post_meeting"`` (daily 15:00) is a no-op unless a meeting took place
 in the last :data:`POST_MEETING_DAYS` days and is not yet confirmed - then it reloads the key
 rate and resolves the decision.
 
@@ -683,13 +683,24 @@ def cbr_daily(
 # -------------------------------------------------------------------------- meetings
 
 
+def _effective_day_ok(ctx: JobContext, d: date) -> bool:
+    """A key-rate decision takes effect on a RU business day that is a weekday (a working
+    Saturday of the production calendar does not count)."""
+    return d.weekday() < 5 and ctx.is_business_day(d, RU_CALENDAR)
+
+
 def _next_business_day(ctx: JobContext, d: date) -> date:
+    """First RU business weekday after ``d`` (``ref.calendar_day`` RU_PRODUCTION, weekday
+    fallback) - never a weekend."""
     cur = d + timedelta(days=1)
     for _ in range(30):
-        if ctx.is_business_day(cur, RU_CALENDAR):
+        if _effective_day_ok(ctx, cur):
             return cur
         cur += timedelta(days=1)
-    return d + timedelta(days=1)
+    cur = d + timedelta(days=1)
+    while cur.weekday() >= 5:
+        cur += timedelta(days=1)
+    return cur
 
 
 def _key_rate_series(conn: psycopg.Connection[Any], since: date) -> list[tuple[date, Decimal]]:
@@ -719,7 +730,8 @@ def _decide(
     if same_day and same_day[0] != prev:
         eff, rate = meeting_date, same_day[0]
     else:
-        later = [(d, v) for d, v in after if d >= _next_business_day(ctx, meeting_date)]
+        nxt = _next_business_day(ctx, meeting_date)
+        later = [(d, v) for d, v in after if d >= nxt and _effective_day_ok(ctx, d)]
         if not later:
             return None
         eff, rate = later[0]
@@ -755,6 +767,10 @@ def resolve_meetings(conn: psycopg.Connection[Any], ctx: JobContext) -> int:
     rows = []
     for m in meetings:
         decided = _decide(ctx, m["meeting_date"], series)
+        if decided is None and not _effective_day_ok(ctx, m["effective_date"]):
+            # e.g. legacy rows dated on a Saturday: the rule is the next RU business day
+            decided = {c: m[c] for c in _DECISION_COLS}
+            decided["effective_date"] = _next_business_day(ctx, m["meeting_date"])
         if decided is not None and any(m[c] != decided[c] for c in _DECISION_COLS):
             rows.append({"meeting_date": m["meeting_date"], **decided})
     if not rows:
@@ -811,12 +827,15 @@ def cbr_meetings(ctx: JobContext, *, mode: str = "calendar") -> dict[str, Any]:
     from mdhub.loaders.calendar import refresh_calendar  # avoid import cycle at module load
 
     summary: dict[str, Any] = {}
+    # Calendars first: meeting effective dates are "next RU business day" by the calendar.
+    summary["calendar"] = refresh_calendar(ctx, full=(mode == "calendar_full"))
     with ctx.http() as http:
         with ctx.connection() as conn:
             res = _load_meetings(ctx, http, conn)
         ctx.run.add_counts(res)
         summary["meetings"] = {"inserted": res.inserted, "updated": res.updated}
-    summary["calendar"] = refresh_calendar(ctx, full=(mode == "calendar_full"))
+    with ctx.connection() as conn:
+        summary["meetings"]["resolved"] = resolve_meetings(conn, ctx)
     return summary
 
 

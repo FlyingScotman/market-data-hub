@@ -33,7 +33,7 @@ normalized price of a cross is only computed with a STEPPRICE of the same sessio
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -80,6 +80,7 @@ __all__ = [
     "parse_fx_marketdata",
     "parse_indicative",
     "parse_security_description",
+    "previous_session_day",
     "price_factor",
     "snapshot_ts",
 ]
@@ -122,13 +123,30 @@ def _price(value: Any, *, field: str, zero_is_null: bool) -> Decimal | None:
     return d
 
 
+def previous_session_day(day: date, is_business_day: Callable[[date], bool] | None) -> date:
+    """The last business day before ``day`` (``is_business_day``; default Monday-Friday)."""
+    pred = is_business_day or (lambda d: d.weekday() < 5)
+    cur = day - timedelta(days=1)
+    for _ in range(31):
+        if pred(cur):
+            return cur
+        cur -= timedelta(days=1)
+    return day - timedelta(days=1)
+
+
 def snapshot_ts(
-    update_time: Any, systime: datetime | None, *, field: str = "UPDATETIME"
+    update_time: Any,
+    systime: datetime | None,
+    *,
+    field: str = "UPDATETIME",
+    is_business_day: Callable[[date], bool] | None = None,
 ) -> datetime | None:
     """Combine an ISS ``UPDATETIME`` (MSK wall clock) with the date of ``SYSTIME``.
 
-    If the time lies after SYSTIME (snapshot taken after midnight for a pre-midnight
-    update) the previous day is used.
+    If the time lies after SYSTIME the quote is from an earlier session (a snapshot taken
+    after midnight, or before Monday's session, still carries the last session's update):
+    the previous **business day** of the trading calendar is used (``is_business_day``,
+    default Monday-Friday) - never a weekend/holiday by calendar arithmetic.
     """
     t = to_time(update_time, field=field)
     if t is None or systime is None:
@@ -136,7 +154,7 @@ def snapshot_ts(
     sys_msk = systime.astimezone(MSK)
     ts = datetime.combine(sys_msk.date(), t, tzinfo=MSK)
     if ts > sys_msk + timedelta(seconds=1):
-        ts -= timedelta(days=1)
+        ts = datetime.combine(previous_session_day(sys_msk.date(), is_business_day), t, tzinfo=MSK)
     return ts
 
 
@@ -284,7 +302,9 @@ FX_INTRADAY_VALUE_COLUMNS: Final = (
 )
 
 
-def parse_fx_marketdata(payload: Mapping[str, Any]) -> tuple[list[dict[str, Any]], str]:
+def parse_fx_marketdata(
+    payload: Mapping[str, Any], *, is_business_day: Callable[[date], bool] | None = None
+) -> tuple[list[dict[str, Any]], str]:
     """``marketdata`` block of a selt/CETS snapshot -> (rows for ``md.fx_intraday``, latency).
 
     Rows without any price (bid, offer, last, waprice all empty) are dropped - there is
@@ -293,7 +313,7 @@ def parse_fx_marketdata(payload: Mapping[str, Any]) -> tuple[list[dict[str, Any]
     rows: list[dict[str, Any]] = []
     for r in parse_block(payload, "marketdata", required=_FX_MD_REQUIRED):
         systime = to_datetime(r["SYSTIME"], field="SYSTIME")
-        ts = snapshot_ts(r["UPDATETIME"], systime)
+        ts = snapshot_ts(r["UPDATETIME"], systime, is_business_day=is_business_day)
         row = {
             "ts": ts,
             "secid": str(_req(r, "SECID")),
@@ -704,7 +724,10 @@ FUTURES_INTRADAY_VALUE_COLUMNS: Final = (
 
 
 def parse_futures_marketdata(
-    payload: Mapping[str, Any], factors: Mapping[str, Decimal | None]
+    payload: Mapping[str, Any],
+    factors: Mapping[str, Decimal | None],
+    *,
+    is_business_day: Callable[[date], bool] | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
     """FORTS ``marketdata`` -> (``md.futures_intraday`` rows without source_variant, latency).
 
@@ -724,7 +747,7 @@ def parse_futures_marketdata(
         last = _price(r["LAST"], field="LAST", zero_is_null=True)
         rows.append(
             {
-                "ts": snapshot_ts(r["UPDATETIME"], systime),
+                "ts": snapshot_ts(r["UPDATETIME"], systime, is_business_day=is_business_day),
                 "secid": secid,
                 "trade_date": to_date(r["TRADEDATE"], field="TRADEDATE"),
                 "bid": bid,

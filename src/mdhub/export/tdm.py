@@ -20,6 +20,7 @@ else ``MOEX:<emitent_id>``.
 
 from __future__ import annotations
 
+import bisect
 import csv
 import hashlib
 import io
@@ -301,6 +302,8 @@ class TdmExport:
     options: TdmExportOptions
     files: list[TdmFile] = field(default_factory=list)
     excluded: Counter[str] = field(default_factory=Counter)
+    withheld: Counter[str] = field(default_factory=Counter)
+    """Rows exported with a value left empty because the hub does not know it (yet)."""
     notes: list[str] = field(default_factory=list)
     generated_at: datetime = field(default_factory=utc_now)
 
@@ -341,6 +344,19 @@ class TdmExport:
                 "instrument_id": "ISIN if present and unique across SECIDs, else MOEX SECID",
                 "issuer_id": "INN, else MOEX:<emitent_id>",
                 "missing": "absent row (no forward fill)",
+                "bond_cashflows": (
+                    "coupon rate/amount only for status known (published fixed amounts and "
+                    "paid coupons); projected_by_moex / current_published / unknown coupons "
+                    "have empty rate and amount; future amortization/redemption amounts of "
+                    "indexed-face bonds are empty"
+                ),
+                "md_bond_quotes.ytm": (
+                    "MOEX effective yield (history yields EFFECTIVEYIELD / "
+                    "EFFECTIVEYIELDWAPRICE) at the exported price, only for fixed/zero coupon "
+                    "bonds and only when MOEX's yield date is the nearest offer ahead (else "
+                    "maturity); otherwise empty. YIELDCLOSE (to maturity, other convention) "
+                    "is never used"
+                ),
             },
             "files": [
                 {
@@ -352,6 +368,7 @@ class TdmExport:
                 for f in self.files
             ],
             "excluded": dict(sorted(self.excluded.items())),
+            "withheld_values": dict(sorted(self.withheld.items())),
             "absent": ABSENT,
             "notes": self.notes,
         }
@@ -590,23 +607,37 @@ def _static(export: TdmExport, conn: DictConnection, ids: dict[str, str]) -> Non
     exported = {s: i for s, i in exported.items() if i in kept}
     export.add("issuers", _dedupe(export, "issuers", issuers.values()))
     export.add("instruments", instruments)
-    export.add("bond_cashflows", _cashflows(export, conn, exported, horizon))
+    indexed = {b["secid"] for b in bonds if b["coupon_type"] == "indexed_face"}
+    export.add("bond_cashflows", _cashflows(export, conn, exported, horizon, indexed))
+
+
+KNOWN_COUPON_STATUSES: Final = frozenset({"known"})
+"""``ref.bond_coupon.status`` values exported with rate/amount; ``projected_by_moex``,
+``current_published`` and ``unknown`` coupons are exported with empty rate and amount (TDM
+1.3: ``rate`` "ставка купона, % (если известна)", both columns optional; an empty cell loads
+as NULL, not 0)."""
 
 
 def _cashflows(
-    export: TdmExport, conn: DictConnection, exported: dict[str, str], horizon: date
+    export: TdmExport,
+    conn: DictConnection,
+    exported: dict[str, str],
+    horizon: date,
+    indexed_face: set[str],
 ) -> list[tuple[Any, ...]]:
+    asof = export.options.date_to
     rows = conn.execute(
         """
-        SELECT secid, pay_date AS date, 'coupon' AS type, value_prc AS rate, amount, 0 AS prio
+        SELECT secid, pay_date AS date, 'coupon' AS type, value_prc AS rate, amount, 0 AS prio,
+               status
         FROM ref.bond_coupon WHERE NOT is_deleted AND pay_date >= %(h)s
         UNION ALL
         SELECT secid, amort_date, CASE WHEN data_source = 'maturity' THEN 'redemption'
-                                       ELSE 'amort' END, NULL, value, 0
+                                       ELSE 'amort' END, NULL, value, 0, NULL
         FROM ref.bond_amortization WHERE NOT is_deleted AND amort_date >= %(h)s
         UNION ALL
         SELECT secid, offer_date, 'offer', NULL, value,
-               CASE WHEN source = 'moex_iss' THEN 0 ELSE 1 END
+               CASE WHEN source = 'moex_iss' THEN 0 ELSE 1 END, NULL
         FROM ref.bond_offer
         WHERE NOT is_deleted AND offer_date IS NOT NULL AND offer_date >= %(h)s
           AND status <> 'cancelled'
@@ -619,16 +650,28 @@ def _cashflows(
         iid = exported.get(r["secid"])
         if iid is None:
             continue
+        rate, amount = r["rate"], r["amount"]
+        if r["type"] == "coupon" and r["status"] not in KNOWN_COUPON_STATUSES:
+            export.withheld[f"bond_cashflows: coupon without rate/amount ({r['status']})"] += 1
+            rate = amount = None
+        elif (
+            r["type"] in ("amort", "redemption")
+            and r["secid"] in indexed_face
+            and r["date"] > asof
+            and amount is not None
+        ):
+            export.withheld["bond_cashflows: amount left empty (indexed face, projected)"] += 1
+            amount = None
         key = (iid, r["date"], r["type"])
         cur = merged.get(key)
         if cur is None:
-            merged[key] = [iid, r["date"], r["type"], r["rate"], r["amount"]]
+            merged[key] = [iid, r["date"], r["type"], rate, amount]
             continue
         if r["type"] == "offer":
             continue  # same-date offers (e.g. MOEX and Cbonds rows): first wins
         export.excluded["bond_cashflows: same-date flows merged"] += 1
-        cur[3] = cur[3] if cur[3] == r["rate"] else None
-        cur[4] = None if cur[4] is None or r["amount"] is None else cur[4] + r["amount"]
+        cur[3] = cur[3] if cur[3] == rate else None
+        cur[4] = None if cur[4] is None or amount is None else cur[4] + amount
     return _dedupe(export, "bond_cashflows", (tuple(v) for v in merged.values()))
 
 
@@ -724,18 +767,49 @@ def _accrued_pct(r: dict[str, Any]) -> Decimal | None:
     return pct
 
 
-def _ytm(basis: str, clean: Decimal, r: dict[str, Any]) -> Decimal | None:
-    """Yield consistent with the chosen price: MOEX effective yield to its yield date
-    (nearest offer while ahead, else maturity) when the yields row priced the same number."""
-    column: str | None = None
+YTM_COUPON_TYPES: Final = frozenset({"fixed", "zero"})
+"""Bonds whose MOEX effective yield is exported as TDM ``ytm``. For floaters, linkers and
+bonds with unknown coupons MOEX computes the yield from projected (or missing) coupons - e.g.
+~0 % for a floater without a published rate - so it is not a yield TDM can use."""
+
+
+def _ytm(basis: str, clean: Decimal, r: dict[str, Any], target: date | None) -> Decimal | None:
+    """TDM ``ytm`` (to the nearest offer while one is ahead, else to maturity): MOEX effective
+    yield of the history ``yields`` row priced at exactly ``clean`` (``PRICE`` for
+    close-type prices, ``WAPRICE`` for ``waprice``), only when MOEX's ``YIELDDATE`` is
+    ``target`` (that offer / maturity date). ``YIELDCLOSE`` from the history is never used:
+    it is a yield to maturity even with an offer ahead (RU000A0JX1S1 2026-10-15: 12.12 vs
+    10.27 to the offer) and a different convention from EFFECTIVEYIELD."""
+    if target is None or r["yield_date"] != target:
+        return None
+    if r["coupon_type"] not in YTM_COUPON_TYPES:
+        return None
+    value: Decimal | None = None
     if r["y_price"] is not None and r["y_price"] == clean:
-        column = "effective_yield_pct"
+        value = r["effective_yield_pct"]
     elif basis == "waprice" and r["y_waprice"] is not None and r["y_waprice"] == clean:
-        column = "effective_yield_waprice_pct"
-    elif basis == "close":
-        column = "yield_close_pct"
-    value: Decimal | None = r[column] if column else None
+        value = r["effective_yield_waprice_pct"]
     return value
+
+
+def _offer_dates(conn: DictConnection) -> dict[str, list[date]]:
+    rows = conn.execute(
+        """
+        SELECT secid, offer_date FROM ref.bond_offer
+        WHERE NOT is_deleted AND offer_date IS NOT NULL AND status <> 'cancelled'
+        ORDER BY secid, offer_date
+        """
+    ).fetchall()
+    out: dict[str, list[date]] = {}
+    for r in rows:
+        out.setdefault(r["secid"], []).append(r["offer_date"])
+    return out
+
+
+def _yield_target(trade_date: date, offers: list[date], maturity: date | None) -> date | None:
+    """The nearest offer after ``trade_date``, else the maturity date."""
+    i = bisect.bisect_right(offers, trade_date)
+    return offers[i] if i < len(offers) else maturity
 
 
 def _bond_quotes(export: TdmExport, conn: DictConnection, ids: dict[str, str]) -> None:
@@ -743,10 +817,11 @@ def _bond_quotes(export: TdmExport, conn: DictConnection, ids: dict[str, str]) -
     rows = conn.execute(
         """
         SELECT e.trade_date, e.secid, e.board, e.close, e.waprice, e.legal_close,
-               e.admitted_quote, e.market_price3, e.yield_close_pct, e.accrued_int,
+               e.admitted_quote, e.market_price3, e.accrued_int,
                e.face_value, e.face_unit, e.currency_id, e.value,
+               b.coupon_type, b.maturity_date,
                y.price AS y_price, y.waprice AS y_waprice, y.effective_yield_pct,
-               y.effective_yield_waprice_pct
+               y.effective_yield_waprice_pct, y.yield_date, y.yield_date_type
         FROM md.bond_eod e
         JOIN ref.bond b
           ON b.secid = e.secid AND e.board = COALESCE(b.marketprice_board, b.primary_board)
@@ -757,6 +832,7 @@ def _bond_quotes(export: TdmExport, conn: DictConnection, ids: dict[str, str]) -
         """,
         (o.start, o.date_to),
     ).fetchall()
+    offers = _offer_dates(conn)
     label = PRICE_BASES[o.price_basis]
     out: list[tuple[Any, ...]] = []
     for r in rows:
@@ -764,12 +840,16 @@ def _bond_quotes(export: TdmExport, conn: DictConnection, ids: dict[str, str]) -
         if clean is None or clean <= 0:
             continue  # no price on that day: no row
         volume = r["value"] if _norm_ccy(r["currency_id"]) == "RUB" else None
+        target = _yield_target(r["trade_date"], offers.get(r["secid"], []), r["maturity_date"])
+        ytm = _ytm(o.price_basis, clean, r, target)
+        if ytm is None and r["effective_yield_pct"] is not None:
+            export.withheld["md_bond_quotes: ytm left empty (basis/price/coupon type)"] += 1
         out.append(
             (
                 r["trade_date"],
                 ids.get(r["secid"], r["secid"]),
                 clean,
-                _ytm(o.price_basis, clean, r),
+                ytm,
                 None,
                 None,
                 _accrued_pct(r),

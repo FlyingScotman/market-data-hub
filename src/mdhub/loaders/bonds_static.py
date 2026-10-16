@@ -20,7 +20,11 @@ Jobs
    ``ref.static_snapshot`` observation log; schedule rows that disappeared from the complete
    snapshot of a SECID get ``is_deleted``; boards no longer listed get ``listed = false``.
 
-At ``MDHUB_ISS_RPS=3`` a run takes ~13 minutes (bondization ~11.5); the first run also
+Raw captures are committed at the end of every fetch phase (1-5; the bulk bondization crawl
+as a whole, so a failed crawl still leaves no partial captures), so a failure in a later phase
+or in the write phase keeps what was fetched; only the write phase (6) is one transaction.
+
+At ``MDHUB_ISS_RPS=3`` a run takes ~13-14 minutes (bondization ~11.5); the first run also
 describes the ~850 traded SECIDs outside the collection (~5 more minutes). If the bulk
 bondization crawl is inconsistent (TOTAL changed, short pages), schedules are left untouched
 and the run ends ``partial``.
@@ -159,9 +163,14 @@ def bonds_static(
     today = ctx.today()
     u = Universe()
     with ctx.http(base_url=ISS_BASE_URL) as http, ctx.connection() as conn:
+        # Raw first: the captures of each fetch phase are committed when the phase ends, so a
+        # failure later (or in the write phase) does not discard them; the normalized rows are
+        # written afterwards in ONE transaction (schedules stay atomic per run).
         _fetch_directory(ctx, conn, http, u)
+        conn.commit()
         _fetch_collection(ctx, conn, http, u)
         _fetch_market(ctx, conn, http, u)
+        conn.commit()
         _fetch_descriptions(
             ctx,
             conn,
@@ -172,6 +181,7 @@ def bonds_static(
             backlog_limit=backlog_limit,
             workers=workers,
         )
+        conn.commit()
         if bondization:
             try:
                 _fetch_bondization_bulk(ctx, conn, http, u, workers=workers)
@@ -180,9 +190,11 @@ def bonds_static(
                 ctx.run.mark_partial(f"bulk bondization incomplete, schedules not updated: {exc}")
                 u.bondization = BondizationData()
             else:
+                conn.commit()
                 _fetch_bondization_gaps(
                     ctx, conn, http, u, today, gap_limit=gap_limit, workers=workers
                 )
+            conn.commit()
         scope = (
             set(u.directory)
             | set(u.collection)
@@ -848,8 +860,34 @@ def _money_rub(
     return None
 
 
+def fixed_in_advance_secids(conn: psycopg.Connection[Any], secids: Sequence[str]) -> set[str]:
+    """Floaters whose curated formula states a fixing before the period start (and no
+    averaging): their current coupon published by MOEX is ``known``, not
+    ``current_published``."""
+    if not secids:
+        return set()
+    with conn.cursor(row_factory=tuple_row) as cur:
+        rows = cur.execute(
+            """
+            SELECT secid FROM ref.bond_rate_formula
+            WHERE source = 'curated' AND NOT is_deleted AND secid = ANY(%s)
+              AND averaging IS NULL
+              AND evidence -> 'formula' ? 'fixing_calendar_days_before_start'
+              AND coalesce(benchmark, '') <> ALL(%s)
+            """,
+            (list(secids), sorted(ms.IN_ARREARS_BENCHMARKS)),
+        ).fetchall()
+    return {str(r[0]) for r in rows}
+
+
 def _schedule_rows(
-    secid: str, u: Universe, facts: BondFacts, today: date, run_id: int
+    secid: str,
+    u: Universe,
+    facts: BondFacts,
+    today: date,
+    run_id: int,
+    *,
+    fixed_in_advance: bool = False,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], int]:
     numbered = ms.number_coupons(u.bondization.coupons.get(secid, []))
     current = ms.current_coupon_index(numbered, today)
@@ -862,6 +900,7 @@ def _schedule_rows(
             is_current=no == current,
             face_indexed=facts.face_indexed,
             today=today,
+            fixed_in_advance=fixed_in_advance,
         )
         has = status != "unknown"
         coupons.append(
@@ -1191,8 +1230,11 @@ def write_universe(
     amorts: list[dict[str, Any]] = []
     offers: list[dict[str, Any]] = []
     duplicates = 0
+    advance = fixed_in_advance_secids(conn, sched_scope)
     for secid in sched_scope:
-        c, a, o, dup = _schedule_rows(secid, u, facts[secid], today, run_id)
+        c, a, o, dup = _schedule_rows(
+            secid, u, facts[secid], today, run_id, fixed_in_advance=secid in advance
+        )
         coupons += c
         amorts += a
         offers += o

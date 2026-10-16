@@ -10,8 +10,9 @@ Per trade date (one transaction each, fail closed per date):
 3. Both upserted idempotently; changed values (post-session revisions) land in
    ``ops.row_history``.
 
-A business day with zero ISS rows is a recorded "no data" outcome (warning, ``ops.data_gap``
-status ``unfillable`` in ``final`` mode / backfill), not an error. ``prelim`` (19:20, same day)
+A business day with zero ISS rows is a recorded "no data" outcome (warning,
+:func:`mdhub.core.gaps.record_no_data` in ``final`` mode / backfill: ``unfillable`` once the
+day is older than the grace period, else ``open``), not an error. ``prelim`` (19:20, same day)
 just notes it - history may not be published yet.
 
 Parameters: ``mode`` (``prelim``/``final``), ``days_back`` (business days of MOEX_STOCK before
@@ -25,10 +26,8 @@ from collections.abc import Callable, Sequence
 from datetime import date
 from typing import Any, Final
 
-import psycopg
-from psycopg.types.json import Jsonb
-
 from mdhub.core.capture import record_capture
+from mdhub.core.gaps import close_gap, record_no_data
 from mdhub.core.iss import ISS_BASE_URL, IssFormatError, IssPagingError, iter_pages
 from mdhub.core.upsert import upsert_rows
 from mdhub.datasets import DatasetSpec, register_dataset
@@ -55,6 +54,9 @@ __all__ = [
 CALENDAR: Final = "MOEX_STOCK"
 KEY: Final = ["trade_date", "secid", "board"]
 SOURCE: Final = "moex_iss"
+BACKFILL_TASK_DAYS: Final = 5
+"""~70 ISS pages per trade date at 3 rps: a 5-day task takes ~2 minutes, well within the
+backfill worker budget, so a backfill never holds the job lock across a scheduled run for long."""
 
 register_dataset(
     DatasetSpec(
@@ -67,6 +69,7 @@ register_dataset(
         backfill_job="bonds_eod",
         history_start=date(2024, 1, 3),
         min_rows_per_day=1000,
+        max_task_days=BACKFILL_TASK_DAYS,
         description="MOEX bonds EOD history, all boards of market 'bonds' (ISS history by date)",
     )
 )
@@ -81,6 +84,7 @@ register_dataset(
         backfill_job="bonds_eod",
         history_start=date(2024, 1, 3),
         min_rows_per_day=500,
+        max_task_days=BACKFILL_TASK_DAYS,
         description="MOEX bonds EOD yields/duration/G- and Z-spreads (ISS history yields by date)",
     )
 )
@@ -111,32 +115,6 @@ def resolve_trade_dates(
         return business_days_between(start, end, lambda d: ctx.is_business_day(d, calendar))
     offsets = list(days_back) if days_back is not None else list(default_days_back)
     return ctx.business_dates(offsets, calendar=calendar)
-
-
-def record_no_data(conn: psycopg.Connection[Any], dataset: str, day: date, note: str) -> None:
-    """Record "ISS has no data for this business day" as an ``unfillable`` gap."""
-    conn.execute(
-        """
-        INSERT INTO ops.data_gap (dataset, key, gap_date, status, note)
-        VALUES (%s, %s, %s, 'unfillable', %s)
-        ON CONFLICT (dataset, key, gap_date) DO UPDATE
-            SET status = 'unfillable', note = EXCLUDED.note, detected_at = now()
-            WHERE ops.data_gap.status = 'open'
-        """,
-        (dataset, Jsonb({}), day, note),
-    )
-
-
-def close_gap(conn: psycopg.Connection[Any], dataset: str, day: date) -> None:
-    """Mark an open/unfillable gap of ``dataset`` on ``day`` as backfilled (data arrived)."""
-    conn.execute(
-        """
-        UPDATE ops.data_gap SET status = 'backfilled'
-        WHERE dataset = %s AND key = '{}'::jsonb AND gap_date = %s
-          AND status IN ('open', 'unfillable')
-        """,
-        (dataset, day),
-    )
 
 
 def run_dates(
@@ -205,8 +183,9 @@ def load_bonds_eod_day(
             note = f"ISS bonds history returned 0 rows for {trade_date} (mode={mode})"
             ctx.logger.warning(note)
             if mode != "prelim":
-                record_no_data(conn, "bonds_eod", trade_date, note)
-                record_no_data(conn, "bonds_eod_yield", trade_date, note)
+                today = ctx.today()
+                record_no_data(conn, "bonds_eod", trade_date, note, today=today)
+                record_no_data(conn, "bonds_eod_yield", trade_date, note, today=today)
             return {"history": 0, "yields": 0, "no_data": True}
 
         yields: list[dict[str, Any]] = []

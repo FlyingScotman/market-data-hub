@@ -226,15 +226,33 @@ def test_fx_moex_eod_idempotent_and_revisions(settings: Settings, db: Database, 
 
 
 @respx.mock
-def test_fx_moex_eod_empty_day_is_partial(settings: Settings, db: Database, conn: Conn) -> None:
+def test_fx_moex_eod_empty_day_records_no_data(
+    settings: Settings, db: Database, conn: Conn, today_is: Callable[[date], None]
+) -> None:
+    """Review F1: an empty ISS answer is a recorded no-data day (gap), not a partial run - a
+    partial run made the backfill worker leave the gap open and re-queue it for ever."""
+    today_is(date(2026, 10, 19))
     empty = {
         "history": {"columns": load("selt_history_p0.json")["history"]["columns"], "data": []},
         "history.cursor": {"columns": ["INDEX", "TOTAL", "PAGESIZE"], "data": [[0, 0, 100]]},
     }
     _mock_eod({0: empty})
     out = run("fx_moex_eod", {"date_from": "2026-10-15", "date_to": "2026-10-16"}, settings, db)
-    assert out.status == "partial"
+    assert out.status == "succeeded"
     assert counts(conn, "SELECT count(*) FROM md.fx_eod") == 0
+    gaps = conn.execute(
+        "SELECT gap_date, status FROM ops.data_gap WHERE dataset = 'fx_eod' ORDER BY 1"
+    ).fetchall()
+    assert gaps == [
+        {"gap_date": date(2026, 10, 15), "status": "unfillable"},
+        {"gap_date": date(2026, 10, 16), "status": "unfillable"},
+    ]
+    conn.commit()
+    _mock_eod({0: empty})
+    out = run("fx_moex_eod", {"mode": "prelim", "days_back": "0"}, settings, db)
+    assert out.status == "succeeded"  # prelim only logs (history may not be published yet)
+    n = counts(conn, "SELECT count(*) FROM ops.data_gap WHERE gap_date = '2026-10-19'")
+    assert n == 0
 
 
 @respx.mock
@@ -273,7 +291,9 @@ def test_fx_moex_intraday_change_only(settings: Settings, db: Database, conn: Co
 
 
 @respx.mock
-def test_fx_indicative_and_fixings(settings: Settings, db: Database, conn: Conn) -> None:
+def test_fx_indicative_and_fixings(
+    settings: Settings, db: Database, conn: Conn, today_is: Callable[[date], None]
+) -> None:
     def indicative(request: httpx.Request) -> httpx.Response:
         if request.url.params["date"] == "2026-10-15":
             return httpx.Response(200, json=load("indicative_2026-10-15.json"))
@@ -288,8 +308,13 @@ def test_fx_indicative_and_fixings(settings: Settings, db: Database, conn: Conn)
     fix_route = respx.get(ISS_BASE_URL + fx.FIXING_SECID.format(secid="SRATE_CNY_ON")).mock(
         return_value=httpx.Response(200, json=load("fixing_srate.json"))
     )
+    today_is(date(2026, 10, 16))
     out = run("fx_indicative", {"date_from": "2026-10-15", "date_to": "2026-10-16"}, settings, db)
-    assert out.status == "partial"  # 2026-10-16 has no rates (yet)
+    assert out.status == "succeeded"  # 2026-10-16 has no rates (yet): an open gap, not partial
+    gap = conn.execute(
+        "SELECT gap_date, status FROM ops.data_gap WHERE dataset = 'fx_indicative'"
+    ).fetchall()
+    assert gap == [{"gap_date": date(2026, 10, 16), "status": "open"}]  # within grace
     assert counts(conn, "SELECT count(*) FROM md.fx_indicative") == 22
     assert fix_route.calls.last.request.url.params["from"] == "2026-10-15"
     fixing = conn.execute("SELECT * FROM md.fx_fixing ORDER BY fixing_date").fetchall()

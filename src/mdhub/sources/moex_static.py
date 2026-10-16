@@ -32,11 +32,19 @@ Normalization rules (documented here, tested in ``tests/test_bonds_static.py``):
   ordered by ``(coupondate, startdate, recorddate, value)`` (:func:`number_coupons`). MOEX gives
   no coupon number; a moved record/pay date keeps the number (revision via row history).
 * **Coupon status** (:func:`coupon_status`): ``known`` for published values of fixed coupons
-  and for paid coupons; ``projected_by_moex`` for floating coupons beyond the current period
-  (MOEX forward-fills the current rate), for the current period of in-arrears benchmarks
-  (RUONIA, RUONIA index, CPI), and for future amounts on an indexed face; ``unknown`` when
-  MOEX publishes nothing (amount/rate stored as NULL, also when MOEX sends 0 for a non-zero
-  coupon bond: missing is not zero).
+  and for paid coupons; ``current_published`` for the current period of a floater whose value
+  MOEX publishes but which no curated formula states to be fixed in advance (it may be a
+  projection, e.g. an average key rate over the period paid in arrears - consumers must not
+  treat it as a fixed cash flow; it becomes ``known`` when paid or when a curated formula
+  says ``fixing_calendar_days_before_start``); ``projected_by_moex`` for floating coupons
+  beyond the current period (MOEX forward-fills the current rate), for the current period of
+  in-arrears benchmarks (RUONIA, RUONIA index, CPI), and for future amounts on an indexed face
+  or of bonds whose coupon type is unknown; ``unknown`` when MOEX publishes nothing
+  (amount/rate stored as NULL, also when MOEX sends 0 for a non-zero coupon bond: missing is
+  not zero).
+* An *active* bond without MOEX fixed/floating labels is never classified ``fixed`` just
+  because its whole schedule carries values (``coupon_type = unknown``, basis ``schedule``):
+  MOEX forward-fills floating coupons.
 * **Offers** (:func:`normalize_offers`): ``0000-00-00`` -> ``offer_date`` NULL +
   ``date_missing``; type put/call/buyback/unknown from the bond's PUT/CALL/BUYBACK option
   dates, the holder submission window, then ``BOND_SUBTYPE``; status from the MOEX suffix
@@ -1242,7 +1250,9 @@ def classify_coupon_type(inp: ClassifyInput, bond_class: str) -> tuple[str, str]
         if not inp.coupon_values:
             return "unknown", "none"
         if all(inp.coupon_values):
-            return "fixed", "schedule"
+            # A fully valued schedule proves nothing for an active bond: MOEX forward-fills
+            # floating coupons. Only a matured bond (every coupon paid) is "fixed" by schedule.
+            return ("fixed", "schedule") if inp.is_matured else ("unknown", "schedule")
         if any(inp.coupon_values):
             return "variable_known", "schedule"
         return "unknown", "none"
@@ -1282,15 +1292,18 @@ def coupon_status(
     is_current: bool,
     face_indexed: bool,
     today: date,
+    fixed_in_advance: bool = False,
 ) -> str:
-    """``known`` / ``projected_by_moex`` / ``unknown`` (module docstring)."""
+    """``known`` / ``current_published`` / ``projected_by_moex`` / ``unknown`` (module
+    docstring). ``fixed_in_advance``: a curated formula states that the floater's rate is
+    fixed before the period starts (only then is its current coupon ``known``)."""
     if not coupon_has_value(row, coupon_type):
         return "unknown"
     if row.pay_date <= today:
         return "known"
     if coupon_type == "floating":
         if is_current and (benchmark is None or benchmark not in IN_ARREARS_BENCHMARKS):
-            return "known"
+            return "known" if fixed_in_advance else "current_published"
         return "projected_by_moex"
     if coupon_type in ("indexed_face", "unknown") or face_indexed:
         return "projected_by_moex"

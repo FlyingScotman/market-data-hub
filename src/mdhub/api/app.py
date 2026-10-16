@@ -44,6 +44,7 @@ log = logging.getLogger("mdhub.api")
 access_log = logging.getLogger("mdhub.api.access")
 
 API_POOL_SIZE = 8
+"""Default of ``MDHUB_API_POOL_SIZE`` (``Settings.api_pool_size``)."""
 _REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:\-]{1,128}$")
 
 
@@ -93,7 +94,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         if database is not None:
             app.state.database = database
         elif cfg.database_url is not None:
-            owned = Database.from_settings(cfg, pool_size=API_POOL_SIZE)
+            owned = Database.from_settings(cfg, pool_size=cfg.api_pool_size)
             app.state.database = owned
         else:
             app.state.database = None

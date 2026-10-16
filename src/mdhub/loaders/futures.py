@@ -12,9 +12,12 @@ Jobs (names fixed by :data:`mdhub.schedule.KNOWN_JOBS`):
   to public ISS (15-min delayed, ``source_variant='iss_public'``) and marks the run partial.
   Change-only.
 * ``algopack_fx_futures`` - AlgoPack FO tradestats/obstats and FUTOI for FX futures. Without
-  dates: the latest 5-minute interval (``latest=1``, 3 requests). With ``date_from/date_to``:
-  per-contract ``from/till`` backfill (history from 2020-01-03). Dedup by primary key
-  ``(secid, interval_ts)`` - polling the same interval twice is a no-op.
+  dates (scheduled polls): the whole current day per listed FX contract (``from=till=today``,
+  2 requests per contract) and per FUTOI ticker, so bars published late or missed by a failed
+  poll are filled by the next poll; then the interval completeness check
+  (:func:`interval_holes`). With ``date_from/date_to``: per-contract ``from/till`` backfill
+  (history from 2020-01-03). Dedup by primary key ``(secid, interval_ts)`` - polling the same
+  interval twice is a no-op. FUTOI answers of 1000 rows fail closed (possible truncation).
 
 Normalized prices (``*_rub_per_unit`` = raw x STEPPRICE / MINSTEP / LOTVOLUME): RUB-quoted
 FX contracts always (their STEPPRICE is constant; an expired contract without a spec uses a
@@ -26,7 +29,8 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from datetime import time as dt_time
 from decimal import Decimal
 from typing import Any, Final
 
@@ -34,6 +38,7 @@ import psycopg
 from psycopg.rows import dict_row, tuple_row
 
 from mdhub.core.capture import record_capture
+from mdhub.core.gaps import close_gap, record_no_data
 from mdhub.core.http import HttpClient, HttpError
 from mdhub.core.iss import (
     APIM_BASE_URL,
@@ -43,6 +48,7 @@ from mdhub.core.iss import (
     iter_pages,
     parse_block,
 )
+from mdhub.core.timeutil import MSK
 from mdhub.core.upsert import UpsertResult, touch_last_seen, upsert_rows
 from mdhub.datasets import DatasetSpec, register_dataset
 from mdhub.jobs import JobContext, JobSkipped, job
@@ -81,6 +87,7 @@ __all__ = [
     "algopack_fx_futures",
     "futures_eod",
     "futures_intraday",
+    "interval_holes",
     "load_specs",
     "refresh_futures_contracts",
 ]
@@ -94,6 +101,15 @@ FUTOI_MAX_ROWS: Final = 1000
 """FUTOI ignores ``start=`` and returns at most 1000 rows (newest first): backfill one day per
 request (~400 rows per ticker-day) and fail closed on a full page."""
 BAR_KEY: Final = ["secid", "interval_ts"]
+INTERVAL: Final = timedelta(minutes=5)
+INTERVAL_GRACE: Final = timedelta(minutes=15)
+"""An interval missing for longer than this (three polls) counts as a hole."""
+ALGOPACK_BREAKS: Final = (
+    (dt_time(13, 55), dt_time(14, 10)),
+    (dt_time(18, 45), dt_time(19, 10)),
+)
+"""FORTS clearing windows (intermediate 14:00-14:05, evening 18:50-19:05, MSK) with a margin
+for the interval-label convention: no trading, so no bars - not holes."""
 FUTOI_KEY: Final = ["ticker", "interval_ts", "clgroup"]
 BACKFILL_CHUNK_DAYS: Final = 31
 DEFAULT_FUTOI_TICKERS: Final = frozenset(
@@ -112,6 +128,7 @@ register_dataset(
         backfill_job="futures_eod",
         history_start=date(2024, 1, 3),
         min_rows_per_day=200,
+        max_task_days=10,
         description="FORTS futures daily history (all outright futures; settle, OI)",
     )
 )
@@ -142,6 +159,7 @@ for _name, _desc in (
             backfill_job="algopack_fx_futures",
             history_start=date(2024, 1, 3),
             min_rows_per_day=100,
+            max_task_days=3,
             description=_desc,
         )
     )
@@ -316,7 +334,10 @@ def futures_eod(
                 if wrong:
                     raise IssFormatError(f"FORTS history for {d} returned dates {sorted(wrong)}")
                 if not rows:
-                    ctx.run.mark_partial(f"no FORTS history rows for {d}")
+                    note = f"ISS FORTS history returned 0 rows for {d} (mode={mode})"
+                    ctx.logger.warning(note)
+                    if mode != "prelim":
+                        record_no_data(conn, "futures_eod", d, note, today=ctx.today())
                     continue
                 _ensure_contracts(ctx, http, conn, rows)
                 specs = load_specs(conn)
@@ -328,6 +349,7 @@ def futures_eod(
                 ctx.run.add_counts(
                     upsert_rows(conn, "md.futures_eod", rows, EOD_KEY, run_id=run_id)
                 )
+                close_gap(conn, "futures_eod", d)
                 ctx.logger.info(
                     "futures_eod %s: %d rows (%d spreads skipped)", d, len(rows), len(skipped)
                 )
@@ -457,7 +479,9 @@ def futures_intraday(ctx: JobContext) -> None:
         for c in contracts
         if c["is_fx"]
     }
-    rows, latency = parse_futures_marketdata(res.data, factors)
+    rows, latency = parse_futures_marketdata(
+        res.data, factors, is_business_day=lambda d: ctx.is_business_day(d, FORTS_CALENDAR)
+    )
     missing = set(secids) - {c["secid"] for c in contracts}
     if missing:
         ctx.logger.warning("FORTS marketdata lacks %s", sorted(missing))
@@ -558,8 +582,9 @@ def algopack_fx_futures(
     *,
     date_from: date | None = None,
     date_to: date | None = None,
-) -> None:
-    """Latest 5-minute interval, or a per-contract backfill of ``date_from..date_to``."""
+) -> dict[str, Any]:
+    """Today's 5-minute intervals (scheduled polls), or a per-contract backfill of
+    ``date_from..date_to``."""
     if not ctx.settings.moex_api_key:
         raise JobSkipped("MOEX_API_KEY not set (AlgoPack needs APIM)")
     headers = apim_headers(ctx.settings.moex_api_key.get_secret_value())
@@ -567,16 +592,85 @@ def algopack_fx_futures(
         specs = load_specs(conn)
     with ctx.http(base_url=APIM_BASE_URL, headers=headers) as http:
         if date_from is None and date_to is None:
-            _algopack_latest(ctx, http, specs)
-        else:
-            start = date_from or date_to
-            end = date_to or date_from
-            assert start is not None
-            assert end is not None
-            _algopack_backfill(ctx, http, specs, start, end)
+            return _algopack_latest(ctx, http, specs)
+        start = date_from or date_to
+        end = date_to or date_from
+        assert start is not None
+        assert end is not None
+        _algopack_backfill(ctx, http, specs, start, end)
+        return {"mode": "backfill", "date_from": start.isoformat(), "date_to": end.isoformat()}
 
 
-def _algopack_latest(ctx: JobContext, http: HttpClient, specs: Mapping[str, ContractSpec]) -> None:
+def _poll_secids(specs: Mapping[str, ContractSpec], today: date) -> list[str]:
+    """FX contracts to poll today: listed recently (RFUD listing seen in the last week) or
+    perpetual."""
+    horizon = today - timedelta(days=7)
+    return sorted(
+        s.secid
+        for s in specs.values()
+        if s.is_fx
+        and (s.contract_type == "perpetual" or (s.last_seen is not None and s.last_seen >= horizon))
+        and (s.last_trade_date is None or s.last_trade_date >= today)
+    )
+
+
+def _algopack_latest(
+    ctx: JobContext, http: HttpClient, specs: Mapping[str, ContractSpec]
+) -> dict[str, Any]:
+    """Poll the **whole current day** (``from=till=today``) per FX contract and FUTOI ticker.
+
+    Re-reading the day on every poll fills bars published late and bars of polls that were
+    missed (APIM error, restart, lock); the upsert dedups by key, so re-polled bars are
+    no-ops. Without known FX contracts (fresh database) the ``latest=1`` all-contracts
+    snapshot is used once (bootstrap). Ends with the interval completeness check
+    (:func:`interval_holes`)."""
+    run_id = ctx.run.id
+    today = ctx.today()
+    secids = _poll_secids(specs, today)
+    if not secids:
+        _algopack_snapshot(ctx, http, specs)
+        return {"mode": "latest_snapshot", "contracts": 0}
+    span = {"from": today.isoformat(), "till": today.isoformat()}
+    for secid in secids:
+        for kind, _path, secid_path, table in _DATASETS:
+            with ctx.connection() as conn:
+                rows: list[dict[str, Any]] = []
+                for page in iter_pages(http, secid_path.format(secid=secid), span, block="data"):
+                    cap = record_capture(
+                        conn,
+                        run_id,
+                        "moex_apim",
+                        f"intraday:algopack_fo_{kind}",
+                        None,
+                        page.response,
+                        APIM_PARSER_VERSION,
+                    )
+                    rows.extend(_bars(_parse_kind(kind, page.rows), specs, kind, cap, run_id))
+                rows = [r for r in rows if r["secid"] == secid and r["trade_date"] == today]
+                ctx.run.add_counts(
+                    upsert_rows(conn, table, _dedup(rows, BAR_KEY), BAR_KEY, run_id=run_id)
+                )
+    _futoi_day(ctx, http, sorted(_fx_tickers(specs)), today, endpoint="intraday:futoi")
+    with ctx.connection() as conn:
+        holes = interval_holes(conn, today, now=datetime.now(MSK))
+    if holes:
+        shown = ", ".join(h.strftime("%H:%M") for h in holes[:12])
+        ctx.logger.warning("algopack %s: missing 5-min intervals %s", today, shown)
+        ctx.run.mark_partial(
+            f"AlgoPack FX tradestats {today}: {len(holes)} missing 5-min interval(s) "
+            f"older than {INTERVAL_GRACE}: {shown}"
+        )
+    return {
+        "mode": "day",
+        "contracts": len(secids),
+        "missing_intervals": [h.isoformat() for h in holes],
+    }
+
+
+def _algopack_snapshot(
+    ctx: JobContext, http: HttpClient, specs: Mapping[str, ContractSpec]
+) -> None:
+    """``latest=1`` snapshot of all contracts (bootstrap without known FX contracts)."""
     run_id = ctx.run.id
     for kind, path, _secid_path, table in _DATASETS:
         with ctx.connection() as conn:
@@ -601,13 +695,50 @@ def _algopack_latest(ctx: JobContext, http: HttpClient, specs: Mapping[str, Cont
         cap = record_capture(
             conn, run_id, "moex_apim", "intraday:futoi", None, res.response, APIM_PARSER_VERSION
         )
-        parsed = parse_futoi(parse_block(res.data, "futoi"))
+        raw = parse_block(res.data, "futoi")
+        if len(raw) >= FUTOI_MAX_ROWS:
+            raise IssPagingError(f"FUTOI latest: {len(raw)} rows, page may be truncated")
+        parsed = parse_futoi(raw)
         rows = _provenance([r for r in parsed if r["ticker"] in tickers], cap, run_id)
         ctx.run.add_counts(
             upsert_rows(
                 conn, "md.algopack_futoi", _dedup(rows, FUTOI_KEY), FUTOI_KEY, run_id=run_id
             )
         )
+
+
+def _in_break(t: dt_time) -> bool:
+    return any(lo <= t <= hi for lo, hi in ALGOPACK_BREAKS)
+
+
+def interval_holes(conn: psycopg.Connection[Any], day: date, *, now: datetime) -> list[datetime]:
+    """Missing 5-minute intervals of ``day`` in ``md.algopack_fo_tradestats`` (FX contracts,
+    union over contracts) between the first and the last stored interval, ignoring the
+    clearing breaks (:data:`ALGOPACK_BREAKS`) and intervals younger than
+    :data:`INTERVAL_GRACE` (publication latency). The most liquid FX futures trade in every
+    session interval, so a hole in the union is a lost bar."""
+    with conn.cursor(row_factory=tuple_row) as cur:
+        stamps = sorted(
+            r[0].astimezone(MSK)
+            for r in cur.execute(
+                """
+                SELECT DISTINCT t.interval_ts FROM md.algopack_fo_tradestats t
+                JOIN ref.futures_contract c ON c.secid = t.secid AND c.is_fx
+                WHERE t.trade_date = %s
+                """,
+                (day,),
+            ).fetchall()
+        )
+    if len(stamps) < 2:
+        return []
+    have = set(stamps)
+    holes: list[datetime] = []
+    cur_ts = stamps[0] + INTERVAL
+    while cur_ts < stamps[-1]:
+        if cur_ts not in have and not _in_break(cur_ts.time()) and cur_ts < now - INTERVAL_GRACE:
+            holes.append(cur_ts)
+        cur_ts += INTERVAL
+    return holes
 
 
 def _backfill_secids(
@@ -697,7 +828,14 @@ def _algopack_backfill(
         ctx.logger.info("algopack backfill %s..%s: %d contracts", c_start, c_end, len(secids))
 
 
-def _futoi_day(ctx: JobContext, http: HttpClient, tickers: list[str], day: date) -> None:
+def _futoi_day(
+    ctx: JobContext,
+    http: HttpClient,
+    tickers: list[str],
+    day: date,
+    *,
+    endpoint: str = "futoi_history",
+) -> None:
     """FUTOI of one business day for each FX ticker (one request per ticker)."""
     run_id = ctx.run.id
     span = {"iss.meta": "off", "from": day.isoformat(), "till": day.isoformat()}
@@ -706,7 +844,7 @@ def _futoi_day(ctx: JobContext, http: HttpClient, tickers: list[str], day: date)
         for ticker in tickers:
             res = http.get_json(FUTOI_TICKER.format(ticker=ticker.lower()), params=span)
             cap = record_capture(
-                conn, run_id, "moex_apim", "futoi_history", None, res.response, APIM_PARSER_VERSION
+                conn, run_id, "moex_apim", endpoint, None, res.response, APIM_PARSER_VERSION
             )
             raw = parse_block(res.data, "futoi")
             if len(raw) >= FUTOI_MAX_ROWS:

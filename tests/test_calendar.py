@@ -85,13 +85,107 @@ def _iss_rows() -> list[dict[str, Any]]:
 
 
 def test_iss_calendar_days() -> None:
-    stock = cal.iss_calendar_days(_iss_rows(), "stock")
+    """Only listed days: never a synthesized year (review F4)."""
+    rows = _iss_rows()
+    stock = cal.iss_calendar_days(rows, "stock")
     assert stock[date(2026, 11, 4)] is False  # holiday listed for currency only -> applied
     assert stock[date(2026, 12, 31)] is False
-    assert stock[date(2026, 1, 5)] is True  # RU non-working day, MOEX trades ("N")
     assert stock[date(2026, 1, 17)] is False  # weekend session, attributed to Monday ("W")
-    assert stock[date(2026, 10, 16)] is True
-    assert len(stock) == 365
+    assert date(2026, 10, 16) not in stock  # ordinary weekday: not listed, not written
+    assert date(2026, 1, 5) not in stock  # listed (N) for currency only: not for stock
+    currency = cal.iss_calendar_days(rows, "currency")
+    assert currency[date(2026, 1, 5)] is True  # RU non-working day, MOEX FX trades ("N")
+    listed = {r["date"] for r in rows if r["engine"] in ("stock", "currency")}
+    assert {d.isoformat() for d in stock} <= listed
+
+
+def test_iss_partial_year_does_not_override_curated(db: Database, conn: Conn) -> None:
+    """In December ISS lists a few January days of the next year: they must not turn the
+    curated holidays of that year into business days (the old code synthesized the year)."""
+    curated = cal.load_curated()
+    y2027 = next(y for y in curated.years if y.calendar == "MOEX_STOCK" and y.year == 2027)
+    rows = [
+        {
+            "engine": "stock",
+            "date": "2027-01-01",
+            "is_work_day": 0,
+            "trade_session_date": None,
+            "reason": "H",
+        },
+        {
+            "engine": "stock",
+            "date": "2027-01-02",
+            "is_work_day": 0,
+            "trade_session_date": None,
+            "reason": "H",
+        },
+    ]
+    iss_days = cal.iss_calendar_days(rows, "stock")
+    assert set(iss_days) == {date(2027, 1, 1), date(2027, 1, 2)}
+    t_cur = datetime(2026, 10, 16, tzinfo=UTC)
+    t_iss = datetime(2026, 12, 20, tzinfo=UTC)  # newer than the curated file
+    with db.connection() as c:
+        cal.write_calendar_days(
+            c, "MOEX_STOCK", y2027.source, y2027.days(), known_at=t_cur, run_id=None
+        )
+        cal.write_calendar_days(
+            c, "MOEX_STOCK", "moex_iss_calendar", iss_days, known_at=t_iss, run_id=None
+        )
+        # an old synthesized row (pre-fix data) of the ISS source would outrank curated ...
+        cal.write_calendar_days(
+            c,
+            "MOEX_STOCK",
+            "moex_iss_calendar",
+            {date(2027, 2, 23): True},
+            known_at=t_iss,
+            run_id=None,
+        )
+    bc = DbCalendar(db, ttl=0)
+    assert bc(date(2027, 2, 23), "MOEX_STOCK") is True  # bad pre-fix row still wins (rank 2)
+    # ... and the repair path of the refresh removes rows ISS no longer lists
+    with db.connection() as c:
+        res = cal._drop_unlisted(
+            c, "MOEX_STOCK", "moex_iss_calendar", set(iss_days), after=None, run_id=None
+        )
+    assert res.updated == 1
+    assert bc(date(2027, 2, 23), "MOEX_STOCK") is (
+        date(2027, 2, 23) not in y2027.non_working and date(2027, 2, 23).weekday() < 5
+    )
+    assert bc(date(2027, 1, 1), "MOEX_STOCK") is False
+    for d, flag in y2027.days().items():
+        if d not in iss_days:
+            assert bc(d, "MOEX_STOCK") is flag, d
+    eff = conn.execute(
+        "SELECT source FROM ref.calendar_effective WHERE calendar = 'MOEX_STOCK' "
+        "AND day = '2027-02-23'"
+    ).fetchone()
+    assert eff == {"source": y2027.source}
+    hist = conn.execute(
+        "SELECT old_row ->> 'day' AS day FROM ops.row_history WHERE table_name = "
+        "'ref.calendar_day' AND old_row ? '_deleted'"
+    ).fetchall()
+    assert hist == [{"day": "2027-02-23"}]
+
+
+def test_observed_outranks_newer_curated(db: Database) -> None:
+    with db.connection() as c:
+        cal.write_calendar_days(
+            c,
+            "MOEX_FX",
+            "observed_moex_fx",
+            {date(2026, 6, 15): False},
+            known_at=datetime(2026, 6, 16, tzinfo=UTC),
+            run_id=None,
+        )
+        cal.write_calendar_days(
+            c,
+            "MOEX_FX",
+            "curated",
+            {date(2026, 6, 15): True},
+            known_at=datetime(2026, 10, 16, tzinfo=UTC),
+            run_id=None,
+        )
+    assert DbCalendar(db, ttl=0)(date(2026, 6, 15), "MOEX_FX") is False
 
 
 def test_observed_days() -> None:

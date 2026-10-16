@@ -93,7 +93,7 @@ def fx_eod(
     were no trades."""
     d1, d2 = date_range(day, date_from, date_to)
     where = Where().add("e.trade_date BETWEEN %(d1)s AND %(d2)s", d1=d1, d2=d2)
-    secids = split_list(secid, upper=True)
+    secids = split_list(secid)
     if secids:
         where.add("e.secid = ANY(%(secids)s)", secids=secids)
     boards = split_list(board, upper=True)
@@ -193,7 +193,7 @@ def futures_eod(
     Perpetuals (``contract_type = perpetual``) are futures, never spot."""
     d1, d2 = date_range(day, date_from, date_to)
     where = Where().add("f.trade_date BETWEEN %(d1)s AND %(d2)s", d1=d1, d2=d2)
-    secids = split_list(secid, upper=True)
+    secids = split_list(secid)
     if secids:
         where.add("f.secid = ANY(%(secids)s)", secids=secids)
     assets = split_list(asset_code)
@@ -420,7 +420,7 @@ def indices_eod(
     preliminary value, replaced by ``history`` later. Default range: last 31 days."""
     d1, d2 = date_range(day, date_from, date_to, default_days=31)
     where = Where().add("trade_date BETWEEN %(d1)s AND %(d2)s", d1=d1, d2=d2)
-    secids = split_list(secid, upper=True)
+    secids = split_list(secid)
     if secids:
         where.add("secid = ANY(%(secids)s)", secids=secids)
     return _paged(
@@ -441,7 +441,7 @@ def indices_eod(
 # ------------------------------------------------------------------------ calendar
 
 
-@router.get("/calendar", tags=["calendar"], summary="Business-day calendars (latest known)")
+@router.get("/calendar", tags=["calendar"], summary="Business-day calendars (by source priority)")
 def calendar(
     request: Request,
     page: PageDep,
@@ -452,8 +452,9 @@ def calendar(
     date_from: FromQ = None,
     date_to: ToQ = None,
 ) -> Response:
-    """Latest-known flag per (calendar, day) from ``ref.calendar_effective`` with its source and
-    version. Days without any information are absent (never assumed)."""
+    """Flag per (calendar, day) from ``ref.calendar_effective`` - the highest-priority source
+    (observed > MOEX ISS calendar > curated > curated_unverified; ``known_at`` breaks ties) -
+    with its source and version. Days without any information are absent (never assumed)."""
     d1, d2 = date_range(day, date_from, date_to, default_days=366)
     where = Where().add("day BETWEEN %(d1)s AND %(d2)s", d1=d1, d2=d2)
     cals = split_list(calendar, upper=True)

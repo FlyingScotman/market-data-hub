@@ -43,6 +43,7 @@ from mdhub.core.http import HttpClient
 __all__ = [
     "BASE_URL",
     "PARSER_VERSION",
+    "STANDING_MAIN_MECHANISM_FROM",
     "FxRate",
     "FxRecord",
     "LiquidityRow",
@@ -446,10 +447,18 @@ class StandingRates:
     lending_standing_pct: Decimal | None
 
 
+STANDING_MAIN_MECHANISM_FROM: Final = date(2023, 10, 16)
+"""First date of column 7 ("Основной механизм") of ``/hd_base/ProcStav/IR_MPO/``."""
+
+
 def parse_standing_rates_page(page: str) -> list[StandingRates]:
     """``/hd_base/ProcStav/IR_MPO/``: column 1 = standing O/N deposit rate; standing O/N
-    lending rate = column 7 ("Основной механизм", since 2023-10-16) or, before that, column 9
-    ("Кредиты, репо, валютные свопы на срок 1 день"). Rows must have 13 cells."""
+    lending rate (key rate + 1 pp) = exactly one column chosen by date: column 7 ("Ставки по
+    операциям предоставления ликвидности постоянного действия / Основной механизм") from
+    :data:`STANDING_MAIN_MECHANISM_FROM`, column 9 ("Кредиты, репо, валютные свопы на срок 1
+    день") before. Never a fallback from one column to the other: a blank cell is no value.
+    Header checked live 2026-10-16 (column 7 empty up to 2023-10-13, column 9 empty from
+    2023-10-16). Rows must have 13 cells."""
     table = _find_table(
         page,
         "Ставка по депозитам постоянного действия",
@@ -465,14 +474,13 @@ def parse_standing_rates_page(page: str) -> list[StandingRates]:
     for cells in table.data_rows():
         if len(cells) != 13:
             raise FormatDriftError(f"CBR standing rates: row with {len(cells)} cells")
+        rate_date = parse_ru_date(cells[0])
+        lending_col = 7 if rate_date >= STANDING_MAIN_MECHANISM_FROM else 9
         out.append(
             StandingRates(
-                rate_date=parse_ru_date(cells[0]),
+                rate_date=rate_date,
                 deposit_standing_pct=parse_cbr_number(cells[1], field="deposit rate"),
-                lending_standing_pct=(
-                    parse_cbr_number(cells[7], field="lending rate")
-                    or parse_cbr_number(cells[9], field="lending rate")
-                ),
+                lending_standing_pct=parse_cbr_number(cells[lending_col], field="lending rate"),
             )
         )
     _unique_dates([(r.rate_date, r) for r in out], "standing rates")
@@ -497,7 +505,13 @@ LIQUIDITY_COLUMNS: Final = (
     "corr_accounts_bn",
     "required_reserves_averaged_bn",
 )
-"""Columns 2..15 of the published table, in order."""
+"""Columns 2..15 of the published table, in order. Checked against the live header of
+``/hd_base/bliquidity/`` on 2026-10-16: 4 = claims total (5+6+7+8), 5 = auctions: repo and FX
+swap, 6 = auctions: secured loans, 7 = standing facilities: repo and FX swap, 8 = standing
+facilities: secured loans, 9 = obligations total (10+11+12), 10 = deposit auctions, 11 =
+standing deposits, 12 = КОБР, 13 = non-standard operations, 14 = correspondent accounts, 15 =
+averaged required reserves. (The legacy SQLite schema labels columns 6/7 the other way round;
+its values map by position - ``mdhub.legacy.map_md.LIQUIDITY_COLUMNS``.)"""
 
 _LIQ_FORMULA_ROW: Final = [
     "1",

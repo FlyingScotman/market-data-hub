@@ -17,6 +17,8 @@ Environment variables (DESIGN §7 plus a few operational knobs):
 ``MDHUB_ENABLE_SDFI``               enable the MOEX SDFI curve loader, default false
 ``MDHUB_LOG_LEVEL``                 logging level, default ``INFO`` (extension)
 ``MDHUB_HTTP_TIMEOUT``              HTTP timeout in seconds, default 30 (extension)
+``MDHUB_API_POOL_SIZE``             read-API connection pool size, default 8 (extension)
+``MDHUB_BACKUP_DIR``                pg_dump target directory, default ``/var/backups/mdhub``
 ``MOEX_API_KEY``                    MOEX APIM bearer token
 ``MOEX_PASSPORT_LOGIN`` / ``_PASSWORD`` MOEX Passport credentials
 ``RATESCALC_USERNAME`` / ``_PASSWORD``  Ratescalcs basic auth
@@ -93,6 +95,12 @@ class Settings(BaseSettings):
     )
     http_timeout: float = Field(
         default=30.0, gt=0, validation_alias=AliasChoices("MDHUB_HTTP_TIMEOUT", "http_timeout")
+    )
+    api_pool_size: int = Field(
+        default=8,
+        ge=1,
+        le=100,
+        validation_alias=AliasChoices("MDHUB_API_POOL_SIZE", "api_pool_size"),
     )
 
     moex_api_key: SecretStr | None = _env("MOEX_API_KEY")

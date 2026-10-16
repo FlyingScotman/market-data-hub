@@ -202,9 +202,11 @@ def test_backoff_grows() -> None:
     assert backoff(4) == timedelta(minutes=80)
 
 
-def test_partial_run_keeps_gaps_open(
+def test_partial_run_with_open_gaps_is_retried_not_looped(
     source: Source, conn: Conn, settings: Settings, db: Database
 ) -> None:
+    """A partial run that leaves gaps of its range open counts as a failed attempt (backoff,
+    then ``failed`` + cooldown) instead of ``done`` + re-queue by every quality run (F1)."""
     seed_gaps(conn)
 
     def partial_loader(
@@ -215,11 +217,176 @@ def test_partial_run_keeps_gaps_open(
     REGISTRY.unregister(JOB)
     REGISTRY.register(JOB, "partial", partial_loader)
     summary = work(settings, db)
-    assert summary.done == 1 and summary.gaps_unfillable == 0
+    assert summary.done == 0 and summary.retried == 1 and summary.gaps_unfillable == 0
     statuses = {r["status"] for r in conn.execute("SELECT status FROM ops.data_gap").fetchall()}
     assert statuses == {"open"}
+    task = conn.execute("SELECT status, attempts, last_error FROM ops.backfill_task").fetchone()
+    assert task["status"] == "pending" and task["attempts"] == 1
+    assert "partial run left 6 gap(s) open" in task["last_error"]
+    for _ in range(MAX_ATTEMPTS - 1):
+        conn.execute("UPDATE ops.backfill_task SET not_before = NULL")
+        conn.commit()
+        work(settings, db)
+    task = conn.execute("SELECT status, attempts FROM ops.backfill_task").fetchone()
+    assert task == {"status": "failed", "attempts": MAX_ATTEMPTS}
+    from mdhub.datasets import get_dataset
+
+    assert queue_backfill(conn, get_dataset(DATASET), weekday_calendar) == []  # cooldown
+
+
+def test_partial_run_that_filled_the_range_is_done(
+    source: Source, conn: Conn, settings: Settings, db: Database
+) -> None:
+    seed_gaps(conn)
+
+    def loader(
+        ctx: JobContext, *, date_from: date | None = None, date_to: date | None = None
+    ) -> None:
+        assert date_from is not None and date_to is not None
+        with ctx.connection() as c, c.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO md.bf_fake VALUES (%s, 1) ON CONFLICT DO NOTHING",
+                [(d,) for d in weekdays(date_from, date_to)],
+            )
+        ctx.run.mark_partial("an unrelated part failed")
+
+    REGISTRY.unregister(JOB)
+    REGISTRY.register(JOB, "partial but complete", loader)
+    summary = work(settings, db)
+    assert summary.done == 1 and summary.gaps_backfilled == 6
     task = conn.execute("SELECT status, last_error FROM ops.backfill_task").fetchone()
-    assert task == {"status": "done", "last_error": "some pages failed"}
+    assert task == {"status": "done", "last_error": "an unrelated part failed"}
+
+
+def test_no_data_day_ends_unfillable_not_requeued_forever(
+    conn: Conn, settings: Settings, db: Database
+) -> None:
+    """Review F1 (scratch test converted): a backfill job that records a source-confirmed
+    empty day with record_no_data (fx_moex_eod/futures_eod/fx_indicative now do) ends with a
+    terminal unfillable gap after one cycle - no task per quality run for ever."""
+    from mdhub.core.gaps import record_no_data
+
+    conn.execute("CREATE TABLE md.rv_fake (trade_date date PRIMARY KEY, v int)")
+    conn.commit()
+    job, ds = "rv_nodata_loader", "rv_nodata_ds"
+
+    def loader(
+        ctx: JobContext, *, date_from: date | None = None, date_to: date | None = None
+    ) -> None:
+        assert date_from and date_to
+        with ctx.connection() as c, c.cursor() as cur:
+            for d in weekdays(date_from, date_to):
+                if d == HOLIDAY:
+                    record_no_data(c, ds, d, "ISS returned 0 rows", today=ctx.today())
+                    continue
+                cur.execute("INSERT INTO md.rv_fake VALUES (%s, 1) ON CONFLICT DO NOTHING", (d,))
+
+    REGISTRY.register(job, "fake", loader)
+    spec = register_dataset(
+        DatasetSpec(
+            name=ds,
+            table="md.rv_fake",
+            date_column="trade_date",
+            calendar="MOEX_FX",
+            frequency="business_daily",
+            max_lag_days=1,
+            description="t",
+            backfill_job=job,
+            history_start=date(2026, 10, 1),
+        )
+    )
+    try:
+        with conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO md.rv_fake VALUES (%s, 1)",
+                [(d,) for d in weekdays(date(2026, 10, 1), date(2026, 10, 15)) if d != HOLIDAY],
+            )
+        conn.commit()
+        queued = []
+        for _cycle in range(3):
+            check = scan_dataset(conn, spec, today=date(2026, 10, 16), calendar=weekday_calendar)
+            sync_gaps(conn, spec, check, run_id=None)
+            queued.append(queue_backfill(conn, spec, weekday_calendar))
+            conn.commit()
+            work(settings, db)
+        assert queued == [[(HOLIDAY, HOLIDAY)], [], []]
+        gap = conn.execute(
+            "SELECT status, note FROM ops.data_gap WHERE dataset = %s", (ds,)
+        ).fetchone()
+        assert gap["status"] == "unfillable" and "no data from source" in gap["note"]
+        n = conn.execute("SELECT count(*) AS n FROM ops.backfill_task WHERE dataset = %s", (ds,))
+        assert n.fetchone() == {"n": 1}
+        # F10: data that appears later is still recognised (unfillable -> backfilled)
+        conn.execute("INSERT INTO md.rv_fake VALUES (%s, 1)", (HOLIDAY,))
+        check = scan_dataset(conn, spec, today=date(2026, 10, 16), calendar=weekday_calendar)
+        assert sync_gaps(conn, spec, check, run_id=None).closed == 1
+        conn.commit()
+        st = conn.execute("SELECT status FROM ops.data_gap WHERE dataset = %s", (ds,)).fetchone()
+        assert st == {"status": "backfilled"}
+    finally:
+        REGISTRY.unregister(job)
+        unregister_dataset(ds)
+
+
+def test_datasets_sharing_a_job_share_one_task(
+    source: Source, conn: Conn, settings: Settings, db: Database
+) -> None:
+    """F12: a calendar hole seen by several datasets of one backfill job queues one task, and
+    that task reconciles the gaps of all of them."""
+    from mdhub.datasets import get_dataset
+
+    sibling = register_dataset(
+        DatasetSpec(
+            name="test_bf_sibling",
+            table="md.bf_fake",
+            date_column="trade_date",
+            calendar="MOEX_STOCK",
+            frequency="business_daily",
+            max_lag_days=1,
+            description="t",
+            backfill_job=JOB,
+            history_start=date(2026, 10, 1),
+        )
+    )
+    try:
+        seed_gaps(conn)
+        check = scan_dataset(conn, sibling, today=date(2026, 10, 16), calendar=weekday_calendar)
+        sync_gaps(conn, sibling, check, run_id=None)
+        assert queue_backfill(conn, sibling, weekday_calendar) == []  # covered by the task
+        conn.commit()
+        assert work(settings, db).done == 1
+        rows = conn.execute(
+            "SELECT dataset, status, count(*) AS n FROM ops.data_gap GROUP BY 1, 2 ORDER BY 1, 2"
+        ).fetchall()
+        assert rows == [
+            {"dataset": DATASET, "status": "backfilled", "n": 5},
+            {"dataset": DATASET, "status": "unfillable", "n": 1},
+            {"dataset": "test_bf_sibling", "status": "backfilled", "n": 5},
+            {"dataset": "test_bf_sibling", "status": "unfillable", "n": 1},
+        ]
+        assert source.calls == [(date(2026, 10, 5), date(2026, 10, 12))]
+        assert get_dataset(DATASET).backfill_job == JOB
+    finally:
+        unregister_dataset("test_bf_sibling")
+
+
+def test_backfill_yields_to_waiting_scheduled_run(
+    source: Source, conn: Conn, settings: Settings, db: Database, db_url: str
+) -> None:
+    """F2: while a scheduled run waits for the job lock, backfill tasks of that job defer."""
+    seed_gaps(conn)
+    waiter = psycopg.connect(db_url, autocommit=True)
+    try:
+        waiter.execute(
+            "SELECT pg_advisory_lock(hashtextextended(%s, 0))", (f"mdhub.jobwait:{JOB}",)
+        )
+        summary = work(settings, db)
+        assert summary.deferred == 1 and source.calls == []
+        task = conn.execute("SELECT status, attempts, last_error FROM ops.backfill_task").fetchone()
+        assert task["status"] == "pending" and task["attempts"] == 0
+        assert task["last_error"].startswith("lock_busy")
+    finally:
+        waiter.close()
 
 
 def test_time_budget_and_max_tasks(

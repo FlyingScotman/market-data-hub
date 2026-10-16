@@ -98,7 +98,7 @@ def bonds_eod(
 ) -> Response:
     known = require_aware(known_at, "known_at")
     where = Where()
-    secids = split_list(secid, upper=True)
+    secids = split_list(secid)
     if secids:
         where.add("secid = ANY(%(secids)s)", secids=secids)
     boards = split_list(board, upper=True)
@@ -121,6 +121,18 @@ def _one(conn: DictConnection, query: sql.SQL, params: dict[str, Any]) -> dict[s
     return rows[0] if rows else None
 
 
+def _resolve_secid(conn: DictConnection, secid: str) -> str | None:
+    """The stored SECID for a path parameter: exact match (SECIDs are case-sensitive - FORTS
+    and index codes are mixed case), else a case-insensitive match only when it is unique."""
+    exact = _one(conn, sql.SQL("SELECT secid FROM ref.bond WHERE secid = %(s)s"), {"s": secid})
+    if exact is not None:
+        return str(exact["secid"])
+    rows = fetch_all(
+        conn, sql.SQL("SELECT secid FROM ref.bond WHERE upper(secid) = upper(%(s)s)"), {"s": secid}
+    )
+    return str(rows[0]["secid"]) if len(rows) == 1 else None
+
+
 @router.get("/bonds/{secid}", summary="One bond: static, issuer, boards, schedules, formula")
 def bond(
     request: Request,
@@ -132,8 +144,11 @@ def bond(
     """Coupons (``amount`` per bond in face_unit, ``value_prc`` % p.a.), amortizations
     (``value_prc`` % of initial face), offers, floater formula (resolved + per source),
     boards and ratings."""
-    p = {"secid": secid.upper(), "del": include_deleted}
     with read_connection(request) as conn:
+        resolved_secid = _resolve_secid(conn, secid)
+        if resolved_secid is None:
+            raise HTTPException(status_code=404, detail="bond not found")
+        p = {"secid": resolved_secid, "del": include_deleted}
         row = _one(conn, sql.SQL("SELECT * FROM ref.bond WHERE secid = %(secid)s"), p)
         if row is None:
             raise HTTPException(status_code=404, detail="bond not found")
@@ -218,25 +233,27 @@ def bond_history(
     date_to: Annotated[date | None, Query(alias="to")] = None,
     board: Annotated[str | None, Query(description="comma list")] = None,
 ) -> Response:
-    """Default range: last 366 days. Same fields as ``/v1/bonds/eod``."""
+    """Default range: last 366 days. Same fields as ``/v1/bonds/eod``. The SECID is matched
+    exactly (case-insensitively only when that is unique in ``ref.bond``)."""
     d1, d2 = date_range(None, date_from, date_to, default_days=366)
-    where = Where().add(
-        "secid = %(secid)s AND trade_date BETWEEN %(d1)s AND %(d2)s",
-        secid=secid.upper(),
-        d1=d1,
-        d2=d2,
-    )
-    boards = split_list(board, upper=True)
-    if boards:
-        where.add("board = ANY(%(boards)s)", boards=boards)
-    query = (
-        sql.SQL("SELECT * FROM md.v_bond_eod")
-        + where.sql()
-        + sql.SQL(" ORDER BY trade_date, board")
-        + page.sql()
-    )
     with read_connection(request) as conn:
+        secid = _resolve_secid(conn, secid) or secid
+        where = Where().add(
+            "secid = %(secid)s AND trade_date BETWEEN %(d1)s AND %(d2)s",
+            secid=secid,
+            d1=d1,
+            d2=d2,
+        )
+        boards = split_list(board, upper=True)
+        if boards:
+            where.add("board = ANY(%(boards)s)", boards=boards)
+        query = (
+            sql.SQL("SELECT * FROM md.v_bond_eod")
+            + where.sql()
+            + sql.SQL(" ORDER BY trade_date, board")
+            + page.sql()
+        )
         rows = fetch_all(conn, query, where.params)
     return json_response(
-        request, page.wrap(rows, secid=secid.upper(), date_from=d1, date_to=d2, units=_UNITS)
+        request, page.wrap(rows, secid=secid, date_from=d1, date_to=d2, units=_UNITS)
     )

@@ -61,7 +61,9 @@ def test_retention_deletes_only_old_intraday(conn: Conn, db: Database) -> None:
         mt.purge_intraday_raw(db, 0)
 
 
-def test_retention_job_fk_blocked_is_partial(conn: Conn, db: Database, settings: Settings) -> None:
+def test_retention_skips_captures_referenced_by_blocking_fks(
+    conn: Conn, db: Database, settings: Settings
+) -> None:
     cap = add_capture(conn, "intraday:futures", 200, "x")
     keep = add_capture(conn, "intraday:futures", 200, "y")
     conn.execute(
@@ -79,16 +81,28 @@ def test_retention_job_fk_blocked_is_partial(conn: Conn, db: Database, settings:
     conn.execute("CREATE TABLE md.mt_bad (capture_id bigint REFERENCES ops.raw_capture (id))")
     conn.execute("INSERT INTO md.mt_bad VALUES (%s)", (blocked,))
     conn.commit()
+    # a NOT NULL reference (like md.zcyc_reject.capture_id, its primary key)
+    rejected = add_capture(conn, "intraday:zcyc", 200, "r")
+    conn.execute(
+        "CREATE TABLE md.mt_reject (capture_id bigint PRIMARY KEY "
+        "REFERENCES ops.raw_capture (id) ON DELETE SET NULL)"
+    )
+    conn.execute("INSERT INTO md.mt_reject VALUES (%s)", (rejected,))
+    gone = add_capture(conn, "intraday:futures", 200, "g")
+    conn.commit()
+    refs = mt.blocking_capture_refs(conn)
+    assert ("md", "mt_bad", "capture_id") in refs and ("md", "mt_reject", "capture_id") in refs
+    assert ("md", "mt_ok", "capture_id") not in refs
     bad = run_job(
         "maintenance",
         {"mode": "retention", "retention_days": "30", "vacuum_min_mb": "0"},
         settings=settings,
         db=db,
     )
-    assert bad.status == "partial" and bad.result["raw_deleted"] is None
+    assert bad.status == "succeeded" and bad.result["raw_deleted"] == 1  # only `gone`
     assert "ops.raw_capture" in bad.result["vacuumed"] and "md.mt_bad" in bad.result["vacuumed"]
-    err = conn.execute("SELECT error FROM ops.job_run WHERE id = %s", (bad.run_id,)).fetchone()
-    assert err is not None and "mt_bad" in err["error"] and "ON DELETE SET NULL" in err["error"]
+    left = {r["id"] for r in conn.execute("SELECT id FROM ops.raw_capture").fetchall()}
+    assert {blocked, rejected} <= left and gone not in left
     assert keep  # both deleted in the first run
 
 

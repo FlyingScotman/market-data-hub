@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import os
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from datetime import date
 from typing import Any
 
 import pgserver
@@ -137,3 +138,16 @@ def db(db_url: str) -> Iterator[Database]:
 @pytest.fixture
 def settings(db_url: str) -> Settings:
     return Settings(database_url=db_url, iss_rps=1000.0)
+
+
+@pytest.fixture
+def today_is(monkeypatch: pytest.MonkeyPatch) -> Callable[[date], None]:
+    """Pin "today" (MSK) for jobs (``JobContext.today``) and gap reconciliation."""
+    import mdhub.jobs
+    import mdhub.quality.checks
+
+    def set_today(day: date) -> None:
+        monkeypatch.setattr(mdhub.jobs, "msk_today", lambda: day)
+        monkeypatch.setattr(mdhub.quality.checks, "msk_today", lambda: day)
+
+    return set_today

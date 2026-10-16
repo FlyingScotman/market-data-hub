@@ -2,7 +2,9 @@
 
 For every registered dataset (:func:`mdhub.datasets.all_datasets`): freshness check, gap scan,
 ``ops.data_gap`` update and backfill queueing (:mod:`mdhub.quality.checks`); then job health
-(:mod:`mdhub.quality.health`). The structured report is stored in ``ops.quality_report``,
+(:mod:`mdhub.quality.health`) and the catch-up of scheduled fires that were skipped because
+the job lock stayed busy (:func:`catch_up_missed`). The structured report is stored in
+``ops.quality_report``,
 ``ops.dataset_status`` is refreshed (-> ``ops.v_coverage``), a summary is logged and the report
 dict is returned (``JobOutcome.result``). The run itself succeeds when the checks ran - stale
 data, gaps or failing jobs are reported, not raised; a dataset whose check errors (bad spec,
@@ -15,12 +17,13 @@ from datetime import date, datetime
 from typing import Any
 
 from mdhub.datasets import DatasetSpec, all_datasets, get_dataset
-from mdhub.jobs import REGISTRY, JobContext, JobParamError, job
+from mdhub.jobs import REGISTRY, JobContext, JobParamError, job, run_job
 from mdhub.quality.checks import DatasetCheck, queue_backfill, scan_dataset, sync_gaps
-from mdhub.quality.health import job_health
+from mdhub.quality.health import JobHealth, catch_up_params, job_health
 from mdhub.quality.report import QualityReport, store_report
+from mdhub.schedule import SCHEDULED_LOCK_WAIT_S
 
-__all__ = ["quality", "run_quality"]
+__all__ = ["catch_up_missed", "quality", "run_quality"]
 
 
 def _select(names: list[str] | None) -> list[DatasetSpec]:
@@ -65,6 +68,7 @@ def run_quality(
     queue: bool = True,
     lookback_days: int | None = None,
     check_jobs: bool = True,
+    catch_up: bool = True,
 ) -> QualityReport:
     """Run all checks and store the report (used by the job and tests)."""
     today = as_of or ctx.today()
@@ -118,10 +122,56 @@ def run_quality(
                 j.last_started_at,
                 j.consecutive_failures,
             )
+        if catch_up:
+            report.catch_up = catch_up_missed(ctx, report.jobs)
     with ctx.connection() as conn:
         store_report(conn, report)
     ctx.logger.info("quality: %s", report.summary_line())
     return report
+
+
+def catch_up_missed(
+    ctx: JobContext, jobs: list[JobHealth], *, lock_wait_s: float = SCHEDULED_LOCK_WAIT_S
+) -> list[dict[str, Any]]:
+    """Re-run scheduled fires that were skipped because the job lock stayed busy
+    (:attr:`JobHealth.missed_by_lock`, rules with ``catch_up``). Returns one entry per job."""
+    out: list[dict[str, Any]] = []
+    for j in jobs:
+        rule, fire = j.expected_rule, j.last_expected_at
+        if not j.missed_by_lock or rule is None or fire is None or not rule.catch_up:
+            continue
+        if j.job == ctx.job or j.job not in REGISTRY:
+            continue
+        accepted, _ = REGISTRY.get(j.job).accepted_params()
+        params = catch_up_params(
+            rule, fire, calendar=ctx.calendar, tz=ctx.settings.zone, accepted=accepted
+        )
+        entry: dict[str, Any] = {"job": j.job, "missed_fire": fire.isoformat(), "params": params}
+        if params is None:
+            entry["status"] = "not_redone: days_back of an earlier day, job takes no dates"
+            out.append(entry)
+            continue
+        ctx.logger.warning(
+            "re-running %s (fire %s skipped: lock busy) with %s", j.job, fire, params
+        )
+        try:
+            outcome = run_job(
+                j.job,
+                params,
+                settings=ctx.settings,
+                db=ctx.db,
+                calendar=ctx.calendar,
+                http_factory=ctx.http_factory,
+                lock_wait_s=lock_wait_s,
+            )
+        except Exception as exc:
+            ctx.logger.exception("catch-up run of %s failed", j.job)
+            ctx.run.mark_partial(f"catch-up {j.job}: {type(exc).__name__}")
+            entry.update(status="failed", error=f"{type(exc).__name__}: {exc}"[:300])
+        else:
+            entry.update(status=outcome.status, run_id=outcome.run_id)
+        out.append(entry)
+    return out
 
 
 @job("quality", "Freshness, gap scan, backfill queueing and job health for all datasets")
@@ -133,6 +183,7 @@ def quality(
     queue: bool = True,
     lookback_days: int | None = None,
     check_jobs: bool = True,
+    catch_up: bool = True,
 ) -> dict[str, Any]:
     """Run the quality checks; returns the report dict (also in ``ops.quality_report``).
 
@@ -141,6 +192,7 @@ def quality(
     :param queue: queue ``ops.backfill_task`` rows for open gaps.
     :param lookback_days: limit the gap scan to the last N days (all datasets).
     :param check_jobs: include job health.
+    :param catch_up: re-run scheduled fires that were skipped with ``lock_busy``.
     """
     report = run_quality(
         ctx,
@@ -149,5 +201,6 @@ def quality(
         queue=queue,
         lookback_days=lookback_days,
         check_jobs=check_jobs,
+        catch_up=catch_up,
     )
     return report.to_dict()

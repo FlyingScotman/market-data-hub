@@ -11,7 +11,9 @@ Jobs (names fixed by :data:`mdhub.schedule.KNOWN_JOBS`):
   date, history since 2013) and ``md.fx_fixing`` (currency-market fixings, e.g.
   ``SRATE_CNY_ON``, by date range).
 
-Missing data is never invented: a business date without rows marks the run ``partial``.
+Missing data is never invented: a business date for which ISS returns no rows is recorded with
+:func:`mdhub.core.gaps.record_no_data` (``open`` within the grace period, then ``unfillable``),
+not as a partial run (``prelim`` runs only log it).
 """
 
 from __future__ import annotations
@@ -25,6 +27,7 @@ from psycopg import sql
 from psycopg.rows import dict_row
 
 from mdhub.core.capture import record_capture
+from mdhub.core.gaps import close_gap, record_no_data
 from mdhub.core.iss import ISS_BASE_URL, IssFormatError, iter_pages, parse_block
 from mdhub.core.timeutil import date_range
 from mdhub.core.upsert import UpsertResult, touch_last_seen, upsert_rows
@@ -70,6 +73,9 @@ FX_INTRADAY_VARIANT: Final = "iss_public"
 INTRADAY_ENDPOINT: Final = "intraday:fx_cets_marketdata"
 """Endpoints prefixed ``intraday:`` are removed by raw-capture retention (maintenance)."""
 FX_INSTRUMENT_KEY: Final = ["secid", "board"]
+FX_INSTRUMENT_OBSERVED: Final = ("settle_date",)
+"""Observation columns of ``ref.fx_instrument`` (history meta): refreshed separately, never a
+data change (the settlement date of a TOM instrument moves every day)."""
 
 register_dataset(
     DatasetSpec(
@@ -174,12 +180,35 @@ def refresh_fx_instruments(
         return UpsertResult()
     for r in rows:
         r["first_seen"] = today
-    update_cols = [c for c in rows[0] if c not in (*FX_INSTRUMENT_KEY, "first_seen")]
+    update_cols = [
+        c for c in rows[0] if c not in (*FX_INSTRUMENT_KEY, "first_seen", *FX_INSTRUMENT_OBSERVED)
+    ]
     result = upsert_rows(
         conn, "ref.fx_instrument", rows, FX_INSTRUMENT_KEY, update_cols, run_id=run_id
     )
+    _observe_fx_settlement(conn, rows)
     touch_last_seen(conn, "ref.fx_instrument", FX_INSTRUMENT_KEY, rows, run_id)
     return result
+
+
+def _observe_fx_settlement(conn: psycopg.Connection[Any], rows: list[dict[str, Any]]) -> None:
+    """Refresh the observation columns (``settle_date`` moves every day; history meta) without
+    counting a data change or bumping ``updated_at``."""
+    obs = [r for r in rows if "settle_date" in r]
+    if not obs:
+        return
+    conn.execute(
+        """
+        UPDATE ref.fx_instrument i SET settle_date = v.sd
+        FROM unnest(%s::text[], %s::text[], %s::date[]) AS v(secid, board, sd)
+        WHERE i.secid = v.secid AND i.board = v.board AND i.settle_date IS DISTINCT FROM v.sd
+        """,
+        (
+            [r["secid"] for r in obs],
+            [r["board"] for r in obs],
+            [r["settle_date"] for r in obs],
+        ),
+    )
 
 
 def latest_rows(
@@ -282,9 +311,13 @@ def fx_moex_eod(
                 if wrong:
                     raise IssFormatError(f"selt history for {d} returned dates {sorted(wrong)}")
                 if not rows:
-                    ctx.run.mark_partial(f"no selt history rows for {d}")
+                    note = f"ISS selt history returned 0 rows for {d} (mode={mode})"
+                    ctx.logger.warning(note)
+                    if mode != "prelim":
+                        record_no_data(conn, "fx_eod", d, note, today=ctx.today())
                     continue
                 ctx.run.add_counts(upsert_rows(conn, "md.fx_eod", rows, FX_EOD_KEY, run_id=run_id))
+                close_gap(conn, "fx_eod", d)
                 ctx.logger.info("fx_eod %s: %d rows", d, len(rows))
 
 
@@ -296,7 +329,9 @@ def fx_moex_intraday(ctx: JobContext) -> None:
             CETS_SECURITIES,
             params={"iss.meta": "off", "iss.only": "securities,marketdata,dataversion"},
         )
-    rows, latency = parse_fx_marketdata(res.data)
+    rows, latency = parse_fx_marketdata(
+        res.data, is_business_day=lambda d: ctx.is_business_day(d, FX_CALENDAR)
+    )
     for r in rows:
         r["source"] = SOURCE
         r["source_variant"] = FX_INTRADAY_VARIANT
@@ -361,7 +396,9 @@ def fx_indicative(
                 if wrong:
                     raise IssFormatError(f"indicative rates for {d} returned {sorted(wrong)}")
                 if not rows:
-                    ctx.run.mark_partial(f"no indicative rates for {d}")
+                    note = f"ISS indicative rates returned 0 rows for {d}"
+                    ctx.logger.warning(note)
+                    record_no_data(conn, "fx_indicative", d, note, today=ctx.today())
                     continue
                 ctx.run.add_counts(
                     upsert_rows(
@@ -372,6 +409,7 @@ def fx_indicative(
                         run_id=run_id,
                     )
                 )
+                close_gap(conn, "fx_indicative", d)
         _load_fixings(ctx, http, fix_from, fix_to)
 
 

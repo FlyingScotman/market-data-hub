@@ -24,6 +24,8 @@ class QualityReport:
     run_id: int | None
     datasets: list[DatasetCheck] = field(default_factory=list)
     jobs: list[JobHealth] = field(default_factory=list)
+    catch_up: list[dict[str, Any]] = field(default_factory=list)
+    """Scheduled fires skipped with ``lock_busy`` that this run re-executed."""
 
     @property
     def stale(self) -> list[DatasetCheck]:
@@ -57,6 +59,7 @@ class QualityReport:
             },
             "datasets": [d.to_dict() for d in self.datasets],
             "jobs": [j.to_dict() for j in self.jobs],
+            "catch_up": self.catch_up,
         }
 
     def summary_line(self) -> str:

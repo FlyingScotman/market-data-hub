@@ -85,4 +85,8 @@ timeout = 120
 markers = [
   "live: hits real network endpoints (requires credentials, opt-in with -m live)",
 ]
-filterwarnings = ["error::pytest.PytestUnraisableExceptionWarning"]
+filterwarnings = [
+  "error::pytest.PytestUnraisableExceptionWarning",
+  # fastapi.testclient -> starlette.testclient: "Using `httpx` ... is deprecated" (upstream)
+  "ignore:Using `httpx` with `starlette.testclient` is deprecated",
+]

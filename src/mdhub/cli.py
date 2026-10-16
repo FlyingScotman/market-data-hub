@@ -22,6 +22,7 @@ from psycopg.rows import tuple_row
 from mdhub import __version__
 from mdhub.config import ConfigError, Settings
 from mdhub.core.bizday import DbCalendar
+from mdhub.core.capture import reap_orphaned_runs
 from mdhub.core.redact import SecretRedactingFilter
 from mdhub.db.migrate import MigrationError, applied_migrations, discover_migrations, migrate
 from mdhub.db.pool import Database
@@ -195,7 +196,13 @@ def scheduler_cmd(
         log.error("job module %s failed to import: %s", module, err)
     for problem in check_rules(RULES, REGISTRY):
         log.warning("schedule problem: %s", problem)
-    db = _database(settings, pool_size=max_workers + 2)
+    # Jobs open nested pooled connections (e.g. DbCalendar lookups inside a data transaction):
+    # two per worker plus headroom avoids PoolTimeout with all workers busy.
+    db = _database(settings, pool_size=2 * max_workers + 2)
+    try:
+        reap_orphaned_runs(db)
+    except Exception:  # never block the scheduler start on housekeeping
+        log.exception("could not reap orphaned job runs")
     scheduler = build_scheduler(settings, db, calendar=DbCalendar(db), max_workers=max_workers)
 
     def _stop(signum: int, _frame: FrameType | None) -> None:

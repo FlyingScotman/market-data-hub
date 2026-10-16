@@ -335,21 +335,65 @@ def test_algopack_requires_key(settings: Settings, db: Database) -> None:
     assert run("algopack_fx_futures", {}, settings, db).status == "skipped"
 
 
+def _filtered(payload: dict[str, Any], block: str, col: str, value: str) -> dict[str, Any]:
+    out = copy.deepcopy(payload)
+    cols = out[block]["columns"]
+    out[block]["data"] = [r for r in out[block]["data"] if r[cols.index(col)] == value]
+    if f"{block}.cursor" in out:
+        out[f"{block}.cursor"]["data"] = [[0, len(out[block]["data"]), 1000]]
+    return out
+
+
+def _mock_day_poll(extra_ts: list[list[Any]] | None = None) -> dict[str, Any]:
+    """Per-contract / per-ticker ``from=till=today`` endpoints serving the latest fixtures."""
+    ts_payload = load("algopack_tradestats_latest.json")
+    if extra_ts:
+        ts_payload["data"]["data"] += extra_ts
+        ts_payload["data.cursor"]["data"] = [[0, len(ts_payload["data"]["data"]), 1000]]
+    ob_payload = load("algopack_obstats_latest.json")
+    futoi = load("futoi_latest.json")
+    seen: dict[str, Any] = {"params": []}
+
+    def bars(payload: dict[str, Any]) -> Callable[[httpx.Request], httpx.Response]:
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen["params"].append(dict(request.url.params))
+            secid = request.url.path.rsplit("/", 1)[-1].removesuffix(".json")
+            return httpx.Response(200, json=_filtered(payload, "data", "secid", secid))
+
+        return handler
+
+    def futoi_handler(request: httpx.Request) -> httpx.Response:
+        ticker = request.url.path.rsplit("/", 1)[-1].removesuffix(".json")
+        cols = futoi["futoi"]["columns"]
+        out = copy.deepcopy(futoi)
+        out["futoi"]["data"] = [
+            r for r in futoi["futoi"]["data"] if r[cols.index("ticker")].lower() == ticker
+        ]
+        return httpx.Response(200, json=out)
+
+    respx.get(url__regex=r".*/datashop/algopack/fo/tradestats/\w+\.json").mock(
+        side_effect=bars(ts_payload)
+    )
+    respx.get(url__regex=r".*/datashop/algopack/fo/obstats/\w+\.json").mock(
+        side_effect=bars(ob_payload)
+    )
+    respx.get(url__regex=r".*/analyticalproducts/futoi/securities/\w+\.json").mock(
+        side_effect=futoi_handler
+    )
+    return seen
+
+
 @respx.mock
-def test_algopack_latest_fx_only_and_dedup(
-    apim_settings: Settings, db: Database, conn: Conn
+def test_algopack_poll_reads_whole_day_fx_only_and_dedup(
+    apim_settings: Settings, db: Database, conn: Conn, today_is: Callable[[date], None]
 ) -> None:
+    """F7: each poll re-reads today per FX contract (from=till=today), so a bar published late
+    or missed by an earlier poll is filled; re-polled bars are no-ops."""
+    today_is(date(2026, 10, 16))
     seed_ref(conn)
-    respx.get(APIM_BASE_URL + apim.ALGOPACK_FO_TRADESTATS).mock(
-        return_value=httpx.Response(200, json=load("algopack_tradestats_latest.json"))
-    )
-    respx.get(APIM_BASE_URL + apim.ALGOPACK_FO_OBSTATS).mock(
-        return_value=httpx.Response(200, json=load("algopack_obstats_latest.json"))
-    )
-    respx.get(APIM_BASE_URL + apim.FUTOI_ALL).mock(
-        return_value=httpx.Response(200, json=load("futoi_latest.json"))
-    )
+    seen = _mock_day_poll()
     assert run("algopack_fx_futures", {}, apim_settings, db).status == "succeeded"
+    assert {(p["from"], p["till"]) for p in seen["params"]} == {("2026-10-16", "2026-10-16")}
     ts = {r["secid"]: r for r in conn.execute("SELECT * FROM md.algopack_fo_tradestats")}
     assert "ANZ6" not in ts and "RBZ6" not in ts and "CRZ6" in ts
     assert ts["CRZ6"]["pr_close_rub_per_unit"] == ts["CRZ6"]["pr_close"]
@@ -366,10 +410,78 @@ def test_algopack_latest_fx_only_and_dedup(
     }
     n_ts = count(conn, "SELECT count(*) FROM md.algopack_fo_tradestats")
     n_ob = count(conn, "SELECT count(*) FROM md.algopack_fo_obstats")
-    run("algopack_fx_futures", {}, apim_settings, db)  # same interval polled again
+    respx.clear()
+    _mock_day_poll()
+    run("algopack_fx_futures", {}, apim_settings, db)  # same day polled again
     assert count(conn, "SELECT count(*) FROM md.algopack_fo_tradestats") == n_ts
     assert count(conn, "SELECT count(*) FROM md.algopack_fo_obstats") == n_ob
     assert count(conn, "SELECT count(*) FROM ops.row_history") == 0
+
+    # a bar of an earlier interval shows up late (or its poll was missed): filled now
+    payload = load("algopack_tradestats_latest.json")
+    cols = payload["data"]["columns"]
+    late = next(r for r in payload["data"]["data"] if r[cols.index("secid")] == "CRZ6")
+    late = list(late)
+    late[cols.index("tradetime")] = "10:10:00"
+    respx.clear()
+    _mock_day_poll(extra_ts=[late])
+    out = run("algopack_fx_futures", {}, apim_settings, db)
+    assert count(conn, "SELECT count(*) FROM md.algopack_fo_tradestats") == n_ts + 1
+    # the interval check sees the holes 10:15 and 10:20 between 10:10 and 10:25
+    assert out.status == "partial"
+    assert out.result["missing_intervals"] == [
+        "2026-10-16T10:15:00+03:00",
+        "2026-10-16T10:20:00+03:00",
+    ]
+
+
+def test_interval_holes_ignore_clearing_and_fresh_intervals(conn: Conn) -> None:
+    from datetime import datetime, timedelta
+
+    from mdhub.core.timeutil import MSK
+    from mdhub.loaders.futures import interval_holes
+
+    seed_ref(conn)
+    day = date(2026, 10, 16)
+
+    def bar(hh: int, mm: int) -> None:
+        conn.execute(
+            "INSERT INTO md.algopack_fo_tradestats (secid, interval_ts, trade_date) "
+            "VALUES ('SiZ6', %s, %s)",
+            (datetime(2026, 10, 16, hh, mm, tzinfo=MSK), day),
+        )
+
+    for hh, mm in [(13, 50), (13, 55), (14, 10), (14, 15), (14, 25), (14, 30)]:
+        bar(hh, mm)
+    now = datetime(2026, 10, 16, 14, 35, tzinfo=MSK)
+    assert interval_holes(conn, day, now=now) == []  # 14:20 is younger than 15 minutes
+    later = now + timedelta(hours=1)
+    assert interval_holes(conn, day, now=later) == [datetime(2026, 10, 16, 14, 20, tzinfo=MSK)]
+
+
+@respx.mock
+def test_algopack_bootstrap_uses_latest_snapshot_with_futoi_guard(
+    apim_settings: Settings, db: Database, conn: Conn
+) -> None:
+    respx.get(APIM_BASE_URL + apim.ALGOPACK_FO_TRADESTATS).mock(
+        return_value=httpx.Response(200, json=load("algopack_tradestats_latest.json"))
+    )
+    respx.get(APIM_BASE_URL + apim.ALGOPACK_FO_OBSTATS).mock(
+        return_value=httpx.Response(200, json=load("algopack_obstats_latest.json"))
+    )
+    futoi = load("futoi_latest.json")
+    full = copy.deepcopy(futoi)
+    full["futoi"]["data"] = futoi["futoi"]["data"] * 125  # 1000 rows: may be truncated
+    route = respx.get(APIM_BASE_URL + apim.FUTOI_ALL).mock(
+        return_value=httpx.Response(200, json=futoi)
+    )
+    out = run("algopack_fx_futures", {}, apim_settings, db)  # no FX contract known yet
+    assert out.status == "succeeded" and out.result["mode"] == "latest_snapshot"
+    assert route.calls.last.request.url.params["latest"] == "1"
+    assert count(conn, "SELECT count(*) FROM md.algopack_futoi") > 0
+    route.mock(return_value=httpx.Response(200, json=full))
+    with pytest.raises(Exception, match="truncated"):
+        run("algopack_fx_futures", {}, apim_settings, db)
 
 
 def _empty_bars(kind_payload: dict[str, Any]) -> dict[str, Any]:

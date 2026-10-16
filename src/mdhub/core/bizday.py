@@ -1,5 +1,8 @@
 """Business-day predicates backed by ``ref.calendar_day`` with a weekday fallback.
 
+Source precedence (not recency) decides between rows of one day: see
+:data:`mdhub.loaders.calendar.SOURCE_PRIORITY`.
+
 ``ref.calendar_day(calendar, day, is_business_day, source, known_at)`` (DESIGN §4) is owned by
 the calendar loader. Until that table exists - or for days it does not cover - the
 Monday-Friday fallback applies.
@@ -39,7 +42,9 @@ weekday_calendar: Final = CalendarPredicate()
 
 
 class DbCalendar(CalendarPredicate):
-    """Looks up ``ref.calendar_day`` (latest ``known_at`` per day); falls back to weekdays.
+    """Looks up ``ref.calendar_day`` - per day the row of the highest-priority source
+    (``ref.calendar_source_rank``: observed > MOEX ISS calendar > curated > curated_unverified,
+    ``known_at`` breaks ties; same rule as ``ref.calendar_effective``); falls back to weekdays.
 
     Results are cached per ``(calendar, day)`` for ``ttl`` seconds. Database errors (table
     missing, connection down) fall back to weekdays with a warning - gating must never stop
@@ -75,7 +80,7 @@ class DbCalendar(CalendarPredicate):
                     """
                     SELECT is_business_day FROM ref.calendar_day
                     WHERE calendar = %s AND day = %s
-                    ORDER BY known_at DESC NULLS LAST
+                    ORDER BY ref.calendar_source_rank(source), known_at DESC NULLS LAST
                     LIMIT 1
                     """,
                     (calendar, day),

@@ -23,7 +23,7 @@ from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Final
 
 import httpx
 import psycopg
@@ -43,6 +43,7 @@ __all__ = [
     "json_default",
     "last_capture_sha256",
     "load_capture_payload",
+    "reap_orphaned_runs",
     "record_capture",
 ]
 
@@ -185,6 +186,38 @@ def _finish(db: Database, run: JobRun, status: str, error: str | None) -> None:
         log.exception("could not finalize job_run %d (status %s)", run.id, status)
         if status != "failed":
             raise
+
+
+ORPHAN_RUN_HOURS: Final = 12
+"""A ``running`` job run older than this is considered orphaned (its process died)."""
+
+
+def reap_orphaned_runs(db: Database, *, older_than_hours: float = ORPHAN_RUN_HOURS) -> int:
+    """Mark ``running`` job runs started more than ``older_than_hours`` ago as ``failed``
+    (process crashed / killed: nothing will ever finish them). Runs that still hold their
+    job's advisory lock are left alone. Returns the number of runs changed."""
+    with db.connection() as conn, conn.cursor(row_factory=tuple_row) as cur:
+        cur.execute(
+            """
+            UPDATE ops.job_run r
+            SET status = 'failed', finished_at = clock_timestamp(),
+                error = format('orphaned: still running after %%s h (process ended without '
+                               'finishing the run); reaped', %s::text)
+            WHERE r.status = 'running'
+              AND r.started_at < now() - make_interval(secs => %s * 3600)
+              AND NOT EXISTS (
+                  SELECT 1 FROM pg_locks l
+                  WHERE l.locktype = 'advisory' AND l.granted AND l.objsubid = 1
+                    AND ((l.classid::bigint << 32) | l.objid::bigint)
+                        = hashtextextended('mdhub.job:' || r.job, 0)
+              )
+            """,
+            (f"{older_than_hours:g}", older_than_hours),
+        )
+        n = cur.rowcount
+    if n:
+        log.warning("reaped %d orphaned running job run(s)", n)
+    return n
 
 
 def record_capture(

@@ -70,7 +70,7 @@ def gaps(
     query = (
         sql.SQL("SELECT * FROM ops.v_open_gaps")
         + where.sql()
-        + sql.SQL(" ORDER BY dataset, gap_date")
+        + sql.SQL(" ORDER BY dataset, gap_date, key::text")
         + page.sql()
     )
     with read_connection(request) as conn:

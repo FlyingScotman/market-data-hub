@@ -7,17 +7,21 @@ the next 10-minute trigger) or ``max_tasks`` is used up. For a task the worker:
 1. marks it ``running`` and increments ``attempts`` (committed),
 2. runs ``run_job(spec.backfill_job, {"date_from": d1, "date_to": d2})`` in-process - the
    nested run gets its own ``ops.job_run`` row and advisory lock,
-3. on success marks the task ``done`` and re-counts the open gaps of the range
-   (:func:`mdhub.quality.checks.reconcile_gaps`): filled days -> ``backfilled``, days still
-   empty after a *successful* run -> ``unfillable`` (the source has no data, e.g. a holiday
-   missing from ``ref.calendar_day``). A ``partial`` run marks the task done but leaves the
-   still-missing gaps open (the next quality run re-queues them),
+3. on success marks the task ``done`` and re-counts the open gaps of the range for every
+   dataset sharing the job (:func:`mdhub.quality.checks.reconcile_gaps`): filled days ->
+   ``backfilled``, days still empty after a *successful* run -> ``unfillable`` (the source
+   has no data, e.g. a holiday missing from ``ref.calendar_day``) once they are older than the
+   no-data grace period (:mod:`mdhub.core.gaps`; younger days stay open and are re-queued by
+   the next quality run). A ``partial`` run whose range still has open gaps counts as a failed
+   attempt (step 4), so a persistently failing day ends ``failed`` instead of looping; a
+   ``partial`` run that filled the range marks the task done,
 4. on failure retries with exponential backoff (``not_before`` = now + 10 min * 2^(n-1));
    after ``max_attempts`` (5) the task becomes ``failed`` and the open gaps of the range get a
    note; quality does not re-queue those days for
    :data:`~mdhub.quality.checks.FAILED_TASK_COOLDOWN_DAYS` days,
-5. if the nested job was skipped because another run of it holds its lock, the attempt is
-   not counted and the task is retried in 5 minutes.
+5. if the nested job was skipped because another run of it holds its lock - or because a
+   scheduled run is waiting for that lock (backfills yield to scheduled runs) - the attempt
+   is not counted and the task is retried in 5 minutes.
 
 Tasks left ``running`` by a crashed worker for more than ``stale_minutes`` are reset to
 ``pending`` at the start of each invocation.
@@ -40,7 +44,7 @@ from mdhub.core.redact import sanitize_text
 from mdhub.datasets import DatasetSpec, get_dataset
 from mdhub.db.pool import Database
 from mdhub.jobs import REGISTRY, JobContext, JobParamError, JobRegistry, job, run_job
-from mdhub.quality.checks import reconcile_gaps
+from mdhub.quality.checks import job_datasets, reconcile_gaps
 
 __all__ = [
     "BACKOFF_BASE",
@@ -182,11 +186,11 @@ def _note_failed_gaps(
         conn.execute(
             """
             UPDATE ops.data_gap SET note = %s
-            WHERE dataset = %s AND status = 'open' AND gap_date BETWEEN %s AND %s
+            WHERE dataset = ANY(%s) AND status = 'open' AND gap_date BETWEEN %s AND %s
             """,
             (
                 f"backfill failed after {task.attempts} attempts (task {task.id}): {error[:300]}",
-                spec.name,
+                job_datasets(spec),
                 d1,
                 d2,
             ),
@@ -208,6 +212,19 @@ class RangeOutcome:
     error: str | None = None
     backfilled: int = 0
     unfillable: int = 0
+    remaining_open: int = 0
+
+
+def _open_gaps(db: Database, datasets: list[str], d1: date, d2: date) -> int:
+    with db.connection() as conn, conn.cursor(row_factory=tuple_row) as cur:
+        row = cur.execute(
+            """
+            SELECT count(*) FROM ops.data_gap
+            WHERE dataset = ANY(%s) AND status = 'open' AND gap_date BETWEEN %s AND %s
+            """,
+            (datasets, d1, d2),
+        ).fetchone()
+    return int(row[0]) if row else 0
 
 
 def run_backfill_range(
@@ -220,11 +237,15 @@ def run_backfill_range(
     calendar: CalendarPredicate,
     registry: JobRegistry = REGISTRY,
     http_factory: Callable[..., HttpClient] = HttpClient,
+    today: date | None = None,
 ) -> RangeOutcome:
-    """Run the dataset's backfill job for ``[d1, d2]`` and reconcile its gaps.
+    """Run the dataset's backfill job for ``[d1, d2]`` and reconcile the gaps of **every**
+    dataset sharing that job (one task serves them all).
 
-    Exceptions of the job are caught and returned as status ``failed``;
-    :class:`~mdhub.jobs.JobParamError` / :class:`~mdhub.jobs.UnknownJobError` propagate.
+    The nested run yields to a scheduled run that is waiting for the job's lock (it is then
+    reported as ``skipped``/lock busy and the task is deferred). Exceptions of the job are
+    caught and returned as status ``failed``; :class:`~mdhub.jobs.JobParamError` /
+    :class:`~mdhub.jobs.UnknownJobError` propagate.
     """
     if not spec.backfill_job:
         raise JobParamError(f"dataset {spec.name} has no backfill_job")
@@ -237,6 +258,7 @@ def run_backfill_range(
             registry=registry,
             calendar=calendar,
             http_factory=http_factory,
+            yield_to_waiters=True,
         )
     except JobParamError:
         raise
@@ -247,21 +269,32 @@ def run_backfill_range(
         return RangeOutcome(
             status=outcome.status, run_id=outcome.run_id, error=_run_error(db, outcome.run_id)
         )
+    names = job_datasets(spec)
+    filled = unfillable = 0
     with db.connection() as conn:
-        filled, unfillable = reconcile_gaps(
-            conn,
-            spec,
-            d1,
-            d2,
-            run_id=outcome.run_id,
-            mark_unfillable=outcome.status == "succeeded",
-        )
+        for name in names:
+            try:
+                sibling = spec if name == spec.name else get_dataset(name)
+            except KeyError:
+                continue
+            f, u = reconcile_gaps(
+                conn,
+                sibling,
+                d1,
+                d2,
+                run_id=outcome.run_id,
+                mark_unfillable=outcome.status == "succeeded",
+                today=today,
+            )
+            filled += f
+            unfillable += u
     return RangeOutcome(
         status=outcome.status,
         run_id=outcome.run_id,
         error=_run_error(db, outcome.run_id) if outcome.status == "partial" else None,
         backfilled=filled,
         unfillable=unfillable,
+        remaining_open=_open_gaps(db, names, d1, d2),
     )
 
 
@@ -324,7 +357,19 @@ def process_task(
         res = RangeOutcome(status="failed", run_id=None, error=f"{type(exc).__name__}: {exc}")
 
     entry.update(run_id=res.run_id, job_status=res.status)
-    if res.status in ("succeeded", "partial"):
+    if res.status == "partial" and res.remaining_open:
+        # A partial run that left gaps of the range open failed for those days: retry with
+        # backoff (attempts count) instead of "done" + re-queue by every quality run.
+        summary.gaps_backfilled += res.backfilled
+        summary.gaps_unfillable += res.unfillable
+        res = RangeOutcome(
+            status="partial",
+            run_id=res.run_id,
+            error=f"partial run left {res.remaining_open} gap(s) open: {res.error or ''}"[
+                :_ERR_CHARS
+            ],
+        )
+    elif res.status in ("succeeded", "partial"):
         _finish(db, task, "done", error=res.error, run_id=res.run_id)
         summary.done += 1
         summary.gaps_backfilled += res.backfilled
@@ -332,7 +377,7 @@ def process_task(
         entry.update(status="done", backfilled=res.backfilled, unfillable=res.unfillable)
         return "done"
     error = res.error or res.status
-    lock_busy = res.status == "skipped" and "already running" in error
+    lock_busy = res.status == "skipped" and ("already running" in error or "lock_busy" in error)
     if lock_busy:
         _finish(
             db, task, "pending", error=error, run_id=res.run_id, retry_in=LOCK_RETRY, refund=True

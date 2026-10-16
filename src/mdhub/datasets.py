@@ -25,6 +25,10 @@ by calling ``run_job(spec.backfill_job, {"date_from": d1, "date_to": d2})``.
 Contract for ``backfill_job``: the job function must accept keyword parameters
 ``date_from: date | None = None`` and ``date_to: date | None = None`` (inclusive range of
 business dates to (re)load) in addition to its scheduled parameters, and must be idempotent.
+A day for which the source confirms that it has no data is reported with
+:func:`mdhub.core.gaps.record_no_data` (not ``mark_partial``); a loaded day may be closed with
+:func:`mdhub.core.gaps.close_gap`. Datasets sharing one ``backfill_job`` share its tasks: one
+task per (job, range) refills all of them.
 """
 
 from __future__ import annotations
@@ -59,6 +63,10 @@ class DatasetSpec:
     where: str | None = None
     """Optional constant SQL predicate restricting the table (e.g. ``"source = 'cbr'"``);
     must be written by the module author, never built from external input."""
+    max_task_days: int | None = None
+    """Longest backfill task range in calendar days (default: 31, a year for monthly data).
+    Heavy jobs use short ranges so that one task finishes well within the backfill worker's
+    time budget and does not hold the job's lock across a scheduled run."""
 
     def __post_init__(self) -> None:
         if "." not in self.table:
@@ -67,6 +75,8 @@ class DatasetSpec:
             raise ValueError(f"{self.name}: negative thresholds")
         if self.series and not self.series_column:
             raise ValueError(f"{self.name}: series requires series_column")
+        if self.max_task_days is not None and self.max_task_days < 1:
+            raise ValueError(f"{self.name}: max_task_days must be >= 1")
 
 
 _REGISTRY: Final[dict[str, DatasetSpec]] = {}
@@ -88,6 +98,11 @@ def get_dataset(name: str) -> DatasetSpec:
 def all_datasets() -> list[DatasetSpec]:
     """All registered datasets, sorted by name (call ``discover_jobs()`` first)."""
     return [_REGISTRY[k] for k in sorted(_REGISTRY)]
+
+
+def datasets_for_job(job: str) -> list[DatasetSpec]:
+    """Registered datasets whose ``backfill_job`` is ``job`` (sorted by name)."""
+    return [s for s in all_datasets() if s.backfill_job == job]
 
 
 def unregister_dataset(name: str) -> None:

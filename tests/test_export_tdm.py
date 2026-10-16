@@ -184,7 +184,9 @@ def test_market_files(conn: psycopg.Connection[DictRow]) -> None:
     )
     cq = {r["instrument_id"]: r for r in close["md_bond_quotes_2026-10-15.csv"][1]}
     assert (cq["SU26242RMFS0"]["clean_price"], cq["SU26242RMFS0"]["ytm"]) == ("97.85", "15.42")
-    assert cq["RU000A105X12"]["ytm"] == "17.0"
+    # YIELDCLOSE is a yield to maturity (also with an offer ahead) and a different convention:
+    # never exported; the floater's MOEX effective yield is not a usable ytm either
+    assert cq["RU000A105X12"]["ytm"] == ""
 
     curves = files["md_curves_2026-10-15.csv"][1]
     assert [r["tenor_years"] for r in curves] == [

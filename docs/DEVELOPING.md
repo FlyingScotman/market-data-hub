@@ -52,15 +52,37 @@ src/mdhub/
 ## Conventions (non-negotiable, DESIGN §2)
 
 - **Raw first.** Record every HTTP response with `record_capture()` *before* parsing it, in
-  the same transaction as the rows parsed from it. Normalized rows carry `capture_id` (and
-  `run_id`). `endpoint` is a stable logical name (`bonds_history`, `cets_marketdata`), not
-  the URL. Parser changes bump the module's `PARSER_VERSION`.
+  the same transaction as the rows parsed from it (long multi-phase jobs such as
+  `bonds_static` may commit the captures of a finished fetch phase early so a later failure
+  keeps them). Normalized rows carry `capture_id` (and `run_id`). `endpoint` is a stable
+  logical name (`bonds_history`, `cets_marketdata`), not the URL. Parser changes bump the
+  module's `PARSER_VERSION`.
+- **Intraday raw.** Captures of intraday snapshots/polls use an endpoint starting with
+  `intraday:` (`intraday:bonds_marketdata`, `intraday:fx_cets_marketdata`,
+  `intraday:algopack_fo_tradestats` ...): `maintenance mode=retention` deletes them after
+  `MDHUB_RAW_RETENTION_DAYS_INTRADAY`. Tables referencing such captures declare
+  `capture_id bigint REFERENCES ops.raw_capture (id) ON DELETE SET NULL`; a capture still
+  referenced through any other FK (NO ACTION or a NOT NULL column, e.g. `md.zcyc_reject`) is
+  skipped by retention, never deleted.
+- **SECIDs are case-sensitive** (`SiZ6`, `2xEQT`): never upper-case them (API filters match
+  exactly); board and currency codes may be normalized.
 - **Fail closed.** Parsers validate blocks/columns/types (`parse_block(..., required=...)`,
   `require_columns`, converters) and raise `FormatDriftError`; never return partial data.
   The run is then `failed` and nothing from that capture is committed.
 - **Missing ≠ zero ≠ stale. No forward fill.** If a value is absent, write no row (or NULL in
   that column). Record expected-but-missing data as `ops.data_gap` / a failed or `partial`
   run (`ctx.run.mark_partial("...")`), never as a value copied from an earlier date.
+- **No-data days (backfill contract).** A business day for which the source returns a valid
+  but empty answer is recorded with `mdhub.core.gaps.record_no_data(conn, dataset, day, note,
+  today=ctx.today())` - `open` within a 1-day grace period (data may be published late), then
+  `unfillable` (terminal, never re-queued) - and a loaded day is closed with `close_gap()`. Do
+  **not** `mark_partial` for it: a partial backfill run that leaves gaps of its range open is
+  retried with backoff and ends `failed`. `prelim` runs only log empty days. Datasets sharing
+  a `backfill_job` share its tasks (one per job and range); heavy jobs set
+  `DatasetSpec.max_task_days` so one task finishes within the worker's budget.
+- **Revisable intraday tables** keep row history too (a same-`ts` update writes the previous
+  image). A quote time later than the snapshot's SYSTIME belongs to the previous *business day*
+  of the trading calendar (pass `is_business_day` to the parser), not "SYSTIME date - 1".
 - **Decimals.** Prices, rates, amounts are `numeric` in SQL and `Decimal` in Python. Convert
   JSON numbers with `to_decimal()` (goes through `str()`), never `Decimal(float)` or `float`.
 - **Units in column names**: `_pct` (percent, 14.5 = 14.5 %), `_bp` (basis points), `_rub`
@@ -110,6 +132,7 @@ src/mdhub/
   `ingested_at timestamptz NOT NULL DEFAULT now()`, optionally `updated_at timestamptz`,
   `last_seen_run bigint`, `last_seen` — these are the **meta columns** that never count as a
   data change (`core.upsert.META_COLUMNS`, `ops.track_changes()`).
+- Numbers: next free number of the range; review fixes of 2026-10-16 are `0420_review_fixes.sql`.
 - Enable history on revisable tables (keys = natural key):
   `CALL ops.enable_history('md.bond_eod', ARRAY['trade_date','secid','board']);`
   Extra table-specific meta columns: third argument, e.g.
@@ -188,6 +211,12 @@ def bonds_eod(
 `job_run`. Raise `JobSkipped("reason")` to end as `skipped` (e.g. Cbonds 401, feature flag
 off). Any other exception marks the run `failed` and is re-raised.
 
+Lock: `run_job(..., lock_wait_s=N)` waits up to N seconds for `mdhub.job:<name>` (scheduled
+fires: 15 minutes, polling rules 0); a run that does not get it is recorded `skipped` with an
+error starting `lock_busy:` (job health: `missed`; the `quality` job re-runs it). Backfill runs
+pass `yield_to_waiters=True` and step aside while a scheduled run waits. Runs left `running` by
+a dead process are failed by `reap_orphaned_runs` (scheduler start, nightly maintenance).
+
 **Parameters.** Keyword-only, with defaults and type annotations; CLI strings are coerced
 (`int`, `float`, `bool`, `Decimal`, `date`, `datetime`, `X | None`, `list[X]` as `a,b`).
 Shared names:
@@ -208,9 +237,11 @@ manually: `uv run mdhub run bonds_eod -p day=2026-10-15 -p mode=final`.
 ## Schedule
 
 `mdhub/schedule.py` holds `RULES` (job → cron rules with params, day filter `business` /
-`all` / `first_business_of_month`, calendar, `gate_offset_days`) per DESIGN §6. Cron is
-5-field crontab in Europe/Moscow. Business-day gating uses `ref.calendar_day` when present
-(latest `known_at` per day), else Monday–Friday. `uv run mdhub scheduler` runs it; rules of
+`all` / `first_business_of_month`, calendar, `gate_offset_days`, `lock_wait_s`, `catch_up`;
+`_poll(...)` for polling rules that neither wait nor catch up) per DESIGN §6. Cron is 5-field
+crontab in Europe/Moscow. Business-day gating uses `ref.calendar_day` when present (per day the
+highest-priority source: observed > MOEX ISS calendar > curated > curated_unverified), else
+Monday–Friday. `uv run mdhub scheduler` runs it; rules of
 jobs that are not registered are skipped with a warning. `uv run mdhub jobs list` shows the
 registry, cron rules, import failures and schedule problems.
 
@@ -237,5 +268,7 @@ module that fails to import is reported on stderr and skipped. Core commands: `m
 
 ## Environment
 
-DESIGN §7 plus two operational knobs: `MDHUB_LOG_LEVEL` (default `INFO`) and
-`MDHUB_HTTP_TIMEOUT` (seconds, default 30). See `mdhub/config.py`.
+DESIGN §7 plus operational knobs: `MDHUB_LOG_LEVEL` (default `INFO`), `MDHUB_HTTP_TIMEOUT`
+(seconds, default 30), `MDHUB_API_POOL_SIZE` (read-API pool, default 8), `MDHUB_BACKUP_DIR`.
+Empty values count as unset. See `mdhub/config.py`; every setting must appear in
+`deploy/env.example` (`tests/test_deploy.py`).

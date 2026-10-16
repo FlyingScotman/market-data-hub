@@ -23,12 +23,13 @@ from datetime import date
 from typing import Any, Final
 
 from mdhub.core.capture import record_capture
+from mdhub.core.gaps import close_gap, record_no_data
 from mdhub.core.http import HttpClient
 from mdhub.core.iss import ISS_BASE_URL, iter_pages
 from mdhub.core.upsert import upsert_rows
 from mdhub.datasets import DatasetSpec, register_dataset
 from mdhub.jobs import JobContext, job
-from mdhub.loaders.bonds_eod import close_gap, record_no_data, resolve_trade_dates, run_dates
+from mdhub.loaders.bonds_eod import resolve_trade_dates, run_dates
 from mdhub.sources.moex_market import (
     INDEX_GROUPS,
     INDEX_HISTORY_PATH,
@@ -54,7 +55,9 @@ register_dataset(
         date_column="trade_date",
         calendar=CALENDAR,
         frequency="business_daily",
-        max_lag_days=1,
+        # D-1 *history* is loaded by the 12:40 run (days_back=[0, 1]): at the 08:30 quality
+        # run D-2 is the latest a healthy feed has, so a lag of 1 flagged it stale every day.
+        max_lag_days=2,
         backfill_job="indices_eod",
         history_start=date(2022, 1, 3),
         min_rows_per_day=300,
@@ -164,7 +167,7 @@ def load_index_day(
             note = f"ISS index history returned 0 rows for {trade_date}"
             ctx.logger.warning(note)
             if record_gap:
-                record_no_data(conn, DATASET_ALL, trade_date, note)
+                record_no_data(conn, DATASET_ALL, trade_date, note, today=ctx.today())
         result = upsert_rows(conn, "md.index_eod", rows, KEY, run_id=ctx.run.id)
         ctx.run.add_counts(result)
     ctx.logger.info(

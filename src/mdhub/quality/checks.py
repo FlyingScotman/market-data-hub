@@ -16,12 +16,14 @@ Everything is driven by :class:`mdhub.datasets.DatasetSpec`:
   its first and last date in the window (holes only - a series that ended is not a gap).
   ``intraday`` datasets are scanned over the last :data:`INTRADAY_SCAN_DAYS` days only.
 * **gap bookkeeping** (:func:`sync_gaps`): new gaps are inserted ``open``; gaps that are no
-  longer missing become ``backfilled``; ``unfillable`` gaps are left alone (never re-queued).
+  longer missing become ``backfilled`` (also ``unfillable`` ones: data that appears later is
+  recognised); still-missing ``unfillable`` gaps are left alone (never re-queued).
 * **queueing** (:func:`queue_backfill`): open gap days not covered by an open task (or by a
-  task that failed in the last :data:`FAILED_TASK_COOLDOWN_DAYS` days) are compressed into
-  ranges of consecutive expected days (at most :data:`MAX_TASK_DAYS` calendar days, a year for
-  monthly data) and inserted into ``ops.backfill_task`` with params
-  ``{"date_from": "YYYY-MM-DD", "date_to": "YYYY-MM-DD"}``.
+  task that failed in the last :data:`FAILED_TASK_COOLDOWN_DAYS` days) of *any dataset sharing
+  the same backfill job* (e.g. the six ``cbr_*`` datasets -> one ``cbr_daily`` task) are
+  compressed into ranges of consecutive expected days (at most ``DatasetSpec.max_task_days``,
+  default :data:`MAX_TASK_DAYS` calendar days, a year for monthly data) and inserted into
+  ``ops.backfill_task`` with params ``{"date_from": "YYYY-MM-DD", "date_to": "YYYY-MM-DD"}``.
 
 SQL identifiers come from the registered specs and are composed with :mod:`psycopg.sql`;
 ``DatasetSpec.where`` is inserted verbatim (it is a constant written by the module author;
@@ -42,8 +44,9 @@ from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 
 from mdhub.core.bizday import CalendarPredicate
-from mdhub.core.timeutil import MSK, add_business_days, date_range, is_weekday
-from mdhub.datasets import DatasetSpec
+from mdhub.core.gaps import no_data_status
+from mdhub.core.timeutil import MSK, add_business_days, date_range, is_weekday, msk_today
+from mdhub.datasets import DatasetSpec, datasets_for_job
 
 __all__ = [
     "FAILED_TASK_COOLDOWN_DAYS",
@@ -59,6 +62,7 @@ __all__ = [
     "expected_days",
     "expected_latest",
     "gap_series",
+    "job_datasets",
     "max_task_days",
     "month_start",
     "probe_table",
@@ -139,7 +143,18 @@ def expected_days(
 
 
 def max_task_days(spec: DatasetSpec) -> int:
+    """Longest task range of ``spec`` (its ``max_task_days``, else 31 / 366 for monthly)."""
+    if spec.max_task_days is not None:
+        return spec.max_task_days
     return 366 if spec.frequency == "monthly" else MAX_TASK_DAYS
+
+
+def job_datasets(spec: DatasetSpec) -> list[str]:
+    """Names of all registered datasets sharing ``spec``'s backfill job (incl. ``spec``)."""
+    names = {spec.name}
+    if spec.backfill_job:
+        names |= {s.name for s in datasets_for_job(spec.backfill_job)}
+    return sorted(names)
 
 
 def compress_ranges(
@@ -606,17 +621,19 @@ def sync_gaps(conn: Conn, spec: DatasetSpec, check: DatasetCheck, *, run_id: int
     return GapSync(opened, closed)
 
 
-def _task_ranges(conn: Conn, dataset: str) -> list[tuple[date, date]]:
+def _task_ranges(conn: Conn, datasets: Sequence[str]) -> list[tuple[date, date]]:
+    """Ranges of open (or recently failed) tasks of any of ``datasets`` - the datasets that
+    share one backfill job, so one task per (job, range) serves all of them."""
     with conn.cursor(row_factory=tuple_row) as cur:
         rows = cur.execute(
             """
             SELECT params ->> 'date_from', params ->> 'date_to' FROM ops.backfill_task
-            WHERE dataset = %s AND params ? 'date_from' AND params ? 'date_to'
+            WHERE dataset = ANY(%s) AND params ? 'date_from' AND params ? 'date_to'
               AND (status IN ('pending', 'running')
                    OR (status = 'failed'
                        AND done_at > now() - make_interval(days => %s)))
             """,
-            (dataset, FAILED_TASK_COOLDOWN_DAYS),
+            (list(datasets), FAILED_TASK_COOLDOWN_DAYS),
         ).fetchall()
     out: list[tuple[date, date]] = []
     for lo, hi in rows:
@@ -660,7 +677,7 @@ def queue_backfill(
                 (spec.name,),
             ).fetchall()
         ]
-    covered = _task_ranges(conn, spec.name)
+    covered = _task_ranges(conn, job_datasets(spec))
     todo = [d for d in days if not any(lo <= d <= hi for lo, hi in covered)]
     inserted: list[tuple[date, date]] = []
     for lo, hi in compress_ranges(todo, day_predicate(spec, calendar), max_task_days(spec)):
@@ -688,14 +705,17 @@ def reconcile_gaps(
     *,
     run_id: int | None,
     mark_unfillable: bool,
+    today: date | None = None,
 ) -> tuple[int, int]:
     """After a backfill run over ``[date_from, date_to]``: re-count rows for every open gap
     in the range. Filled gaps -> ``backfilled``; still-missing gaps -> ``unfillable`` when
     ``mark_unfillable`` (the run succeeded, so the source has no data for that day, e.g. a
-    holiday missing from the calendar), otherwise they stay open with a note.
+    holiday missing from the calendar) and the day is older than the no-data grace period
+    (:data:`mdhub.core.gaps.NO_DATA_GRACE_DAYS`), otherwise they stay open with a note.
 
     :returns: ``(backfilled, unfillable)`` counts.
     """
+    today = today or msk_today()
     with conn.cursor(row_factory=tuple_row) as cur:
         gaps = cur.execute(
             """
@@ -718,7 +738,7 @@ def reconcile_gaps(
             if n >= spec.min_rows_per_day:
                 status, note = "backfilled", f"loaded by run {run_id} (rows={n})"
                 filled += 1
-            elif mark_unfillable:
+            elif mark_unfillable and no_data_status(day, today) == "unfillable":
                 status = "unfillable"
                 note = (
                     f"no data from source after successful backfill run {run_id} (rows={n}); "

@@ -375,12 +375,24 @@ class BondSnapshot:
     min_lag_seconds: float | None
 
 
-def _quote_ts(systime: datetime, update_time: time) -> datetime:
-    """Quote datetime: SYSTIME's date + UPDATETIME; a time after SYSTIME is from the day before
-    (snapshots taken before the session still carry the previous session's last update)."""
+def _quote_ts(
+    systime: datetime,
+    update_time: time,
+    is_business_day: Callable[[date], bool] | None = None,
+) -> datetime:
+    """Quote datetime: SYSTIME's date + UPDATETIME; a time after SYSTIME is from the previous
+    session - the previous **business day** of the calendar (``is_business_day``, default
+    Monday-Friday), not simply the day before (a Monday pre-session snapshot carries Friday's
+    last update)."""
     ts = msk_datetime(systime.date(), update_time)
     if ts > systime + timedelta(minutes=1):
-        ts -= timedelta(days=1)
+        pred = is_business_day or (lambda d: d.weekday() < 5)
+        day = systime.date() - timedelta(days=1)
+        for _ in range(31):
+            if pred(day):
+                break
+            day -= timedelta(days=1)
+        ts = msk_datetime(day, update_time)
     return ts
 
 
@@ -397,7 +409,9 @@ def detect_latency(lags: Iterable[float]) -> tuple[Latency, float | None]:
     return ("realtime" if lag <= REALTIME_MAX_LAG.total_seconds() else "delayed"), lag
 
 
-def parse_bond_marketdata(payload: Mapping[str, Any]) -> BondSnapshot:
+def parse_bond_marketdata(
+    payload: Mapping[str, Any], *, is_business_day: Callable[[date], bool] | None = None
+) -> BondSnapshot:
     """Parse the all-boards bond snapshot (``iss.only=marketdata,marketdata_yields``).
 
     Rows lacking ``UPDATETIME``/``SYSTIME`` are skipped (no quote clock, nothing to store).
@@ -434,7 +448,7 @@ def parse_bond_marketdata(payload: Mapping[str, Any]) -> BondSnapshot:
         upd = to_time(raw["UPDATETIME"], field="UPDATETIME")
         if systime is None or upd is None:
             continue
-        ts = _quote_ts(systime, upd)
+        ts = _quote_ts(systime, upd, is_business_day)
         lags.append((systime - ts).total_seconds())
         max_sys = systime if max_sys is None or systime > max_sys else max_sys
         row: dict[str, Any] = {"secid": secid, "board": board, "ts": ts, "source_ts": systime}

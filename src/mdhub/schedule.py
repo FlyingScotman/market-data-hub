@@ -20,6 +20,14 @@ pass - enforced by ``tests/test_schedule.py::test_registered_jobs_accept_rule_pa
 * ``group: str`` - subset of instruments (indices: ``rusfar``, ``rusfarrt``, ``all``),
 * ``keep: int`` - number of backups to keep (maintenance ``backup``).
 
+Lock contention (DESIGN §6): a scheduled fire waits up to :data:`SCHEDULED_LOCK_WAIT_S` for
+the job's lock (a backfill of the same job, or a previous run, may hold it); backfill runs yield
+to a waiting fire. A fire that still cannot run is recorded in ``ops.job_run`` as ``skipped``
+with an error starting ``lock_busy:``; job health reports it as ``missed`` and the ``quality``
+job re-runs it (rules with ``catch_up``). Polling rules (``_poll``: intraday snapshots,
+AlgoPack, Ratescalcs, the backfill worker) neither wait nor catch up - the next fire supersedes
+a missed one.
+
 The scheduler skips rules whose job is not registered (with a warning), so loaders can be
 added incrementally.
 """
@@ -28,6 +36,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -40,11 +49,12 @@ from apscheduler.triggers.cron import CronTrigger
 from mdhub.config import Settings
 from mdhub.core.bizday import DEFAULT_CALENDAR, CalendarPredicate
 from mdhub.db.pool import Database
-from mdhub.jobs import REGISTRY, JobRegistry, run_job
+from mdhub.jobs import LOCK_BUSY, REGISTRY, JobRegistry, record_skipped_run, run_job
 
 __all__ = [
     "KNOWN_JOBS",
     "RULES",
+    "SCHEDULED_LOCK_WAIT_S",
     "DayFilter",
     "Rule",
     "build_scheduler",
@@ -55,6 +65,11 @@ __all__ = [
 log = logging.getLogger(__name__)
 
 DayFilter = Literal["business", "all", "first_business_of_month"]
+
+SCHEDULED_LOCK_WAIT_S: Final = 900
+"""A scheduled (non-polling) run waits up to 15 minutes for its job lock. Backfill tasks of
+heavy datasets are short (``DatasetSpec.max_task_days``) and yield to a waiting scheduled run,
+so the wait normally ends after the current task."""
 
 KNOWN_JOBS: Final = (
     "bonds_static",
@@ -93,6 +108,12 @@ class Rule:
     """Evaluate ``days`` on ``run date - gate_offset_days`` (e.g. 00:20 runs for the
     previous day's session)."""
     note: str = ""
+    lock_wait_s: int = SCHEDULED_LOCK_WAIT_S
+    """How long a fire waits for the job's lock (held by a backfill or a previous run) before
+    it is recorded as ``skipped`` with ``lock_busy``. 0 = skip at once (polling rules)."""
+    catch_up: bool = True
+    """Re-run a fire that was skipped with ``lock_busy`` (the ``quality`` job does it).
+    False for polling rules whose next fire supersedes a missed one."""
 
 
 def _r(
@@ -105,19 +126,41 @@ def _r(
     return Rule(cron=cron, params=params, days=days, calendar=calendar, note=note)
 
 
+def _poll(
+    cron: str,
+    days: DayFilter = "business",
+    note: str = "",
+    calendar: str = DEFAULT_CALENDAR,
+    **params: Any,
+) -> Rule:
+    """A polling rule: does not wait for a busy lock and is not caught up (the next fire
+    supersedes it)."""
+    return Rule(
+        cron=cron,
+        params=params,
+        days=days,
+        calendar=calendar,
+        note=note,
+        lock_wait_s=0,
+        catch_up=False,
+    )
+
+
 RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
     "bonds_static": (_r("30 6 * * *", mode="full", note="full universe incl. bondization"),),
-    "bonds_static_probe": (_r("5 9-19 * * *", mode="probe", note="hourly new-listing probe"),),
+    "bonds_static_probe": (_poll("5 9-19 * * *", mode="probe", note="hourly new-listing probe"),),
     "cbonds_enrich": (_r("30 7 * * *", note="auto-skip while auth returns 401"),),
     "bonds_eod": (
         _r("20 19 * * *", mode="prelim", days_back=[0]),
         _r("15 7 * * *", mode="final", days_back=[1, 2], note="post-session revisions"),
     ),
     "bonds_intraday": (
-        _r("*/15 10-18 * * *", note="every 15 min 10:00-19:00"),
-        _r("0 19 * * *"),
+        _poll("*/15 10-18 * * *", note="every 15 min 10:00-19:00"),
+        _poll("0 19 * * *"),
     ),
-    "fx_moex_intraday": (_r("*/5 7-23 * * *", calendar="MOEX_FX", note="every 5 min 07:00-23:55"),),
+    "fx_moex_intraday": (
+        _poll("*/5 7-23 * * *", calendar="MOEX_FX", note="every 5 min 07:00-23:55"),
+    ),
     "fx_moex_eod": (
         Rule(
             cron="20 0 * * *",
@@ -130,19 +173,19 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
     ),
     "fx_indicative": (_r("10 14 * * *"), _r("10 19 * * *")),
     "futures_intraday": (
-        _r("50-59 8 * * *", calendar="MOEX_FORTS", note="every 1 min 08:50-23:50"),
-        _r("* 9-22 * * *", calendar="MOEX_FORTS"),
-        _r("0-50 23 * * *", calendar="MOEX_FORTS"),
+        _poll("50-59 8 * * *", calendar="MOEX_FORTS", note="every 1 min 08:50-23:50"),
+        _poll("* 9-22 * * *", calendar="MOEX_FORTS"),
+        _poll("0-50 23 * * *", calendar="MOEX_FORTS"),
     ),
     "futures_eod": (
         _r("25 19 * * *", calendar="MOEX_FORTS", mode="prelim", days_back=[0]),
         _r("25 7 * * *", calendar="MOEX_FORTS", mode="final", days_back=[1]),
     ),
     "algopack_fx_futures": (
-        _r(
+        _poll(
             "1-56/5 7-23 * * *",
             calendar="MOEX_FORTS",
-            note="every 5 min, +1 min offset; trading hours 07:00-23:59 (window not in DESIGN)",
+            note="every 5 min, +1 min offset, 07:01-23:56; each poll re-reads the whole day",
         ),
     ),
     "indices_eod": (
@@ -151,8 +194,8 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
         _r("30 19 * * *", group="all"),
     ),
     "zcyc": (
-        _r("*/15 10-18 * * *", mode="intraday", note="every 15 min 10:00-19:00"),
-        _r("0 19 * * *", mode="intraday"),
+        _poll("*/15 10-18 * * *", mode="intraday", note="every 15 min 10:00-19:00"),
+        _poll("0 19 * * *", mode="intraday"),
         _r("5 19 * * *", mode="eod", days_back=[0]),
         _r("10 7 * * *", mode="final", days_back=[1]),
     ),
@@ -172,11 +215,14 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
     ),
     "ecb_fx": (_r("30 18 * * *", days="all"),),
     "swaps_ratescalcs": (
-        _r("0,30 9-22 * * *", note="every 30 min 09:00-23:00; skip identical content"),
-        _r("0 23 * * *"),
+        _poll("0,30 9-22 * * *", note="every 30 min 09:00-23:00; skip identical content"),
+        _poll("0 23 * * *"),
     ),
-    "quality": (_r("30 8 * * *"), _r("30 20 * * *")),
-    "backfill_worker": (_r("*/10 * * * *", days="all", note="DB-driven; runs on all days"),),
+    "quality": (
+        Rule(cron="30 8 * * *", catch_up=False),
+        Rule(cron="30 20 * * *", catch_up=False),
+    ),
+    "backfill_worker": (_poll("*/10 * * * *", days="all", note="DB-driven; runs on all days"),),
     "maintenance": (
         _r("0 2 * * *", days="all", mode="backup", keep=14, note="pg_dump, keep 14"),
         _r("0 3 * * *", days="all", mode="retention", note="raw retention + VACUUM ANALYZE"),
@@ -262,8 +308,20 @@ class _RuleRunner:
         if not rule_applies(self.rule, run_date, self.calendar):
             log.debug("%s: %s not applicable on %s", self.name, self.rule.cron, run_date)
             return
-        if not self.lock.acquire(blocking=False):
+        wait = float(self.rule.lock_wait_s)
+        started = time.monotonic()
+        acquired = self.lock.acquire(timeout=wait) if wait > 0 else self.lock.acquire(False)
+        if not acquired:
             log.warning("%s: previous run still in progress; skipping this trigger", self.name)
+            if wait > 0:  # a fire that should have run: record it so health can flag it
+                record_skipped_run(
+                    self.db,
+                    self.name,
+                    dict(self.rule.params),
+                    f"{LOCK_BUSY}: job {self.name}: previous run in this process still in "
+                    f"progress after {wait:g} s",
+                    settings=self.settings,
+                )
             return
         try:
             outcome = run_job(
@@ -273,6 +331,7 @@ class _RuleRunner:
                 db=self.db,
                 registry=self.registry,
                 calendar=self.calendar,
+                lock_wait_s=max(0.0, wait - (time.monotonic() - started)),
             )
             log.info("%s finished: %s (run %s)", self.name, outcome.status, outcome.run_id)
         except Exception:

@@ -28,12 +28,13 @@ from typing import Any, Final
 from psycopg.types.json import Jsonb
 
 from mdhub.core.capture import record_capture
+from mdhub.core.gaps import close_gap, record_no_data
 from mdhub.core.http import HttpClient
 from mdhub.core.iss import ISS_BASE_URL
 from mdhub.core.upsert import upsert_rows
 from mdhub.datasets import DatasetSpec, register_dataset
 from mdhub.jobs import JobContext, job
-from mdhub.loaders.bonds_eod import close_gap, record_no_data, resolve_trade_dates, run_dates
+from mdhub.loaders.bonds_eod import resolve_trade_dates, run_dates
 from mdhub.sources.moex_market import (
     PARSER_VERSION,
     ZCYC_PATH,
@@ -146,7 +147,7 @@ def load_zcyc(
             note = f"ISS zcyc returned no curve for {trade_date or 'latest'}"
             ctx.logger.warning(note)
             if trade_date is not None and record_gap:
-                record_no_data(conn, DATASET, trade_date, note)
+                record_no_data(conn, DATASET, trade_date, note, today=ctx.today())
             return {"no_data": True}
         check = check_zcyc(snap)
         if not check.passed:

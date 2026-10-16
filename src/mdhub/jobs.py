@@ -29,6 +29,7 @@ import inspect
 import json
 import logging
 import pkgutil
+import time
 import types
 import typing
 from collections.abc import Callable, Iterator, Mapping
@@ -50,6 +51,7 @@ from mdhub.db.pool import Database, DictConnection
 
 __all__ = [
     "JOB_PACKAGES",
+    "LOCK_BUSY",
     "REGISTRY",
     "DiscoveryReport",
     "JobAlreadyRunning",
@@ -64,6 +66,7 @@ __all__ = [
     "discover_jobs",
     "job",
     "parse_param_pairs",
+    "record_skipped_run",
     "run_job",
 ]
 
@@ -395,18 +398,63 @@ class JobOutcome:
     result: Any = None
 
 
+LOCK_BUSY: Final = "lock_busy"
+"""Prefix of the ``ops.job_run.error`` text of a run skipped because the job lock was busy
+(health treats such a run as "did not run")."""
+
+
+def _try_lock(cur: Any, key: str) -> bool:
+    row = cur.execute("SELECT pg_try_advisory_lock(hashtextextended(%s, 0))", (key,)).fetchone()
+    return bool(row and row[0])
+
+
+def _unlock(cur: Any, key: str) -> None:
+    cur.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (key,))
+
+
 @contextmanager
-def _job_lock(db: Database, name: str) -> Iterator[bool]:
+def _job_lock(
+    db: Database,
+    name: str,
+    *,
+    wait_s: float = 0.0,
+    poll_s: float = 5.0,
+    yield_to_waiters: bool = False,
+) -> Iterator[str | None]:
+    """Hold advisory lock ``mdhub.job:<name>``; yields ``None`` when held, else the reason.
+
+    ``wait_s > 0``: poll for the lock up to that long, announcing the wait with advisory lock
+    ``mdhub.jobwait:<name>``. ``yield_to_waiters`` (backfill runs): give up at once when such
+    a waiter exists, so scheduled runs are not starved by a queue of backfill tasks.
+    """
+    key, wait_key = f"mdhub.job:{name}", f"mdhub.jobwait:{name}"
     conn = db.connect(autocommit=True)
     try:
+        reason: str | None = None
         with conn.cursor(row_factory=tuple_row) as cur:
-            row = cur.execute(
-                "SELECT pg_try_advisory_lock(hashtextextended(%s, 0))", (f"mdhub.job:{name}",)
-            ).fetchone()
-        locked = bool(row and row[0])
-        yield locked
+            if yield_to_waiters and not _try_lock(cur, wait_key):
+                reason = (
+                    f"{LOCK_BUSY}: job {name}: a scheduled run is waiting for the lock "
+                    "(already running)"
+                )
+            else:
+                if yield_to_waiters:
+                    _unlock(cur, wait_key)
+                locked = _try_lock(cur, key)
+                if not locked and wait_s > 0:
+                    announced = _try_lock(cur, wait_key)
+                    deadline = time.monotonic() + wait_s
+                    while not locked and time.monotonic() < deadline:
+                        time.sleep(max(0.0, min(poll_s, deadline - time.monotonic())))
+                        locked = _try_lock(cur, key)
+                    if announced:
+                        _unlock(cur, wait_key)
+                if not locked:
+                    waited = f" (waited {wait_s:g} s)" if wait_s > 0 else ""
+                    reason = f"{LOCK_BUSY}: job {name} is already running{waited}"
+        yield reason
     finally:
-        conn.close()  # closing the session releases the advisory lock
+        conn.close()  # closing the session releases the advisory locks
 
 
 def run_job(
@@ -419,12 +467,19 @@ def run_job(
     calendar: CalendarPredicate = weekday_calendar,
     http_factory: Callable[..., HttpClient] = HttpClient,
     exclusive: bool = True,
+    lock_wait_s: float = 0.0,
+    lock_poll_s: float = 5.0,
+    yield_to_waiters: bool = False,
 ) -> JobOutcome:
     """Run job ``name`` once and record it in ``ops.job_run``.
 
     :param params: raw parameters (strings are coerced per annotations).
-    :param exclusive: hold advisory lock ``mdhub.job:<name>``; if another run holds it the
-        job is recorded as ``skipped`` and not executed.
+    :param exclusive: hold advisory lock ``mdhub.job:<name>``; if another run holds it (after
+        waiting up to ``lock_wait_s``) the job is recorded as ``skipped`` with an error text
+        starting ``lock_busy:`` and not executed.
+    :param lock_wait_s: how long to wait for the lock (scheduled runs wait; default 0).
+    :param yield_to_waiters: skip (``lock_busy``) when another caller is waiting for the lock
+        (used by backfill runs so that scheduled runs go first).
     :returns: outcome with the run id and final status.
     :raises UnknownJobError: job not registered.
     :raises JobParamError: invalid parameters (nothing recorded).
@@ -434,12 +489,18 @@ def run_job(
     coerced = coerce_params(spec.fn, params or {})
     logger = logging.getLogger(f"mdhub.job.{name}")
 
-    lock_cm: AbstractContextManager[bool] = _job_lock(db, name) if exclusive else _no_lock()
-    with lock_cm as locked:
+    lock_cm: AbstractContextManager[str | None] = (
+        _job_lock(
+            db, name, wait_s=lock_wait_s, poll_s=lock_poll_s, yield_to_waiters=yield_to_waiters
+        )
+        if exclusive
+        else _no_lock()
+    )
+    with lock_cm as busy:
         result: Any = None
         with job_run(db, name, coerced, settings=settings) as run:
-            if not locked:
-                raise JobAlreadyRunning(f"job {name} is already running")
+            if busy is not None:
+                raise JobAlreadyRunning(busy)
             ctx = JobContext(
                 settings=settings,
                 db=db,
@@ -455,9 +516,25 @@ def run_job(
         return JobOutcome(job=name, run_id=run.id, status=status, result=result)
 
 
+def record_skipped_run(
+    db: Database,
+    name: str,
+    params: Mapping[str, Any],
+    reason: str,
+    *,
+    settings: Settings | None = None,
+) -> int:
+    """Record a run of ``name`` that was not executed (``skipped`` with ``reason``)."""
+    run_id = -1
+    with job_run(db, name, params, settings=settings) as run:
+        run_id = run.id
+        run.mark_skipped(reason)
+    return run_id
+
+
 @contextmanager
-def _no_lock() -> Iterator[bool]:
-    yield True
+def _no_lock() -> Iterator[str | None]:
+    yield None
 
 
 def _final_status(db: Database, run_id: int) -> str:

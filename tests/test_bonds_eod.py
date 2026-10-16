@@ -265,9 +265,38 @@ def test_yields_multi_page(
     assert _counts(conn)["md.bond_eod_yield"] == 4
 
 
-def test_no_data_day_is_recorded_not_failed(
-    iss: respx.MockRouter, settings: Settings, db: Database, conn: Conn
+def test_no_data_day_within_grace_stays_open(
+    iss: respx.MockRouter,
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    today_is: Callable[[date], None],
 ) -> None:
+    """F10: ISS history for D-1 may be late; an empty answer the next morning leaves the gap
+    open (re-checked), only an older empty day becomes unfillable."""
+    today_is(date(2026, 10, 16))
+    empty = _load("bonds_history_2026-10-15.json")
+    empty["history"]["data"] = []
+    _mock(iss, empty)
+    assert _run({"mode": "final", "day": "2026-10-15"}, settings, db).status == "succeeded"
+    rows = conn.execute("SELECT status, note FROM ops.data_gap ORDER BY dataset").fetchall()
+    assert [r["status"] for r in rows] == ["open", "open"]
+    assert "grace period" in rows[0]["note"]
+    conn.commit()
+    today_is(date(2026, 10, 19))
+    assert _run({"mode": "final", "day": "2026-10-15"}, settings, db).status == "succeeded"
+    statuses = conn.execute("SELECT DISTINCT status FROM ops.data_gap").fetchall()
+    assert statuses == [{"status": "unfillable"}]
+
+
+def test_no_data_day_is_recorded_not_failed(
+    iss: respx.MockRouter,
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    today_is: Callable[[date], None],
+) -> None:
+    today_is(date(2026, 10, 20))
     empty = _load("bonds_history_2026-10-15.json")
     empty["history"]["data"] = []
     _, y = _mock(iss, empty)

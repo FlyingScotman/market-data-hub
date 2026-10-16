@@ -69,40 +69,45 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
 - `ops.job_run(id, job, started_at, finished_at, status ∈ {running, succeeded, partial, failed, skipped}, params jsonb, rows_inserted, rows_updated, rows_unchanged, error text, host)`
 - `ops.raw_capture(id, run_id, source, endpoint, url_redacted, http_status, content_type, fetched_at, source_ts, parser_version, sha256, payload_gz bytea, size_bytes)` — unique (sha256, endpoint, fetched_at). Retention: intraday raw 90 days (configurable), EOD/static raw forever.
 - `ops.row_history(id, table_name, row_key jsonb, old_row jsonb, replaced_at, replaced_by_run)` — written by trigger `ops.track_changes()`.
-- `ops.data_gap(dataset, key jsonb, gap_date, detected_at, status ∈ {open, backfilled, unfillable}, note)`
-- `ops.backfill_task(id, dataset, params jsonb, status, attempts, last_error, created_at, done_at)`
-- `ops.schema_migration(version, applied_at, checksum)`
+- `ops.data_gap(dataset, key jsonb, gap_date, detected_at, status ∈ {open, backfilled, unfillable}, note)` — `unfillable` is terminal (the source confirmed "no data" for a day older than the 1-day grace period, `mdhub.core.gaps`); data that appears later still turns it `backfilled`.
+- `ops.backfill_task(id, dataset, params jsonb {date_from, date_to}, status, attempts, last_error, created_at, done_at, not_before, started_at, last_run_id, source)` — one task per (backfill job, range): datasets sharing a job share tasks.
+- `ops.dataset_status` (latest check per dataset), `ops.quality_report` (one report per `quality` run, incl. job health and catch-up); views `ops.v_coverage`, `ops.v_job_health`, `ops.v_open_gaps`, `ops.v_backfill_queue`.
+- `ops.legacy_import` (SQLite import bookkeeping), `ops.schema_migration(version, applied_at, checksum)`
 
 ### `ref` — static / reference
-- `ref.calendar_day(calendar ∈ {MOEX_STOCK, MOEX_FX, MOEX_FORTS, RU_PRODUCTION}, day, is_business_day, source, known_at)` — past days from observed trading (+ ISS where available), future from curated data file with version.
+- `ref.calendar_day(calendar ∈ {MOEX_STOCK, MOEX_FX, MOEX_FORTS, RU_PRODUCTION}, day, source, is_business_day, known_at, version, note)` PK (calendar, day, source) — past days from observed trading / RUONIA observations (from 2019-01-01), the days the official MOEX ISS calendar lists (never a synthesized year), future days from the curated data file. **Precedence by source, not recency**: `ref.calendar_source_rank()` observed > moex_iss_calendar > curated > curated_unverified (`known_at` breaks ties); view `ref.calendar_effective`, `mdhub.core.bizday.DbCalendar`; days without rows: Monday–Friday.
 - `ref.issuer(issuer_id PK (MOEX emitent_id), inn, ogrn, okpo, name, short_name, country, sector, is_sovereign, …, updated_at)`
 - `ref.bond(secid PK, isin, regnumber, issuer_id, name, short_name, bond_type (MOEX label), bond_class (derived enum: ofz_pd, ofz_pk, ofz_in, ofz_ad, sovereign_fx, subfederal, municipal, corporate, exchange_bond, structured, mbs, …), coupon_type ∈ {fixed, floating, indexed_face, zero, variable_known, unknown}, face_value, initial_face_value, face_unit, currency_id (settlement), issue_date, maturity_date (NULL for perpetual), is_perpetual, coupon_frequency, day_count, is_amortizing, is_subordinated, is_structured, qualified_only, high_risk, listing_level, issue_size, primary_board, start_date_moex, status ∈ {active, matured, delisted}, …, source, updated_at, last_seen_run)`
 - `ref.bond_board(secid, board, is_primary, lot_size, min_step, decimals, settle_code, currency_id, listed, first_seen, last_seen)`
-- `ref.bond_coupon(secid, coupon_no, start_date, pay_date (coupondate), record_date, value_rub/amount, value_prc, face_value, status ∈ {known, projected_by_moex, unknown}, source, updated_at)` PK (secid, coupon_no) — falls back to ordinal by date only when MOEX gives no number (documented).
+- `ref.bond_coupon(secid, coupon_no, start_date, pay_date (coupondate), record_date, amount, value_rub, value_prc, face_value, face_unit, status ∈ {known, current_published, projected_by_moex, unknown}, is_deleted, source, updated_at)` PK (secid, coupon_no) — `coupon_no` = position in the complete MOEX schedule. Status semantics for consumers: `known` = fixed published amount or paid coupon; `current_published` = the current floater period as MOEX shows it, not proven fixed in advance (may be a projection; `known` only with a curated formula stating a fixing before the period); `projected_by_moex` = MOEX forward-fill / in-arrears / indexed face / unknown coupon type; `unknown` = no value. An active bond without MOEX fixed/floating labels is never `fixed` just because its schedule is fully valued.
 - `ref.bond_amortization(secid, amort_date, value_prc, value (amount), face_value, data_source)` PK (secid, amort_date)
 - `ref.bond_offer(secid, offer_date, offer_type (put/call/buyback/…), price, value, offer_date_start, offer_date_end, agent, status)` — `0000-00-00` → NULL + flagged.
-- `ref.bond_rate_formula(secid, benchmark ∈ {KEY_RATE, RUONIA, RUONIA_3M, ZCYC, CPI, …}, spread_bp, multiplier, lag_days, averaging, floor_pct, cap_pct, status ∈ {curated, inferred, partial}, evidence)`
+- `ref.bond_rate_formula(secid, source ∈ {moex_iss, cbonds, curated, legacy_bc}, benchmark ∈ {KEY_RATE, RUONIA, RUONIA_3M, ZCYC, CPI, …}, benchmark_raw, spread_bp, multiplier, lag_days, averaging, floor_pct, cap_pct, variable_rate_type, fixing_day, status ∈ {curated, inferred, partial}, evidence, is_deleted)` PK (secid, source); view `ref.bond_rate_formula_resolved` (conventions curated > cbonds > moex_iss > legacy_bc; benchmark curated > moex_iss > cbonds > legacy_bc).
 - `ref.bond_rating(secid|issuer_id, agency, rating, outlook, rating_date, source)` (Cbonds when available)
-- `ref.futures_contract(secid PK, asset_code, short_name, last_trade_date, last_del_date, step_price, min_step, lot_volume, contract_type ∈ {dated, perpetual}, first_seen, last_seen)`
-- `ref.fx_instrument(secid PK, board, base_ccy, quote_ccy, tenor (TOD/TOM/SPT/swap), lot_size, …)`
-- `ref.cbr_meeting(meeting_date PK, effective_date, is_estimated, decision, source)`
-- `ref.static_snapshot(secid, source, payload_sha256, fetched_at, capture_id)` — per-source observation log for static.
+- `ref.futures_contract(secid PK, asset_code, short_name, is_fx, base_ccy, quote_ccy, last_trade_date, last_del_date, step_price, min_step, lot_volume, contract_type ∈ {dated, perpetual}, spec_source, first_seen, last_seen)`
+- `ref.fx_instrument(secid, board, kind ∈ {outright, swap, fixing, wap, other}, base_ccy, quote_ccy, tenor, near_leg, far_leg, lot_size, …, settle_date, first_seen, last_seen)` PK (secid, board) — `settle_date` is an observation column (history meta; refreshed without counting a change).
+- `ref.cbr_meeting(meeting_date PK, effective_date, is_estimated, is_extraordinary, decision, decision_rate_pct, prev_rate_pct, title, source)` — `effective_date` = next RU business weekday (calendar), never a weekend; confirmed from the KEY_RATE series.
+- `ref.static_snapshot(secid, source, endpoint, payload_sha256, capture_id, first_seen_at, last_seen)` — per-source observation log for static; `ref.static_conflict(secid, field, source_a, source_b, value_a, value_b, selected_source, resolved)` — cross-source disagreements.
 
 ### `md` — market data
-- `md.bond_eod(trade_date, secid, board, open, low, high, close, legal_close, waprice, market_price2, market_price3, admitted_quote, prev_price, bid?, offer?, yield_close, yield_at_waprice, yield_to_offer, duration_days, accrued_int, face_value, face_unit, currency_id, volume, value_rub, num_trades, capture_id, run_id, ingested_at)` PK (trade_date, secid, board). Source: ISS `/history/engines/stock/markets/bonds/securities.json?date=` (+ `/history/.../yields`).
-- `md.bond_quote_intraday(ts (source UPDATETIME), secid, board, bid, offer, last, waprice, yield, accrued, num_trades, value, latency ∈ {realtime, delayed}, capture_id)` PK (secid, board, ts) — only changed rows stored.
+- `md.bond_eod(trade_date, secid, board, open, low, high, close, legal_close, waprice, market_price2, market_price3, admitted_quote, prev_price, bid?, offer?, yield_close_pct, yield_at_waprice, yield_to_offer, duration_days, accrued_int, face_value, face_unit, currency_id, volume, value, num_trades, capture_id, run_id, ingested_at)` PK (trade_date, secid, board). Source: ISS `/history/engines/stock/markets/bonds/securities.json?date=`. `yield_close_pct` (YIELDCLOSE) is the yield of the last trade to maturity even with an offer ahead.
+- `md.bond_eod_yield(trade_date, secid, board, yield_date, yield_date_type (MATDATE/OFFER/…), price, effective_yield_pct, waprice, effective_yield_waprice_pct, duration_days, zspread_bp, gspread_bp, yield_to_offer_pct, …)` PK (trade_date, secid, board) — ISS `/history/.../yields` (EFFECTIVEYIELD to MOEX's yield date: nearest offer while ahead, else maturity).
+- `md.bond_quote_intraday(ts (source UPDATETIME), secid, board, bid, offer, last, waprice, yield, accrued, num_trades, value, latency ∈ {realtime, delayed}, capture_id ON DELETE SET NULL)` PK (secid, board, ts) — only changed rows stored; `md.bond_quote_last` = last state per (secid, board) for change detection. Raw endpoint `intraday:bonds_marketdata` (retention).
 - `md.fx_eod(trade_date, secid, board, open, low, high, close, waprice, volume, value, num_trades, capture_id)` — CETS history (all `*_TOD/_TOM` and crosses).
-- `md.fx_intraday(ts, secid, board, bid, offer, last, waprice, latency, capture_id)` PK (secid, board, ts)
+- `md.fx_intraday(ts, secid, board, source, source_variant, bid, offer, last, waprice, …, latency, capture_id)` PK (secid, board, source, source_variant, ts) — change-only, row history on (same-ts updates keep the old image). `ts` of a quote older than SYSTIME's session = previous business day of the calendar.
 - `md.futures_eod(trade_date, secid, open, low, high, close, settle_price, waprice, volume, value, open_position, capture_id)`
-- `md.futures_intraday(ts, secid, bid, offer, last, open_position, latency, source_variant, capture_id)` PK (secid, ts, source_variant)
-- `md.index_eod(trade_date, secid, open, high, low, close, value, duration, yield, capture_id)` (RUSFAR family, RGBI, RUCBI, MOEXREPO…)
-- `md.fixing(index_code, fixing_date, value, effective_date, published_at, source, capture_id)` PK (index_code, fixing_date, source) — KEY_RATE (by effective date), RUONIA, RUONIA_INDEX, TERM_RUONIA_1M/3M/6M, RUSFAR*, SRATE_CNY_ON, CBR repo rates…
+- `md.futures_intraday(ts, secid, source, source_variant, bid, offer, last, open_position, latency, capture_id)` PK (secid, source, source_variant, ts) — row history on.
+- `md.algopack_fo_tradestats` / `md.algopack_fo_obstats` PK (secid, interval_ts) and `md.algopack_futoi` PK (ticker, interval_ts, clgroup) — AlgoPack 5-minute bars of FX futures (`*_rub_per_unit` normalized prices).
+- `md.index_eod(trade_date, secid, board, open, high, low, close, value, volume, duration_days, yield_pct, basis ∈ {history, marketdata}, source_ts, capture_id)` PK (trade_date, secid) (RUSFAR family, RGBI, RUCBI, MOEXREPO…); `basis = marketdata` is a same-day value later replaced by history.
+- `md.fixing(index_code, fixing_date, source, value, unit ∈ {pct, index}, effective_date, published_on, published_at, details jsonb, capture_id)` PK (index_code, fixing_date, source) — KEY_RATE (by effective date), RUONIA (+ details: volume, deals, percentiles), RUONIA_INDEX, TERM_RUONIA_1M/3M/6M, CBR_DEPOSIT_STANDING / CBR_LENDING_STANDING (lending: column 7 "Основной механизм" from 2023-10-16, column 9 before — one column per date, never spliced), legacy RUSFAR/other sources…
+- `md.fx_fixing(fixing_date, secid, rate, rate_pct)` PK (fixing_date, secid) — MOEX currency-market fixings (SRATE_CNY_ON).
 - `md.fx_official(effective_date, ccy, nominal, value, rate_per_unit, set_date, source='cbr', capture_id)` PK (effective_date, ccy)
 - `md.fx_indicative(trade_date, clearing ∈ {tc, mc}, ccy_pair, rate, source='moex', capture_id)` — MOEX indicative 14:00/19:00 (FX mark candidate).
 - `md.ecb_fx(rate_date, ccy, rate_per_eur, capture_id)`
-- `md.curve_snapshot(id, source, dataset ∈ {ruonia_ois, key_rate_swap, cny_ruonia_xccy, cny_futures_yields, cfets_fr007_irs, …}, quote_basis, fetched_at, source_ts, content_sha256, parser_version, capture_id, legacy_id)` + `md.curve_quote(snapshot_id, tenor, tenor_months, bid_pct, ask_pct, mid_pct)` — unchanged consecutive snapshots are not duplicated (content hash per source+dataset compared to previous).
-- `md.zcyc_snapshot(trade_date, trade_time, source_ts, params jsonb (B1..B3,T1,G1..G9), standard_yields jsonb, is_eod, capture_id)`
-- `md.cbr_liquidity(observed_on, …14 metrics…, methodology_version, capture_id)` (+ revisions via row_history)
+- `md.curve_snapshot(id, source, dataset ∈ {ruonia_ois, key_rate_swap, cny_ruonia_xccy, cny_futures_yields, cfets_fr007_irs, …}, quote_basis, fetched_at, snapshot_date, source_ts, market_closed, content_sha256, parser_version, label, meta jsonb, capture_id, legacy_id)` + `md.curve_quote(snapshot_id, tenor, position, tenor_months, tenor_days, pillar_date, bid_pct, ask_pct, mid_pct, extra jsonb)` — unchanged consecutive snapshots are not duplicated (content hash per source+dataset compared to previous).
+- `md.zcyc_snapshot(trade_date, trade_time, source_ts, params jsonb (B1..B3,T1,G1..G9), standard_yields jsonb, check_max_error_bp, check_tolerance_bp, is_eod, capture_id)` PK (trade_date, trade_time) — published yields must be reproduced from the params; rejected publications go to `md.zcyc_reject(capture_id PK, trade_date, trade_time, max_error_bp, reason)`.
+- `md.cbr_liquidity(observed_on, …14 metrics (columns 2..15 by position, labels checked against the live header)…, methodology_version, revision_no, capture_id)` (+ revisions via row_history)
+- Read helpers (0410): `md.v_bond_eod` (EOD + yields), `md.v_fx_cbr_latest`, as-known-at functions `md.bond_eod_known_at`, `md.bond_eod_yield_known_at`, `md.fixing_known_at`, `md.v_bond_eod_known_at`.
 
 ### `legacy_md`, `legacy_bc`
 Verbatim copies (all tables, all rows) of `market-data.sqlite3` and `bond_catalog.sqlite3`
@@ -139,50 +144,86 @@ Migration ownership (to avoid conflicts): `0001-0099` core/ops; `0100-0199` ref 
 
 | Job | When | Source | Notes |
 |---|---|---|---|
-| `bonds_static` | daily 06:30 full; 09:05–19:05 hourly new-listing probe | ISS securities + bondization | full universe (all boards incl. structured); revisions via row_history |
+| `bonds_static` | daily 06:30 full (~14 min at 3 rps); 09:05–19:05 hourly new-listing probe (`bonds_static_probe`) | ISS securities + bondization | full universe (all boards incl. structured); revisions via row_history; raw captures committed per fetch phase, writes in one transaction |
 | `cbonds_enrich` | daily 07:30 | Cbonds | auto-skip with status `skipped` while auth returns 401 |
-| `bonds_eod` | 19:20 (prelim) and 07:15 next day for D-1 (final) + D-2 | ISS history by date | final run captures post-session revisions |
+| `bonds_eod` | 19:20 (prelim, D) and 07:15 next day (final, D-1 + D-2) | ISS history by date | final run captures post-session revisions; backfill tasks of 5 days |
 | `bonds_intraday` | every 15 min 10:00–19:00 | ISS marketdata (delayed) | store changed rows only |
-| `fx_moex_intraday` | every 5 min 07:00–23:55 | ISS CETS marketdata | |
-| `fx_moex_eod` | 00:20 (D) and 07:20 (D-1 recheck) | ISS CETS history | |
-| `fx_indicative` | 14:10, 19:10 | ISS indicativerates | |
-| `futures_intraday` | every 1 min 08:50–23:50 | APIM realtime marketdata (FX futures + perpetuals) | fallback ISS delayed, labelled |
-| `futures_eod` | 19:25 and 07:25 next day | ISS FORTS history (settle, OI) | |
-| `algopack_fx_futures` | every 5 min (+1 min offset) | APIM tradestats/obstats/futoi | dedup on (secid, interval) |
-| `indices_eod` | 12:40 (RUSFAR), 18:10 (RUSFARRT), 19:30 all | ISS index history | |
-| `zcyc` | every 15 min 10:00–19:00; EOD 19:05; final 07:10 next day | ISS zcyc | |
-| `cbr_daily` | 09:00, 14:30, 16:30, 18:30 (all days) | CBR | key rate, RUONIA (+index, term), official FX (all ccy), liquidity, repo |
-| `cbr_meetings` | 1st business day monthly + after each meeting | CBR | |
+| `fx_moex_intraday` | every 5 min 07:00–23:55 (MOEX_FX) | ISS CETS marketdata | change-only |
+| `fx_moex_eod` | 00:20 (prelim, the session that just ended) and 07:20 (final, D-1 recheck) | ISS selt history | |
+| `fx_indicative` | 14:10, 19:10 | ISS indicativerates + fixings | |
+| `futures_intraday` | every 1 min 08:50–23:50 (MOEX_FORTS) | APIM realtime marketdata (FX futures + perpetuals) | fallback ISS delayed, labelled |
+| `futures_eod` | 19:25 (prelim, D) and 07:25 next day (final, D-1) | ISS FORTS history (settle, OI) | backfill tasks of 10 days |
+| `algopack_fx_futures` | every 5 min, minutes 1-56/5, 07:01–23:56 | APIM tradestats/obstats/futoi | each poll re-reads the whole day per FX contract (`from=till=today`), dedup on (secid, interval); interval completeness check; backfill tasks of 3 days |
+| `indices_eod` | 12:40 (RUSFAR), 18:10 (RUSFARRT), 19:30 all; `days_back=[0,1]` | ISS index history (+ same-day marketdata) | `indices_all` freshness lag 2 business days (D-1 history arrives with the 12:40 run) |
+| `zcyc` | every 15 min 10:00–19:00 (intraday); EOD 19:05; final 07:10 next day | ISS zcyc | |
+| `cbr_daily` | 09:00, 14:30, 16:30, 18:30 (all days) | CBR | key rate, RUONIA (+index, term), official FX (all ccy), liquidity, standing rates |
+| `cbr_meetings` | 09:10 on the 1st business day of the month (calendar refresh + meetings); 15:00 daily `post_meeting` (no-op unless a meeting in the last 4 days is unconfirmed) | CBR + MOEX ISS calendars | refreshes `ref.calendar_day` first, then meetings, then resolves effective dates |
 | `ecb_fx` | 18:30 (all days) | ECB | |
 | `swaps_ratescalcs` | every 30 min 09:00–23:00 | Ratescalcs | skip identical content |
-| `quality` | 08:30 and 20:30 | DB | freshness & gap detection → `ops.data_gap` + `ops.backfill_task` |
-| `backfill_worker` | every 10 min | DB | processes backfill tasks with rate limit |
-| `maintenance` | 03:00 daily | DB | raw retention, VACUUM ANALYZE; `pg_dump` 02:00 (keep 14) |
+| `quality` | 08:30 and 20:30 | DB | freshness & gap detection → `ops.data_gap` + `ops.backfill_task`; job health; re-runs scheduled fires skipped with `lock_busy` |
+| `backfill_worker` | every 10 min (all days) | DB | processes backfill tasks (8-minute budget), yields to waiting scheduled runs |
+| `maintenance` | 02:00 `backup` (pg_dump, keep 14); 03:00 `retention` (all days) | DB | raw retention of `intraday:` captures (90 days), orphaned `running` job runs (>12 h) → failed, VACUUM ANALYZE |
+
+**Lock contention.** Every job holds advisory lock `mdhub.job:<name>`. A scheduled fire waits up to
+15 minutes for it (polling rules — intraday snapshots, AlgoPack, Ratescalcs, the backfill worker —
+do not wait). Backfill tasks of heavy datasets are short and yield to a waiting scheduled run. A fire
+that still cannot run is recorded as `skipped` with error `lock_busy: …`; job health reports it as
+`missed` and the next `quality` run re-executes it (`days_back` resolved against the fire date).
+
+**Backfill contract.** A dataset's `backfill_job` accepts `date_from`/`date_to`; a day for which the
+source confirms "no data" is recorded with `mdhub.core.gaps.record_no_data` (`open` within a 1-day
+grace period, then `unfillable`), not as a partial run. A partial run that leaves gaps of its range
+open counts as a failed attempt (backoff, then `failed` and a 7-day cooldown).
 
 ## 7. Configuration (env)
 
 `MDHUB_DATABASE_URL` (required), `MDHUB_TZ=Europe/Moscow`, `MDHUB_HTTP_PROXY` (optional),
 `MDHUB_ISS_RPS=3`, `MDHUB_RAW_RETENTION_DAYS_INTRADAY=90`, `MDHUB_API_TOKENS` (comma list,
-read API bearer tokens), `MDHUB_ENABLE_SDFI=false`, plus source credentials:
-`MOEX_API_KEY`, `MOEX_PASSPORT_LOGIN`, `MOEX_PASSPORT_PASSWORD`, `RATESCALC_USERNAME`,
-`RATESCALC_PASSWORD`, `CBONDS_LOGIN`, `CBONDS_PASSWORD`, `OTC_MONITOR_TOKEN` (future).
+read API bearer tokens), `MDHUB_ENABLE_SDFI=false`, `MDHUB_BACKUP_DIR=/var/backups/mdhub`
+(pg_dump target of `maintenance mode=backup` / `mdhub ops backup`), `MDHUB_API_POOL_SIZE=8`
+(read-API connection pool), `MDHUB_LOG_LEVEL=INFO`, `MDHUB_HTTP_TIMEOUT=30`, plus source
+credentials: `MOEX_API_KEY`, `MOEX_PASSPORT_LOGIN`, `MOEX_PASSPORT_PASSWORD`,
+`RATESCALC_USERNAME`, `RATESCALC_PASSWORD`, `CBONDS_LOGIN`, `CBONDS_PASSWORD`,
+`OTC_MONITOR_TOKEN` (future). Empty values count as unset (`env_ignore_empty`).
 
 ## 8. Read API (v1, bearer token)
 
-`/health/live`, `/health/ready`, `/v1/coverage`, `/v1/runs`, `/v1/bonds` (static, filters),
-`/v1/bonds/{secid}` (+ coupons, amortizations, offers, formula), `/v1/bonds/eod?date=`,
-`/v1/bonds/{secid}/history`, `/v1/fx/official`, `/v1/fx/eod`, `/v1/fx/indicative`,
-`/v1/futures/eod`, `/v1/fixings`, `/v1/curves/{dataset}?as_of=`, `/v1/zcyc?date=`,
-`/v1/calendar`, `/v1/export/tdm?date=` (CSV bundle in TDM 1.3 format). Pagination, `as_of`
-(known-at) where history exists. Bundles/manifests are a later iteration.
+Unauthenticated: `/health/live`, `/health/ready` (DB reachable, migrations applied with matching
+checksums). Everything under `/v1` needs `Authorization: Bearer <token>` (`MDHUB_API_TOKENS`),
+including the OpenAPI document `/v1/openapi.json`.
+
+Endpoints: `/v1/coverage`, `/v1/runs`, `/v1/runs/health`, `/v1/gaps` (ordered by dataset, date,
+key), `/v1/bonds` (static, filters), `/v1/bonds/{secid}` (+ issuer, boards, coupons with status,
+amortizations, offers, formula resolved + per source, ratings), `/v1/bonds/eod?date=` (all boards,
+joined yields; `known_at=`), `/v1/bonds/{secid}/history`, `/v1/fx/official`, `/v1/fx/eod`,
+`/v1/fx/indicative`, `/v1/fx/ecb`, `/v1/futures/eod`, `/v1/futures/contracts`, `/v1/fixings`
+(`known_at=`), `/v1/curves`, `/v1/curves/{dataset}?as_of=`, `/v1/zcyc?date=`, `/v1/indices/eod`,
+`/v1/calendar` (`ref.calendar_effective`: source precedence), `/v1/export/tdm?date=` (zip of TDM
+1.3 CSV files + `manifest.json`; the MOEX 19:00 indicative `md_fx` candidate only with
+`fx_candidate=true`; CLI `mdhub export tdm --fx-candidate`).
+
+Conventions: `{"data": ..., "meta": {...}}`; dates ISO 8601, timestamps with offset; `numeric`
+values as JSON numbers with exactly the stored digits (no float rounding); lists page with
+`limit`/`offset` (`meta.next_offset`, max 10 000); strong `ETag` + `If-None-Match`; SECIDs are
+case-sensitive (FORTS `SiZ6`, index `2xEQT`) and matched exactly (`/v1/bonds/{secid}` falls back to a
+case-insensitive match only when unique). As-of: `known_at=` (offset required) reconstructs values
+as known at that time from `ops.row_history` (bonds EOD, fixings); `/v1/curves/{dataset}?as_of=`
+returns the latest snapshot with `fetched_at <= as_of`. TDM export rules: no forward fill; coupon
+rate/amount only for `known` coupons (others empty, counted in `manifest.json` `withheld_values`);
+`md_bond_quotes.ytm` = MOEX effective yield only when its yield date is the nearest offer ahead
+(else maturity) and the bond is fixed/zero coupon, never YIELDCLOSE.
 
 ## 9. Deployment
 
 `deploy/docker-compose.yml`: `postgres:16` (volume, tuned), `mdhub-migrate` (one-shot),
 `mdhub-worker` (scheduler), `mdhub-api` (uvicorn behind optional Caddy TLS). `.env` from
 `deploy/env.example`. Initial seed: `deploy/seed/` contains `pg_dump -Fc` of the fully
-loaded DB → `mdhub restore`. Bare-metal alternative: `deploy/systemd/*.service|*.timer` +
-`deploy/install.sh` (Ubuntu 24.04: postgresql-16, uv).
+loaded DB → `mdhub ops restore <dump>` (pg_restore, `--no-owner --no-privileges`; re-apply
+read-only grants). Ad-hoc dump: `mdhub ops backup` (same as `maintenance mode=backup`). After
+restoring an older seed run `mdhub migrate`, then `mdhub calendar seed` (calendars from 2019,
+repairs ISS-calendar rows) and the next `bonds_static` full run (coupon status semantics).
+Bare-metal alternative: `deploy/systemd/*.service|*.timer` + `deploy/install.sh` (Ubuntu 24.04:
+postgresql-16, uv).
 
 ## 10. Testing
 

@@ -29,6 +29,10 @@ from mdhub.sources.moex_market import (
 __all__ = ["changed_rows"]
 
 SOURCE: Final = "moex_iss"
+INTRADAY_ENDPOINT: Final = "intraday:bonds_marketdata"
+"""``intraday:`` prefix: removed by raw-capture retention (maintenance); the capture FKs of
+``md.bond_quote_intraday``/``md.bond_quote_last`` are ``ON DELETE SET NULL`` (0420)."""
+CALENDAR: Final = "MOEX_STOCK"
 
 
 def changed_rows(
@@ -51,12 +55,14 @@ def bonds_intraday(ctx: JobContext) -> dict[str, Any]:
             params={"iss.meta": "off", "iss.only": "marketdata,marketdata_yields"},
         )
     with ctx.connection() as conn:
-        snapshot = parse_bond_marketdata(res.data)
+        snapshot = parse_bond_marketdata(
+            res.data, is_business_day=lambda d: ctx.is_business_day(d, CALENDAR)
+        )
         cap = record_capture(
             conn,
             ctx.run.id,
             SOURCE,
-            "bonds_marketdata",
+            INTRADAY_ENDPOINT,
             None,
             res.response,
             PARSER_VERSION,

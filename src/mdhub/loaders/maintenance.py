@@ -18,8 +18,9 @@ Intraday classification convention (loaders must follow it): the ``endpoint`` of
 intraday capture starts with :data:`INTRADAY_ENDPOINT_PREFIX` (``"intraday:"``), e.g.
 ``"intraday:bonds_marketdata"``, ``"intraday:cets_marketdata"``,
 ``"intraday:futures_marketdata"``. Tables that reference intraday captures must declare
-``capture_id bigint REFERENCES ops.raw_capture (id) ON DELETE SET NULL`` (or no FK) -
-otherwise retention stops with a foreign-key error and the run is ``partial``.
+``capture_id bigint REFERENCES ops.raw_capture (id) ON DELETE SET NULL`` (or no FK).
+Captures referenced through any other foreign key (``NO ACTION`` or a ``NOT NULL`` column,
+e.g. ``md.zcyc_reject``) are skipped by retention instead of failing it.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import tuple_row
 
+from mdhub.core.capture import reap_orphaned_runs
 from mdhub.core.redact import sanitize_text
 from mdhub.db.pool import Database
 from mdhub.jobs import JobContext, JobParamError, job
@@ -48,6 +50,7 @@ __all__ = [
     "BackupResult",
     "backup_command",
     "backup_dir",
+    "blocking_capture_refs",
     "is_intraday_endpoint",
     "maintenance",
     "purge_intraday_raw",
@@ -202,29 +205,60 @@ def run_backup(
     return BackupResult(path=final, size_bytes=final.stat().st_size, removed=removed)
 
 
+def blocking_capture_refs(conn: psycopg.Connection[Any]) -> list[tuple[str, str, str]]:
+    """``(schema, table, column)`` of every foreign key to ``ops.raw_capture`` that would block
+    (or be violated by) deleting a referenced capture: not ``ON DELETE SET NULL``/``CASCADE``,
+    or a ``NOT NULL`` column (e.g. ``md.zcyc_reject.capture_id``, the primary key)."""
+    with conn.cursor(row_factory=tuple_row) as cur:
+        rows = cur.execute(
+            """
+            SELECT n.nspname, c.relname, a.attname
+            FROM pg_constraint k
+            JOIN pg_class c ON c.oid = k.conrelid
+            JOIN pg_namespace n ON n.oid = c.relnamespace
+            JOIN pg_attribute a ON a.attrelid = k.conrelid AND a.attnum = k.conkey[1]
+            WHERE k.contype = 'f' AND k.confrelid = 'ops.raw_capture'::regclass
+              AND cardinality(k.conkey) = 1
+              AND (k.confdeltype NOT IN ('n', 'c') OR a.attnotnull)
+            ORDER BY 1, 2, 3
+            """
+        ).fetchall()
+    return [(str(a), str(b), str(c)) for a, b, c in rows]
+
+
 def purge_intraday_raw(db: Database, retention_days: int, *, batch: int = DELETE_BATCH) -> int:
     """Delete intraday raw captures older than ``retention_days``; returns rows deleted.
 
-    Each batch commits separately. :raises psycopg.errors.ForeignKeyViolation: a table
-    still references a capture without ``ON DELETE SET NULL``.
+    Captures still referenced through a foreign key that does not null itself on delete
+    (:func:`blocking_capture_refs`) are kept, so retention never fails on, e.g., a rejected
+    ZCYC publication (``md.zcyc_reject``) that points at an intraday capture. Each batch
+    commits separately.
     """
     if retention_days < 1:
         raise JobParamError("retention_days must be >= 1")
+    with db.connection() as conn:
+        refs = blocking_capture_refs(conn)
+    keep = sql.SQL("").join(
+        sql.SQL(" AND NOT EXISTS (SELECT 1 FROM {t} x WHERE x.{c} = r.id)").format(
+            t=sql.Identifier(schema, table), c=sql.Identifier(column)
+        )
+        for schema, table, column in refs
+    )
+    query = sql.SQL(
+        """
+        DELETE FROM ops.raw_capture WHERE id IN (
+            SELECT r.id FROM ops.raw_capture r
+            WHERE r.endpoint LIKE %s
+              AND r.fetched_at < now() - make_interval(days => %s){keep}
+            ORDER BY r.id
+            LIMIT %s
+        )
+        """
+    ).format(keep=keep)
     total = 0
     while True:
         with db.connection() as conn:
-            cur = conn.execute(
-                """
-                DELETE FROM ops.raw_capture WHERE id IN (
-                    SELECT id FROM ops.raw_capture
-                    WHERE endpoint LIKE %s
-                      AND fetched_at < now() - make_interval(days => %s)
-                    ORDER BY id
-                    LIMIT %s
-                )
-                """,
-                (INTRADAY_ENDPOINT_PREFIX + "%", retention_days, batch),
-            )
+            cur = conn.execute(query, (INTRADAY_ENDPOINT_PREFIX + "%", retention_days, batch))
             n = cur.rowcount
         total += n
         if n < batch:
@@ -291,6 +325,7 @@ def maintenance(
     if mode == "retention":
         days = retention_days or ctx.settings.raw_retention_days_intraday
         result: dict[str, Any] = {"mode": mode, "retention_days": days}
+        result["orphaned_runs_reaped"] = reap_orphaned_runs(ctx.db)
         try:
             result["raw_deleted"] = purge_intraday_raw(ctx.db, days)
         except psycopg.errors.ForeignKeyViolation as exc:
