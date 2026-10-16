@@ -217,9 +217,12 @@ rate/amount only for `known` coupons (others empty, counted in `manifest.json` `
 
 `deploy/docker-compose.yml`: `postgres:16` (volume, tuned), `mdhub-migrate` (one-shot),
 `mdhub-worker` (scheduler), `mdhub-api` (uvicorn behind optional Caddy TLS). `.env` from
-`deploy/env.example`. Initial seed: `deploy/seed/` contains `pg_dump -Fc` of the fully
-loaded DB → `mdhub ops restore <dump>` (pg_restore, `--no-owner --no-privileges`; re-apply
-read-only grants). Ad-hoc dump: `mdhub ops backup` (same as `maintenance mode=backup`). After
+`deploy/env.example`. Shipping: `deploy/make_bundle.sh` builds
+`market-data-hub-<YYYYMMDD>.tar.gz` = `git archive HEAD` + `db/mdhub.dump` (`pg_dump -Fc
+--no-owner --no-acl` of the fully loaded DB) + `SEED_REPORT.md` (`mdhub report seed`, same
+snapshot) + `MANIFEST.txt` + `SHA256SUMS`; `deploy/restore_seed.sh` (compose, or
+`--database-url` for any PostgreSQL 16) restores it (pg_restore `--no-owner --no-privileges`,
+`mdhub migrate`, `ops.schema_migration` checksum check, read-only grants). Ad-hoc dump: `mdhub ops backup` (same as `maintenance mode=backup`). After
 restoring an older seed run `mdhub migrate`, then `mdhub calendar seed` (calendars from 2019,
 repairs ISS-calendar rows) and the next `bonds_static` full run (coupon status semantics).
 Bare-metal alternative: `deploy/systemd/*.service|*.timer` + `deploy/install.sh` (Ubuntu 24.04:

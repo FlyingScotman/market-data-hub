@@ -77,10 +77,13 @@ install -d -o "$APP_USER" -g "$APP_USER" -m 0750 "$BACKUP_DIR"
 install -d -o root -g "$APP_USER" -m 0750 "$ETC_DIR"
 
 log "code -> ${APP_HOME}"
-rsync -a --delete \
-    --exclude '.venv/' --exclude '.cache/' --exclude '.git/' --exclude 'data/' \
+# The bundle's db/ (seed dump) and dist/ are not copied; unpack new bundles outside ${APP_HOME}
+# (re-running ${APP_HOME}/deploy/install.sh itself only re-syncs venv, migrations and units).
+[[ "$SRC_DIR" == "$APP_HOME" ]] || rsync -a --delete \
+    --exclude '/.venv/' --exclude '/.cache/' --exclude '.git/' --exclude '/data/' \
     --exclude '.handoff/' --exclude 'deploy/.env' --exclude 'deploy/backups/' \
     --exclude 'deploy/seed/' --exclude '__pycache__/' \
+    --exclude '/db/' --exclude '/dist/' \
     "$SRC_DIR/" "$APP_HOME/"
 chown -R "$APP_USER:$APP_USER" "$APP_HOME"
 
@@ -169,7 +172,7 @@ cat <<EOF
 
 Next steps:
   1. Fill in credentials in ${env_file}, then: systemctl restart mdhub-worker mdhub-api
-  2. Optional seed restore: see README_DEPLOY.md, section "Bare metal" (re-create the
-     database, mdhub ops restore, mdhub migrate, grant_readonly.sql)
+  2. Optional seed restore (db/mdhub.dump of the bundle): see README_DEPLOY.md, section
+     "Bare metal" (re-create the database, then deploy/restore_seed.sh --database-url ...)
   3. TLS: install caddy and use ${APP_HOME}/deploy/Caddyfile (see README_DEPLOY.md)
 EOF

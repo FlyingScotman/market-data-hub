@@ -9,18 +9,16 @@
 ## Code (local commits on main)
 8c33922 foundation · d11991c bonds EOD/intraday/indices/ZCYC + legacy import + quality/backfill/maintenance + deploy ·
 948a75a FX/FORTS · ba9390a CBR/ECB/Ratescalcs/calendars · 6f18a7e bond static + Cbonds ·
-4e0f4bb API + TDM export · b52fc54 legacy mapping. 412 tests green, mypy strict clean.
+4e0f4bb API + TDM export · b52fc54 legacy mapping · b878fa6 review fixes (0420). 441 tests green, mypy strict clean.
 
 ## In flight
-- Fix agent for review findings (scratchpad/review/REVIEW.md: F1 backfill loop, F2 skipped scheduled
-  runs, F3 TDM coupon status/ytm basis, F4 calendar precedence + calendars back to 2019, F5 API SECID
-  case, F6 intraday history, F7 AlgoPack polling, F8 intraday raw retention/FKs, F9 floater status,
-  F10–F14 lows; CBR liquidity col 6/7 labels; formula view incl. legacy_bc; DESIGN/DEVELOPING docs;
-  `mdhub calendar seed`; MDHUB_API_POOL_SIZE). Schema changes only in NEW migrations 0420+.
-  When it reports: review diff, run full checks, commit.
+- Review fixes committed (b878fa6). 0420 applied to seed DB; repair done (calendar seed run 74,
+  bonds_static full run 76: 267 current_published coupons, 668 active unlabelled → unknown).
+- Agent building `mdhub report seed` (→ docs/SEED_REPORT.md) + deploy/make_bundle.sh with an
+  end-to-end restore test on throwaway pgservers (must not write to data/pgseed).
 
 ## Seed database (data/pgseed, pgserver PG 16.2, db `mdhub`; gitignored)
-- Migrations applied from frozen copies in data/pgseed_migs (0001…0410). Apply 0420+ after the fix agent.
+- Migrations applied from frozen copies in data/pgseed_migs (0001…0420).
 - Loaded: bond static (16,055 bonds), CBR full history (key rate 2013+, RUONIA 2010+, FX 2020+, liquidity,
   meetings, calendars), ECB 2015+, legacy MD/BC verbatim (verified) + mapped (curves, intraday, zcyc,
   fixings, liquidity, 3 curated formulas).
@@ -29,7 +27,7 @@
   - chain 2 (backfill_fx.log, ISS 2 rps): futures_eod → fx_moex_eod → fx_indicative 2024→ → algopack 2024→.
 
 ## Remaining steps
-1. Commit fix agent's work; migrate seed DB (0420+); re-run calendar refresh / bonds_static if it says so.
+1. After backfills finish: re-run `mdhub calendar seed` (observed days from full history).
 2. After backfills: run quality job on seed DB, fill remaining gaps (incl. 2026-09-25/28 outage
    window via ISS history), bonds_eod/futures/fx for 2026-10-16.
 3. Integrity re-check of seed DB (counts, coverage per dataset, gaps report) → docs/SEED_REPORT.md.

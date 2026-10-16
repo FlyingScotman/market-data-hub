@@ -7,6 +7,8 @@ import os
 import re
 import shutil
 import subprocess
+import sys
+import tarfile
 import uuid
 from pathlib import Path
 from typing import Any
@@ -153,7 +155,7 @@ def test_postgres_conf_is_parseable() -> None:
 
 @pytest.mark.parametrize(
     "script",
-    ["install.sh", "restore_seed.sh", "postgres/initdb/10-mdhub-roles.sh"],
+    ["install.sh", "restore_seed.sh", "make_bundle.sh", "postgres/initdb/10-mdhub-roles.sh"],
 )
 def test_shell_scripts_syntax(script: str) -> None:
     path = DEPLOY / script
@@ -195,7 +197,16 @@ def test_caddyfile_and_readme() -> None:
     caddy = (DEPLOY / "Caddyfile").read_text()
     assert "{$MDHUB_API_DOMAIN}" in caddy and "reverse_proxy" in caddy
     readme = (DEPLOY / "README_DEPLOY.md").read_text()
-    for needle in ("docker compose up -d", "restore_seed.sh", "mdhub db-info", "coverage", "443"):
+    for needle in (
+        "docker compose up -d",
+        "restore_seed.sh",
+        "make_bundle.sh",
+        "db/mdhub.dump",
+        "SHA256SUMS",
+        "mdhub db-info",
+        "coverage",
+        "443",
+    ):
         assert needle in readme
 
 
@@ -247,3 +258,147 @@ def test_readonly_grant_scripts(db_url: str, conn: psycopg.Connection[Any]) -> N
         conn.commit()
         conn.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(ro)))
         conn.commit()
+
+
+def _table_counts(url: str) -> dict[str, int]:
+    out: dict[str, int] = {}
+    with psycopg.connect(url) as c:
+        rels = c.execute(
+            """
+            SELECT schemaname, tablename FROM pg_tables
+            WHERE schemaname IN ('md', 'ref', 'ops', 'legacy_md', 'legacy_bc')
+            ORDER BY 1, 2
+            """
+        ).fetchall()
+        for schema, table in rels:
+            row = c.execute(
+                sql.SQL("SELECT count(*) FROM {}").format(sql.Identifier(schema, table))
+            ).fetchone()
+            assert row is not None
+            out[f"{schema}.{table}"] = int(row[0])
+    return out
+
+
+FORBIDDEN = re.compile(
+    r"(^|/)\.env$|^mdhub/data/|(^|/)\.handoff/|(^|/)\.venv/|(^|/)\.git/|__pycache__|\.sqlite3"
+)
+
+
+@pytest.mark.skipif(not PSQL.exists(), reason="pgserver binaries not available")
+@pytest.mark.skipif(
+    shutil.which("git") is None
+    or subprocess.run(
+        ["git", "-C", str(DEPLOY), "rev-parse", "--is-inside-work-tree"], capture_output=True
+    ).returncode
+    != 0,
+    reason="not a git work tree",
+)
+def test_make_bundle_and_restore_roundtrip(db_url: str, empty_db_url: str, tmp_path: Path) -> None:
+    with psycopg.connect(db_url) as c:
+        c.execute(
+            "INSERT INTO md.fixing (index_code, fixing_date, source, value, unit) "
+            "VALUES ('KEY_RATE', '2026-10-15', 'cbr', 16.5, 'pct')"
+        )
+        c.execute(
+            "INSERT INTO ref.bond (secid, bond_class, coupon_type, coupon_type_basis, status) "
+            "VALUES ('B1', 'corporate', 'fixed', 'moex_label', 'active')"
+        )
+    env = {
+        **os.environ,
+        "PG_BIN": str(PSQL.parent),
+        "MDHUB_CMD": f"{sys.executable} -m mdhub.cli",
+        "TMPDIR": str(tmp_path),
+    }
+    env.pop("MDHUB_DATABASE_URL", None)
+    dist = tmp_path / "dist"
+    built = subprocess.run(
+        [
+            str(DEPLOY / "make_bundle.sh"),
+            "--allow-dirty",
+            "--database-url",
+            db_url,
+            "--out-dir",
+            str(dist),
+            "--date",
+            "20990101",
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert built.returncode == 0, built.stderr
+    archive = dist / "market-data-hub-20990101.tar.gz"
+    assert (dist / "market-data-hub-20990101.tar.gz.sha256").is_file()
+    with tarfile.open(archive) as tar:
+        names = tar.getnames()
+        assert not [n for n in names if FORBIDDEN.search(n)]
+        for required in (
+            "mdhub/db/mdhub.dump",
+            "mdhub/db/mdhub.dump.sha256",
+            "mdhub/SEED_REPORT.md",
+            "mdhub/MANIFEST.txt",
+            "mdhub/SHA256SUMS",
+            "mdhub/src/mdhub/db/migrations/0001_core.sql",
+        ):
+            assert required in names
+        assert all(m.uid == 0 and m.gid == 0 for m in tar.getmembers())
+        tar.extractall(tmp_path / "x", filter="data")
+    root = tmp_path / "x" / "mdhub"
+    manifest = (root / "MANIFEST.txt").read_text()
+    assert "git_dirty:" in manifest and "pg_dump (PostgreSQL) 16" in manifest
+    assert "0001_core" in manifest and "not in the dump (applied by mdhub migrate" in manifest
+    report = (root / "SEED_REPORT.md").read_text()
+    assert report.startswith("# market-data-hub seed report") and "- snapshot: `" in report
+    assert "| fixing | 1 |" in report
+    sums = (root / "SHA256SUMS").read_text().splitlines()
+    assert any(line.endswith("  db/mdhub.dump") for line in sums)
+
+    restore = subprocess.run(
+        [
+            str(DEPLOY / "restore_seed.sh"),
+            "--yes",
+            "--database-url",
+            empty_db_url,
+            str(root / "db" / "mdhub.dump"),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert restore.returncode == 0, restore.stdout + restore.stderr
+    assert "0 applied," in restore.stdout
+    assert "checksums match" in restore.stdout
+    assert _table_counts(empty_db_url) == _table_counts(db_url)
+
+    again = subprocess.run(
+        [
+            str(DEPLOY / "restore_seed.sh"),
+            "--yes",
+            "--database-url",
+            empty_db_url,
+            str(root / "db" / "mdhub.dump"),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert again.returncode != 0 and "not empty" in again.stderr
+
+    (root / "db" / "mdhub.dump.sha256").write_text("0" * 64 + "  mdhub.dump\n")
+    bad = subprocess.run(
+        [
+            str(DEPLOY / "restore_seed.sh"),
+            "--yes",
+            "--database-url",
+            empty_db_url,
+            str(root / "db" / "mdhub.dump"),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert bad.returncode != 0 and "does not match" in bad.stderr

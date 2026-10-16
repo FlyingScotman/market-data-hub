@@ -12,9 +12,39 @@ the read API. Two variants: **docker compose** (recommended) and **bare metal** 
 | `postgres/postgresql.conf` | tuning for 4 GB RAM |
 | `postgres/initdb/10-mdhub-roles.sh` | first start: read-only role + default privileges |
 | `sql/readonly_defaults.sql`, `sql/grant_readonly.sql` | read-only consumer role setup / re-grant |
-| `restore_seed.sh` | restore a seed `pg_dump -Fc` into the compose database |
+| `make_bundle.sh` | build machine: `dist/market-data-hub-<YYYYMMDD>.tar.gz` = code + seed dump + report + manifest |
+| `restore_seed.sh` | restore the bundle's seed dump into the compose database, or any PostgreSQL 16 (`--database-url`) |
 | `Caddyfile` | TLS reverse proxy for the API (Let's Encrypt) |
 | `install.sh`, `systemd/` | bare-metal alternative |
+
+## 0. Build the bundle (build machine)
+
+One archive carries the code and a pre-seeded database. On the machine that holds the loaded
+database (PostgreSQL 16, `pg_dump` 16 - the pgserver binaries in `.venv` are found
+automatically):
+
+```bash
+git status                                   # commit first: only HEAD goes into the bundle
+deploy/make_bundle.sh --database-url 'postgresql://postgres:@/mdhub?host=/path/to/socket'
+# -> dist/market-data-hub-<YYYYMMDD>.tar.gz (+ .sha256)
+```
+
+It refuses a dirty work tree (`--allow-dirty` bundles HEAD anyway and says so in the manifest),
+exports one snapshot and reads it for `pg_dump -Fc --no-owner --no-acl`, `mdhub report seed`
+and the manifest (loaders may keep running), refuses if a migration checksum in the database
+differs from HEAD, writes `SHA256SUMS` and checks the archive listing for forbidden paths
+(`.env`, `data/`, `.handoff/`, `.venv/`, `.git/`, caches, SQLite files). Options: `--out-dir`,
+`--date YYYYMMDD`; env `PG_BIN`, `MDHUB_CMD`, `MDHUB_BUNDLE_DATABASE_URL`.
+
+Archive layout (one top-level directory `mdhub/`):
+
+| path | content |
+|---|---|
+| `mdhub/` (`src/`, `deploy/`, `docs/`, `tests/`, `pyproject.toml`, `uv.lock`, ...) | `git archive HEAD` |
+| `mdhub/db/mdhub.dump`, `mdhub/db/mdhub.dump.sha256` | `pg_dump -Fc --no-owner --no-acl` (pg_dump 16) and its SHA-256 |
+| `mdhub/SEED_REPORT.md` | `mdhub report seed`: table counts/sizes, per-dataset coverage and missing days, gaps, backfill, last runs, bond static coverage, legacy verification |
+| `mdhub/MANIFEST.txt` | git commit, migrations applied in the dump (version, checksum), pg_dump version, sizes |
+| `mdhub/SHA256SUMS` | SHA-256 of every file above (`sha256sum -c`) |
 
 ## 1. Prepare the server
 
@@ -37,9 +67,12 @@ the read API. Two variants: **docker compose** (recommended) and **bare metal** 
 ## 2. Copy the archive and configure
 
 ```bash
-scp mdhub-<version>.tar.gz vps:/opt/          # code + deploy/ + deploy/seed/mdhub-seed.dump
+scp dist/market-data-hub-<YYYYMMDD>.tar.gz* vps:/opt/   # archive + .sha256
 ssh vps
-cd /opt && tar xzf mdhub-<version>.tar.gz && cd mdhub/deploy
+cd /opt && sha256sum -c market-data-hub-<YYYYMMDD>.tar.gz.sha256
+tar xzf market-data-hub-<YYYYMMDD>.tar.gz              # -> /opt/mdhub
+cd mdhub && sha256sum -c --quiet SHA256SUMS && cat MANIFEST.txt
+cd deploy
 cp env.example .env && chmod 600 .env
 $EDITOR .env
 ```
@@ -65,16 +98,19 @@ docker compose logs -f worker
 
 ## 4. Restore the seed (initial history)
 
-The archive's `seed/mdhub-seed.dump` is a `pg_dump -Fc` (made with **pg_dump 16**) of the fully
-loaded database. Restore it into the compose database (drops and re-creates it):
+The archive's `db/mdhub.dump` is a `pg_dump -Fc` (made with **pg_dump 16**) of the fully
+loaded database; `SEED_REPORT.md` describes what is in it. Restore it into the compose database
+(drops and re-creates it):
 
 ```bash
-./restore_seed.sh seed/mdhub-seed.dump      # asks for confirmation; --yes to skip
+./restore_seed.sh                  # default ../db/mdhub.dump; asks for confirmation, --yes to skip
 ```
 
-It stops worker/api, re-creates the database, runs `pg_restore --no-owner --no-privileges
---single-transaction`, applies newer migrations, re-applies read-only grants, analyzes and
-starts everything again.
+It checks the dump against `db/mdhub.dump.sha256`, stops worker/api, re-creates the database,
+runs `pg_restore --no-owner --no-privileges --single-transaction`, `mdhub migrate` (applies
+migrations newer than the dump; refuses if an applied migration's checksum differs from the
+code), verifies that `ops.schema_migration` lists every migration file of the code with the
+same checksum, re-applies read-only grants, analyzes and starts everything again.
 
 ## 5. Verify
 
@@ -113,7 +149,7 @@ Only `/health/*` and `/v1/*` are proxied; the API requires a bearer token from
 - Copy backups off the server (e.g. nightly `rsync`/`restic` of `deploy/backups/` to another
   host or object storage). A backup on the same disk is not a backup.
 - Restore test (do it once): `./restore_seed.sh backups/mdhub-mdhub-<stamp>.dump` on a spare
-  VPS, then `mdhub ops coverage`.
+  VPS (no `.sha256` next to backups: integrity is not pre-checked), then `mdhub ops coverage`.
 - Retention: `maintenance mode=retention` at 03:00 deletes intraday raw captures
   (`ops.raw_capture.endpoint` starting with `intraday:`) older than
   `MDHUB_RAW_RETENTION_DAYS_INTRADAY` (90) days and runs `VACUUM (ANALYZE)`.
@@ -121,8 +157,8 @@ Only `/health/*` and `/v1/*` are proxied; the API requires a bearer token from
 ## 8. Upgrading
 
 ```bash
-cd /opt && tar xzf mdhub-<new>.tar.gz          # same directory; keep deploy/.env and backups/
-cd mdhub/deploy
+cd /opt && tar xzf market-data-hub-<new>.tar.gz  # same directory; keeps deploy/.env and backups/
+cd mdhub/deploy                                # do NOT restore the new db/mdhub.dump on upgrades
 docker compose run --rm --no-deps worker mdhub ops backup   # safety dump first
 docker compose build
 docker compose up -d                           # migrate runs first, then worker/api restart
@@ -140,7 +176,8 @@ client); keep `postgres:16` pinned until then.
 ## 9. Bare metal (systemd) alternative
 
 ```bash
-sudo ./deploy/install.sh                   # from the unpacked archive; MDHUB_UFW=1 to set ufw
+mkdir -p ~/release && tar xzf market-data-hub-<YYYYMMDD>.tar.gz -C ~/release   # not in /opt/mdhub
+sudo ~/release/mdhub/deploy/install.sh     # MDHUB_UFW=1 to set ufw
 sudo $EDITOR /etc/mdhub/mdhub.env          # credentials, API tokens
 sudo systemctl restart mdhub-worker mdhub-api
 ```
@@ -162,11 +199,17 @@ sudo systemctl stop mdhub-worker mdhub-api
 sudo -u postgres dropdb --force mdhub && sudo -u postgres createdb -O mdhub mdhub
 sudo -u postgres psql -d mdhub -v owner=mdhub -v ro_user=mdhub_ro -v dbname=mdhub \
     -f /opt/mdhub/deploy/sql/readonly_defaults.sql
-sudo -u mdhub bash -c 'set -a; . /etc/mdhub/mdhub.env; set +a; cd /opt/mdhub; \
-    .venv/bin/mdhub ops restore --yes /path/to/mdhub-seed.dump && .venv/bin/mdhub migrate'
-sudo -u mdhub psql -d mdhub -v ro_user=mdhub_ro -f /opt/mdhub/deploy/sql/grant_readonly.sql
+sudo install -o mdhub -g mdhub -m 0640 ~/release/mdhub/db/mdhub.dump \
+    ~/release/mdhub/db/mdhub.dump.sha256 /var/backups/mdhub/
+sudo -u mdhub env MDHUB_CMD=/opt/mdhub/.venv/bin/mdhub /opt/mdhub/deploy/restore_seed.sh --yes \
+    --database-url 'postgresql:///mdhub?host=/var/run/postgresql' /var/backups/mdhub/mdhub.dump
 sudo systemctl start mdhub-worker mdhub-api
 ```
+
+`restore_seed.sh --database-url` needs an existing, empty database (it refuses otherwise) and
+`pg_restore`/`psql` 16 on `PATH` (or `PG_BIN`); it runs the same restore, `mdhub migrate`,
+`ops.schema_migration` check, read-only grants (when the role exists), `ANALYZE` and
+`mdhub db-info` as the compose variant, without docker.
 
 TLS: `apt install caddy`, copy `deploy/Caddyfile` to `/etc/caddy/Caddyfile`, set
 `MDHUB_API_DOMAIN`, `ACME_EMAIL` and `MDHUB_API_UPSTREAM=127.0.0.1:8080` for the caddy
@@ -181,4 +224,5 @@ service (`systemctl edit caddy` -> `[Service] Environment=...`), `systemctl relo
 | backfill | `mdhub ops backfill <dataset> --from YYYY-MM-DD --to YYYY-MM-DD [--now]` |
 | job health | `SELECT * FROM ops.v_job_health;` / latest `ops.quality_report.report` |
 | backup / restore | `mdhub ops backup [--keep N]`, `mdhub ops restore <file> [--clean] --yes` |
+| seed report | `mdhub report seed [--out FILE] [--as-of YYYY-MM-DD]` (read-only, Markdown) |
 | psql | `docker compose exec postgres psql -U mdhub mdhub` |
