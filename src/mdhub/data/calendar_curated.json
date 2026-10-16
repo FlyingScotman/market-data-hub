@@ -1,0 +1,75 @@
+{
+  "format": 1,
+  "version": "2026-10-16.1",
+  "known_at": "2026-10-16T00:00:00+03:00",
+  "description": "Curated business-day calendars for days not yet observed. Per year: weekdays that are NOT business days (non_working) and weekend days that ARE business days (working_weekends); every other day follows Monday-Friday. Past days are superseded by observed trading (ref.calendar_day source observed_*), current-year MOEX days by the MOEX ISS calendar (source moex_iss_calendar).",
+  "calendars": {
+    "RU_PRODUCTION": [
+      {
+        "year": 2026,
+        "source": "curated",
+        "reference": "Labour Code art. 112 + Government Decree No. 1466 of 2025-09-24 (Jan 3 -> Jan 9, Jan 4 -> Dec 31)",
+        "non_working": ["2026-01-01", "2026-01-02", "2026-01-05", "2026-01-06", "2026-01-07", "2026-01-08", "2026-01-09",
+                        "2026-02-23", "2026-03-09", "2026-05-01", "2026-05-11", "2026-06-12", "2026-11-04", "2026-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2027,
+        "source": "curated",
+        "reference": "Labour Code art. 112 + Government Decree No. 1187 of 2026-09-17 (Jan 2 -> Nov 5, Jan 3 -> Dec 31, Sat Feb 20 -> Mon Feb 22); text checked 2026-10-16 via kontur-extern.ru; 247 working days",
+        "non_working": ["2027-01-01", "2027-01-04", "2027-01-05", "2027-01-06", "2027-01-07", "2027-01-08",
+                        "2027-02-22", "2027-02-23", "2027-03-08", "2027-05-03", "2027-05-10", "2027-06-14",
+                        "2027-11-04", "2027-11-05", "2027-12-31"],
+        "working_weekends": ["2027-02-20"]
+      }
+    ],
+    "MOEX_STOCK": [
+      {
+        "year": 2026,
+        "source": "curated",
+        "reference": "MOEX ISS /iss/engines/{stock,currency}/calendar.json (2026, fetched 2026-10-16) + observed IMOEX/RGBI history",
+        "non_working": ["2026-01-01", "2026-01-02", "2026-01-07", "2026-02-23", "2026-05-01", "2026-06-12", "2026-11-04", "2026-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2027,
+        "source": "curated_unverified",
+        "reference": "Rule inferred from MOEX practice 2023-2026 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days and on official working Saturdays); MOEX 2027 schedule not yet published",
+        "non_working": ["2027-01-01", "2027-01-07", "2027-02-23", "2027-03-08", "2027-11-04", "2027-12-31"],
+        "working_weekends": ["2027-02-20"]
+      }
+    ],
+    "MOEX_FX": [
+      {
+        "year": 2026,
+        "source": "curated",
+        "reference": "MOEX ISS /iss/engines/currency/calendar.json (2026, fetched 2026-10-16) + observed CETS CNYRUB_TOM history",
+        "non_working": ["2026-01-01", "2026-01-02", "2026-01-07", "2026-02-23", "2026-05-01", "2026-06-12", "2026-11-04", "2026-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2027,
+        "source": "curated_unverified",
+        "reference": "Same rule as MOEX_STOCK 2027 (CETS followed the stock market calendar 2023-2026); MOEX 2027 schedule not yet published",
+        "non_working": ["2027-01-01", "2027-01-07", "2027-02-23", "2027-03-08", "2027-11-04", "2027-12-31"],
+        "working_weekends": ["2027-02-20"]
+      }
+    ],
+    "MOEX_FORTS": [
+      {
+        "year": 2026,
+        "source": "curated",
+        "reference": "MOEX ISS /iss/engines/{futures,currency}/calendar.json (2026, fetched 2026-10-16) + observed FORTS Si history",
+        "non_working": ["2026-01-01", "2026-01-02", "2026-01-07", "2026-02-23", "2026-05-01", "2026-06-12", "2026-11-04", "2026-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2027,
+        "source": "curated_unverified",
+        "reference": "Same rule as MOEX_STOCK 2027 (FORTS followed the stock market calendar 2023-2026); MOEX 2027 schedule not yet published",
+        "non_working": ["2027-01-01", "2027-01-07", "2027-02-23", "2027-03-08", "2027-11-04", "2027-12-31"],
+        "working_weekends": ["2027-02-20"]
+      }
+    ]
+  }
+}

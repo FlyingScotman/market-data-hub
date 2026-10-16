@@ -1,0 +1,3019 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+    
+
+<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+<meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+<meta name="format-detection" content="telephone=no" />
+<meta name="zoom:lang" content="ru" />
+    <meta name="zoom:last-modified" content="Wed, 30 Sep 2026 13:00:00 GMT" />
+<title>Календарь решений по ключевой ставке | Банк России</title>
+
+
+
+    <meta property="og:image" content="/common/images/share-1.jpg" />
+
+    
+
+
+            <link rel="stylesheet" type="text/css" href="/common/libs/jquery-ui/jquery-ui.min.css?v=v478607061" media="all">
+
+            <!--[if IE 9]><link rel="stylesheet" type="text/css" href="/common/style/main-ie9.css?v=v1337212920" media="all"><![endif]-->
+
+            <!--[if gt IE 9]><!--><link rel="stylesheet" type="text/css" href="/common/style/main.min.css?v=v1337212920" media="all"><!--<![endif]-->
+
+
+        <script type="text/javascript" src="/common/libs/jquery-3.7.1.min.js?v=v735956814"></script>
+
+
+
+        <script type="text/javascript" src="/common/libs/jquery-ui/jquery-ui.min.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/libs/jquery.inputmask.min.js?v=v478607061"></script>
+
+
+        <script type="text/javascript" src="/common/scripts/vendor.js?v=v4270970564"></script>
+
+        <script type="text/javascript" src="/common/libs/jquery.floatThead.min.js?v=v478607061"></script>
+
+
+
+
+
+
+
+
+        <script type="text/javascript" src="/common/libs/popper.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/libs/tippy.js?v=v478607061"></script>
+
+        <script type="text/javascript" src="/common/scripts/main.min.js?v=v1337212920"></script>
+
+
+        <script type="text/javascript" src="/common/libs/localization-ru.js?v=v712023859"></script>
+        <script type="text/javascript" src="/js/jquery.ui.autocomplete-ru.js?v=v1043438991"></script>
+
+        <script type="text/javascript" src="/js/jquery.cookie.min.js?v=v4260771145"></script>
+
+        <script type="text/javascript" src="/js/site.js?v=v2848633841"></script>
+
+
+
+
+
+    <script type="text/javascript">
+        $(function () {
+            var $menu = $('[data-menu]'),
+                $menuItemBtn = $menu.find('[data-menu-item-btn]'),
+                $menuShow = $('[data-menu-show]'),
+                $menuClose = $('[data-menu-close]');
+            var config = $menu.data('config');
+
+            $menuShow.on('click.cms_loadwholesite mouseenter.cms_loadwholesite', function (event) {
+                loadWholeSite();
+            });
+
+            var xhr = null;
+            function loadWholeSite() {
+                if (xhr === null) {
+                    $('.menu_wrap .networks-circle').html($('.networks-circle.footer_networks').html());
+                    $('.menu_wrap .header_search').html($('.header .offsetMenu .header_search').html());
+
+                    $('[data-cms-wholesite-placeholder]').addClass('with-centered-loader').empty();
+                    xhr = $.ajax(config.url, {
+                        dataType: "html",
+                        method: "get",
+                        success: function (html) {
+                            $('[data-cms-wholesite-placeholder]').replaceWith(html);
+
+                            $menu.find('.menu_tab[data-tabs-tab]').each(function () {
+                                var tab = $(this).data('tabs-tab');
+                                $(this).toggle($menu.find('[data-tabs-content="' + tab + '"]').length != 0);
+                            });
+
+                            $menu.trigger('new-html');
+
+                            for (var i in config.catalogPath) {
+                                $menu.find('li[data-catalog-id="' + config.catalogPath[i] + '"]')
+                                    .addClass("_active");
+                                $menu.find('li[data-catalog-id="' + config.catalogPath[i] + '"]')
+                                    .closest('[data-tabs-content]')
+                                    .trigger('open-anchor');
+                            }
+
+                            $menuShow.off('click.cms_loadwholesite mouseenter.cms_loadwholesite');
+                        },
+                        error: function () {
+                            $('[data-cms-wholesite-placeholder]').removeClass('with-centered-loader')
+                                .append('<div class="menu_content offset-md-1">' +
+                                    '<span class="group-error field-validation-error">Не удалось загрузить карту сайта. <a href="#">Попробуйте еще раз.</a></span>' +
+                                    '</div>')
+                                .find('a')
+                                .on('click', function () { loadWholeSite(); });
+                        },
+                        complete: function () {
+                            xhr = null;
+                        }
+                    });
+                }
+            }
+        });
+    </script>
+
+
+<script>
+    if (window.localStorage) {
+        if (localStorage.getItem('vision-impaired'))
+            document.getElementsByTagName('html')[0].className += ' vision-impaired';
+    }
+</script>
+<script>
+    document.documentElement.style.setProperty('--scrollbar-width', '17px');
+    setTimeout(function () {
+        
+        var div = document.createElement('div');
+
+        div.style.overflowY = 'scroll';
+        div.style.width = '50px';
+        div.style.height = '50px';
+
+        
+        div.style.visibility = 'hidden';
+
+        document.body.appendChild(div);
+        var scrollWidth = Math.max(div.offsetWidth - div.clientWidth, 0.15); 
+        document.body.removeChild(div);
+        
+        document.documentElement.style.setProperty('--scrollbar-width', scrollWidth + 'px');
+    }, 0);
+</script>
+
+
+
+
+    
+</head>
+<body class="page-v3 page-v3-inside">
+
+
+<!-- Yandex.Metrika counter -->
+<script type="text/javascript" >
+    (function(m,e,t,r,i,k,a){m[i]=m[i]||function(){(m[i].a=m[i].a||[]).push(arguments)};
+    m[i].l=1*new Date();
+    for (var j = 0; j < document.scripts.length; j++) {if (document.scripts[j].src === r) { return; }}
+    k=e.createElement(t),a=e.getElementsByTagName(t)[0],k.async=1,k.src=r,a.parentNode.insertBefore(k,a)})
+    (window, document, "script", "https://mc.yandex.ru/metrika/tag.js", "ym");
+
+    ym(5774506, "init", {
+        clickmap:true,
+        trackLinks:true,
+        accurateTrackBounce:true,
+        webvisor:true
+    });
+</script>
+<noscript><div><img src="https://mc.yandex.ru/watch/5774506" style="position:absolute; left:-9999px;" alt="" /></div></noscript>    
+<!-- /Yandex.Metrika counter -->
+        
+    
+
+    <div class="header-print">
+    <div class="offsetMenu">
+        <div class="header-print_inner">
+            <img class="header-print_logo" alt="cbr" src="/common/images/logo.svg">
+            <ul class="header-print_contacts">
+<li>107016, Москва, ул. Неглинная, д.&nbsp;12, к. В, Банк России</li>
+<li><nobr class="phone">8 800 300-30-00</nobr></li>
+<li>www.cbr.ru</li>
+</ul>
+
+        </div>
+    </div>
+</div>
+
+    <header class="header" id="header">
+        <div class="top-line" data-top-line="">
+            <div class="header_burger-big"></div>
+            <div class="offsetMenu">
+                <div class="col-md-23 header_margin-left">
+                    <div class="top-line_inner header_inner">
+                        
+
+<div class="row">
+    <div class="col-xl-4 col-md-6">
+        <div class="header_left pr-0">
+                <div class="header_menu" data-menu-show=""></div>
+            <a class="header_logo" href="/"></a>
+                <a class="header_search_btn d-flex d-md-none" href="#" data-search-form-show="" aria-label="Поиск по сайту"><div class="header_search_icon"></div></a>
+            <a class="d-flex d-md-none" href="#" data-tooltip="" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide"><div class="header_visual-impaired_item"></div></a>
+        </div>
+    </div>
+    <div class="col-xl-17 col-md-13 offset-md-1 header_block">
+        <div class="d-none d-md-block">
+            <div class="header_right">
+                <div class="networks header_link header_networks"><a class="header_appeal-link" href="/contactBR/" data-tooltip="" data-tooltip-content="Обратиться в Банк России" data-tooltip-class="mobile-hide"></a></div>
+                <div class="networks header_networks header_visual-impaired header_visual-impaired_inner"><a href="#" data-tooltip="" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide" aria-label="Версия для слабовидящих"><div class="header_visual-impaired_item"></div></a></div>
+                <div class="header_lang header_lang_inner header_networks">
+    <a href="/Localization/SwitchLanguage?url=%2Fdkp%2Fcal_mp%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a>
+</div>
+                    <div class="header_networks header_search header_search_inner">
+                        <a class="header_search_btn" href="#" data-search-form-show="" aria-label="Поиск по сайту"><div class="header_search_icon"></div><span aria-hidden="true">Поиск по сайту</span></a>
+                    </div>
+            </div>
+        </div>
+    </div>
+</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="offsetMenu">
+            <div class="col-md-23 offset-md-1 header_margin-left">
+                <div class="header_inner">
+                    
+<div class="row">
+    <div class="col-xl-5 col-md-6">
+        <div class="header_left pr-0">
+            <div class="header_menu" data-menu-show=""></div>
+            <a class="header_logo" href="/"></a>
+            <a class="header_search_btn d-flex d-md-none" href="#" data-search-form-show="" aria-label="Поиск по сайту">
+                <div class="header_search_icon"></div>
+            </a>
+            <a class="d-flex d-md-none" href="#" data-tooltip data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide">
+                <div class="header_visual-impaired_item"></div>
+            </a>
+        </div>
+    </div>
+    <div class="col-xl-17 col-md-13 offset-md-1 header_block justify-content-end">
+        <div class="d-none d-md-block">
+            <div class="header_right">
+                <div class="networks header_link header_networks"><a class="header_appeal-link" href="/contactBR/" data-tooltip="" data-tooltip-content="Обратиться в Банк России" data-tooltip-class="mobile-hide"></a></div>
+                <div class="networks header_networks header_visual-impaired header_visual-impaired_inner">
+                    <a href="#" data-tooltip data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide" aria-label="Версия для слабовидящих">
+                        <div class="header_visual-impaired_item"></div>
+                    </a>
+                </div>
+                <div class="header_lang header_lang_inner header_networks">
+    <a href="/Localization/SwitchLanguage?url=%2Fdkp%2Fcal_mp%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a>
+</div>
+                <div class="header_networks header_search header_search_inner">
+                    <a class="header_search_btn" href="#" data-search-form-show="" aria-label="Поиск по сайту">
+                        <div class="header_search_icon"></div><span aria-hidden="true">Поиск по сайту</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+                </div>
+            </div>
+        </div>
+    </header>
+    <form action="/search/" method="get" class="search-form" data-search-form=""
+      data-api-url="/Content/SearchSuggest/Suggest"
+      data-api-top-url="">
+    <div class="offsetMenu">
+        <div class="col-md-23 offset-md-1">
+            <div class="search-form_inner">
+                <div class="search-form_title">Что вы хотите найти?<img class="search-form_title-close" src="/common/images/icons/menu-close-dark-grey.svg"></div>
+                <div class="search-form_content">
+                    <div class="search-form_block">
+                        <div class="search-form_icon"></div>
+                        <div class="search-form_field">
+                            <input name="text" type="text" autocomplete="off" placeholder="Начните писать" data-search-form-input="" />
+                        </div>
+                    </div>
+                    <div class="search-form_clear" data-search-form-clear-btn=""><img src="/common/images/icons/menu-close-gray.svg"></div>
+                    <div class="search-form_btn">
+                        <button class="b-btn _blue" data-search-form-btn="">Искать</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</form>
+
+
+<div class="menu_wrap" data-menu="" data-config="{&quot;catalogPath&quot;:[18690,15917],&quot;url&quot;:&quot;/Catalog/SiteMap/GetWholeSiteHtml?blockId=59191&quot;}">
+    <div class="offsetMenu">
+        <div class="header_menu _close menu_close d-none d-md-block" data-menu-close=""></div>
+        <div class="header_inner top-line_inner d-block d-md-none">
+            <div class="row">
+                <div class="col-xl-5 col-md-9">
+                    <div class="header_left pr-0">
+                        <div class="header_menu _close" role="button" tabindex="0" aria-label="Закрыть меню" data-menu-close=""></div>
+                        <a class="header_logo" href="/"></a>
+                        <a class="header_search_btn" href="#" data-search-form-show="data-search-form-show" aria-label="Поиск по сайту"><div class="header_search_icon"></div></a>
+                        <a href="#" data-tooltip="data-tooltip" data-tooltip-content="Версия для слабовидящих" data-tooltip-class="mobile-hide"><div class="header_visual-impaired_item"></div></a>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="menu row" data-tabs="data-tabs">
+            <div class="menu_quick col-md-7">
+                <div role="tablist" class="menu_quick_tabs">
+    <a role="tab" id="menu_tab_Activity" aria-controls="menu_content_Activity" aria-selected="true" class="menu_tab _active" href="#" data-tabs-tab="Activity">Деятельность</a>
+    <a role="tab" id="menu_tab_FinancialMarkets" aria-controls="menu_content_FinancialMarkets" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="FinancialMarkets">Финансовые рынки</a>
+    <a role="tab" id="menu_tab_Documents" aria-controls="menu_content_Documents" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="Documents">Документы и данные</a>
+    <a role="tab" id="menu_tab_AboutBank" aria-controls="menu_content_AboutBank" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="AboutBank">О Банке России</a>
+    <a role="tab" id="menu_tab_Services" aria-controls="menu_content_Services" aria-selected="false" class="menu_tab" href="#" data-tabs-tab="Services">Сервисы</a>
+</div>
+<div class="menu_quick_links">
+    <div class="inner_links"><a href="/support_measures/" title="Меры зашиты финансового рынка" style="color:red">Меры защиты финансового рынка</a>
+  </div>
+<div class="phones"><a class="menu_phone_val" href="tel:+74993003000">
+<div class="plus">+</div>7 499 300-30-00</a><a class="menu_phone_val" href="tel:88003003000">8 800 300-30-00</a><a class="menu_phone_val" href="tel:300">300</a><span>Бесплатно для звонков с мобильных телефонов</span></div>
+<div class="inner_links">
+  <a href="/news/" title="Новости">Новости</a>
+  <a href="/rbr/" title="Решения Банка России">Решения Банка России</a>
+  <a href="/contacts/" title="Контактная информация">Контактная информация</a>
+  <a href="/sitemap" title="Карта сайта">Карта сайта</a>
+  <a href="/about/" title="О сайте">О сайте</a>
+  </div>
+<div class="networks-circle">
+  <a class="networks-circle_item _vk" href="https://vk.com/cbr_official" title="ВКонтакте"></a>
+  <a class="networks-circle_item _yt" href="https://www.youtube.com/user/BankofRussia" title="Youtube"></a>
+  <a class="networks-circle_item _tg" href="https://telegram.me/centralbank_russia" title="Telegram"></a>
+  <a class="networks-circle_item _ydzen" href="https://zen.yandex.ru/id/622372d6a565892091994ea9" title="Яндекс Дзен"></a>
+  <a class="networks-circle_item _ok" href="https://ok.ru/group/68858679787580" title="Одноклассники"></a>
+  <a class="networks-circle_item _rt" href="https://rutube.ru/channel/23873201/" title="RUTUBE"></a>
+  <a class="networks-circle_item _max" href="https://max.ru/cbr_official" title="Макс"></a>
+</div>
+</div>
+            </div>
+            <div class="d-md-none link-above">
+                <div class="header_right">
+                    <div class="header_link"><a href="/contactBR/">Обратиться в&nbsp;Банк России</a></div>
+                    <div class="header_lang">
+            <div class="header_lang_item _active"><span><!--noindex-->RU<!--/noindex--></span></div>
+            <div class="header_lang_item"><a href="/Localization/SwitchLanguage?url=%2Fdkp%2Fcal_mp%2F&amp;from=ru-RU&amp;to=en-CB"><!--noindex-->EN<!--/noindex--></a></div>
+</div>
+                </div>
+<div class="header_right"><div class="header_link"><a href="/about_br/">О Банке России</a></div></div>
+<div class="header_right"><div class="header_link"><a href="/finorg/">Проверить участника финансового рынка</a></div></div>
+<div class="header_right"><div class="header_link"><a href="/beware/">Осторожно: мошенники!</a></div></div>            </div>
+            <div class="menu_content_container col-md" data-cms-wholesite-placeholder="">
+            </div>
+        </div>
+    </div>
+</div>
+
+    <main id="content">
+        <div class="offsetMenu ">
+            <div class="container-fluid">
+                <div class="col-md-23 offset-md-1">
+                    <div class="breadcrumbs">
+    <div class="breadcrumbs_item"><a class="breadcrumbs_home" href="/"></a></div>
+        <div class="breadcrumbs_item">
+            <a href="/dkp/"><!--noindex-->Денежно-кредитная политика<!--/noindex--></a>
+        </div>
+    </div>
+
+                    <!--index-->
+<h1><span class="referenceable">Календарь решений по&#160;ключевой ставке</span>
+</h1>
+                                        
+
+
+
+
+
+
+                                                                                
+
+
+
+
+<div id="tab" class="tabs_wrap " data-tabs="">
+    <div role="tablist" class="tabs">
+
+    <a role="tab" id="tab_tab_t14" aria-controls="tab_content_t14" aria-selected="false" 
+       class="tab" href="#t14" data-text="2027 год"
+       
+
+  data-tabs-tab="t14"   >
+        2027 год
+    </a>
+    <a role="tab" id="tab_tab_t13" aria-controls="tab_content_t13" aria-selected="true" 
+       class="tab _active" href="#t13" data-text="2026 год"
+       
+
+  data-tabs-tab="t13"   >
+        2026 год
+    </a>
+    <a role="tab" id="tab_tab_t12" aria-controls="tab_content_t12" aria-selected="false" 
+       class="tab" href="#t12" data-text="2025 год"
+       
+
+  data-tabs-tab="t12"   >
+        2025 год
+    </a>
+    <a role="tab" id="tab_tab_t11" aria-controls="tab_content_t11" aria-selected="false" 
+       class="tab" href="#t11" data-text="2024 год"
+       
+
+  data-tabs-tab="t11"   >
+        2024 год
+    </a>
+    <a role="tab" id="tab_tab_t10" aria-controls="tab_content_t10" aria-selected="false" 
+       class="tab" href="#t10" data-text="2023 год"
+       
+
+  data-tabs-tab="t10"   >
+        2023 год
+    </a>
+    <a role="tab" id="tab_tab_t9" aria-controls="tab_content_t9" aria-selected="false" 
+       class="tab" href="#t9" data-text="2022 год"
+       
+
+  data-tabs-tab="t9"   >
+        2022 год
+    </a>
+                    <div class="tab tab_rest " data-tabs-rest="">
+                <button class="tab_rest_title" data-tabs-rest-title="" aria-expanded="false">Ещё</button>
+                <div class="tab_rest_items">
+    <a role="tab" id="tab_tab_t1" aria-controls="tab_content_t1" aria-selected="false" 
+       class="tab" href="#t1" data-text="2021 год"
+       
+
+  data-tabs-tab="t1"   >
+        2021 год
+    </a>
+    <a role="tab" id="tab_tab_t2" aria-controls="tab_content_t2" aria-selected="false" 
+       class="tab" href="#t2" data-text="2020 год"
+       
+
+  data-tabs-tab="t2"   >
+        2020 год
+    </a>
+    <a role="tab" id="tab_tab_t3" aria-controls="tab_content_t3" aria-selected="false" 
+       class="tab" href="#t3" data-text="2019 год"
+       
+
+  data-tabs-tab="t3"   >
+        2019 год
+    </a>
+    <a role="tab" id="tab_tab_t4" aria-controls="tab_content_t4" aria-selected="false" 
+       class="tab" href="#t4" data-text="2018 год"
+       
+
+  data-tabs-tab="t4"   >
+        2018 год
+    </a>
+    <a role="tab" id="tab_tab_t5" aria-controls="tab_content_t5" aria-selected="false" 
+       class="tab" href="#t5" data-text="2017 год"
+       
+
+  data-tabs-tab="t5"   >
+        2017 год
+    </a>
+    <a role="tab" id="tab_tab_t6" aria-controls="tab_content_t6" aria-selected="false" 
+       class="tab" href="#t6" data-text="2016 год"
+       
+
+  data-tabs-tab="t6"   >
+        2016 год
+    </a>
+    <a role="tab" id="tab_tab_t7" aria-controls="tab_content_t7" aria-selected="false" 
+       class="tab" href="#t7" data-text="2015 год"
+       
+
+  data-tabs-tab="t7"   >
+        2015 год
+    </a>
+    <a role="tab" id="tab_tab_t8" aria-controls="tab_content_t8" aria-selected="false" 
+       class="tab" href="#t8" data-text="2014 год"
+       
+
+  data-tabs-tab="t8"   >
+        2014 год
+    </a>
+                </div>
+            </div>
+    </div>
+
+                    <div role="tabpanel" id="tab_content_t14" aria-labelledby="tab_tab_t14" data-tabs-content="t14" class="hide">
+                        <table class="data" >
+<tbody>
+<tr >
+<td style="border:none">Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени</td>
+</tr>
+<tr >
+<td style="border:none">Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени</td>
+</tr>
+</tbody>
+</table><div class="calendar-main-events">
+<div class="main-events_day">
+<div class="date col-md-5">12&nbsp;февраля 2027 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15">Пресс-релиз по&nbsp;ключевой ставке <br />Среднесрочный прогноз <br /><span class="col-md-15">Пресс-конференция Председателя Банка России</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">25&nbsp;февраля 2027 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15">Резюме обсуждения ключевой ставки <br />Комментарий к&nbsp;среднесрочному прогнозу</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">19&nbsp;марта 2027 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">Пресс-релиз по&nbsp;ключевой ставке <br />Пресс-конференция Председателя Банка России</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">31&nbsp;марта 2027 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15">Резюме обсуждения ключевой ставки</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">30&nbsp;апреля 2027 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15">Пресс-релиз по&nbsp;ключевой ставке<br />Среднесрочный прогноз <br /><span class="col-md-15">Пресс-конференция Председателя Банка России</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">14&nbsp;мая 2027 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15">Резюме обсуждения ключевой ставки <br />Комментарий к&nbsp;среднесрочному прогнозу</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">11&nbsp;июня 2027 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">Пресс-релиз по&nbsp;ключевой ставке<br /><span class="col-md-15">Пресс-конференция Председателя Банка России</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">24&nbsp;июня 2027 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15">Резюме обсуждения ключевой ставки</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">30&nbsp;июля 2027 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15">Пресс-релиз по&nbsp;ключевой ставке <br />Среднесрочный прогноз <br /><span class="col-md-15">Пресс-конференция Председателя Банка России</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">11&nbsp;августа 2027 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15">Резюме обсуждения ключевой ставки <br />Комментарий к&nbsp;среднесрочному прогнозу</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">10&nbsp;сентября 2027 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">Пресс-релиз по&nbsp;ключевой ставке <br /><span class="col-md-15">Пресс-конференция Председателя Банка России</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">22&nbsp;сентября 2027 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15">Резюме обсуждения ключевой ставки</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">22&nbsp;октября 2027 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15">Пресс-релиз по&nbsp;ключевой ставке <br />Среднесрочный прогноз <br /><span class="col-md-15">Пресс-конференция Председателя Банка России</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">3&nbsp;ноября 2027 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15">Резюме обсуждения ключевой ставки<br />Комментарий к&nbsp;среднесрочному прогнозу</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">17&nbsp;декабря 2027 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">Пресс-релиз по&nbsp;ключевой ставке<br /><span class="col-md-15">Пресс-конференция Председателя Банка России</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">29&nbsp;декабря 2027 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15">Резюме обсуждения ключевой ставки</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+</div>
+                    </div>
+                    <div role="tabpanel" id="tab_content_t13" aria-labelledby="tab_tab_t13" data-tabs-content="t13">
+                        <table class="data" >
+<tbody>
+<tr >
+<td style="border:none">Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени</td>
+</tr>
+<tr >
+<td style="border:none">Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени</td>
+</tr>
+</tbody>
+</table><div class="calendar-main-events">
+<div class="main-events_day">
+<div class="date col-md-5">13&nbsp;февраля 2026 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=13022026_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке <br /><a href="/Content/Document/File/187046/forecast_260213.pdf">Среднесрочный прогноз</a> <br /><a href="/press/event/?id=28303"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">26&nbsp;февраля 2026 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_26022026/" target="_blank" rel="noopener">Резюме обсуждения ключевой ставки</a> <br /><a href="/Content/Document/File/187047/comment_26022026.pdf" target="_blank" rel="noopener">Комментарий к&nbsp;среднесрочному прогнозу</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">20&nbsp;марта 2026 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=20032026_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке <br /><a href="/press/event/?id=28410">Пресс-конференция Председателя Банка России</a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">1&nbsp;апреля 2026 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_01042026/" target="_blank" rel="noopener"><span class="col-md-15">Резюме обсуждения ключевой ставки</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">24&nbsp;апреля 2026 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=24042026_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке<br /><a href="/Content/Document/File/189801/forecast_260424.pdf">Среднесрочный прогноз</a> <br /><a href="/press/event/?id=28507"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">7&nbsp;мая&nbsp;2026 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_07052026/" target="_blank" rel="noopener">Резюме обсуждения ключевой ставки</a> <br /><a href="/dkp/mp_dec/decision_key_rate/comment_07052026/" target="_blank" rel="noopener">Комментарий к&nbsp;среднесрочному прогнозу</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">19&nbsp;июня 2026 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=19062026_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке<br /><a href="/press/event/?id=32634"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">1&nbsp;июля 2026 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_01072026/" target="_blank" rel="noopener"><span class="col-md-15">Резюме обсуждения ключевой ставки</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">24&nbsp;июля 2026 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=24072026_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке <br /><a href="/Content/Document/File/194258/forecast_260724.pdf">Среднесрочный прогноз</a> <br /><a href="/press/event/?id=32726"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">5&nbsp;августа 2026 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_05082026/" target="_blank" rel="noopener">Резюме обсуждения ключевой ставки</a> <br /><a href="/dkp/mp_dec/decision_key_rate/comment_05082026/" target="_blank" rel="noopener">Комментарий к&nbsp;среднесрочному прогнозу</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">11&nbsp;сентября 2026 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=11092026_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке <br /><a href="/press/event/?id=32832"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">23&nbsp;сентября 2026 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_23092026/" target="_blank" rel="noopener"><span class="col-md-15">Резюме обсуждения ключевой ставки</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">23&nbsp;октября 2026 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15">Пресс-релиз по&nbsp;ключевой ставке <br />Среднесрочный прогноз <br /><span class="col-md-15">Пресс-конференция Председателя Банка России</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">5&nbsp;ноября 2026 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15">Резюме обсуждения ключевой ставки<br />Комментарий к&nbsp;среднесрочному прогнозу</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">18&nbsp;декабря 2026 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">Пресс-релиз по&nbsp;ключевой ставке<br /><span class="col-md-15">Пресс-конференция Председателя Банка России</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">30&nbsp;декабря 2026 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15">Резюме обсуждения ключевой ставки</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+</div>
+                    </div>
+                    <div role="tabpanel" id="tab_content_t12" aria-labelledby="tab_tab_t12" data-tabs-content="t12" class="hide">
+                        <table class="data" >
+<tbody>
+<tr >
+<td style="border:none">Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени</td>
+</tr>
+<tr >
+<td style="border:none">Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени</td>
+</tr>
+</tbody>
+</table><div class="calendar-main-events">
+<div class="main-events_day">
+<div class="date col-md-5">14&nbsp;февраля 2025 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=14022025_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке <br /><a href="/Content/Document/File/172536/forecast_250214.pdf">Среднесрочный прогноз</a> <br /><a href="/press/event/?id=23377"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">26&nbsp;февраля 2025 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_26022025/">Резюме обсуждения ключевой ставки</a> <br /><a href="/Content/Document/File/172537/comment_26022025.pdf">Комментарий к&nbsp;среднесрочному прогнозу</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">21&nbsp;марта 2025 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=21032025_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке <br /><a href="/press/event/?id=23473"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">2&nbsp;апреля 2025 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_02042025/" target="_blank" rel="noopener"><span class="col-md-15">Резюме обсуждения ключевой ставки</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">25&nbsp;апреля 2025 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=25042025_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке<br /><a href="/Content/Document/File/175397/forecast_250425.pdf">Среднесрочный прогноз</a> <br /><a href="/press/event/?id=23576"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">12&nbsp;мая&nbsp;2025 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_12052025/" target="_blank" rel="noopener">Резюме обсуждения ключевой ставки</a> <br /><a href="/Content/Document/File/175398/comment_12052025.pdf" target="_blank" rel="noopener">Комментарий к&nbsp;среднесрочному прогнозу</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">6&nbsp;июня 2025 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=06062025_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке<br /><a href="/press/event/?id=24685"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">20&nbsp;июня 2025 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_20062025/"><span class="col-md-15">Резюме обсуждения ключевой ставки</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">25&nbsp;июля 2025 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=25072025_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке <br /><a href="/Content/Document/File/179982/forecast_250725.pdf" target="_blank" rel="noopener">Среднесрочный прогноз</a> <br /><a href="/press/event/?id=26808"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">6&nbsp;августа 2025 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_06082025/" target="_blank" rel="noopener">Резюме обсуждения ключевой ставки</a> <br /><a href="/Content/Document/File/179983/comment_06082025.pdf" target="_blank" rel="noopener">Комментарий к&nbsp;среднесрочному прогнозу</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">12&nbsp;сентября 2025 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=12092025_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке <br /><a href="/press/event/?id=26932"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">24&nbsp;сентября 2025 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_24092025/" target="_blank" rel="noopener"><span class="col-md-15">Резюме обсуждения ключевой ставки</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">24&nbsp;октября 2025 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=24102025_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке <br /><a href="/Content/Document/File/184551/forecast_251024.pdf">Среднесрочный прогноз</a> <br /><a href="/press/event/?id=28051"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">6&nbsp;ноября 2025 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_06112025/" target="_blank" rel="noopener">Резюме обсуждения ключевой ставки</a> <br /><a href="/Content/Document/File/184552/comment_06112025.pdf" target="_blank" rel="noopener">Комментарий к&nbsp;среднесрочному прогнозу</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">19&nbsp;декабря 2025 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=19122025_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке<br /><a href="/press/event/?id=28198"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">29&nbsp;декабря 2025 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_29122025/" target="_blank" rel="noopener"><span class="col-md-15">Резюме обсуждения ключевой ставки</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+</div>
+                    </div>
+                    <div role="tabpanel" id="tab_content_t11" aria-labelledby="tab_tab_t11" data-tabs-content="t11" class="hide">
+                        <table class="data" >
+<tbody>
+<tr >
+<td style="border:none">Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени</td>
+</tr>
+<tr >
+<td style="border:none">Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени</td>
+</tr>
+</tbody>
+</table><div class="calendar-main-events">
+<div class="main-events_day">
+<div class="date col-md-5">16&nbsp;февраля 2024 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=16022024_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке <br /><a href="/Collection/Collection/File/48891/forecast_240216.pdf">Среднесрочный прогноз</a> <br /><a href="/press/event/?id=18423"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">27&nbsp;февраля 2024 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_27022024/">Резюме обсуждения ключевой ставки</a> <br /><a href="/Content/Document/File/159282/comment_27022024.pdf">Комментарий к&nbsp;среднесрочному прогнозу</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">22&nbsp;марта 2024 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=22032024_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке<br /><a href="/press/event/?id=18536"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">1&nbsp;апреля 2024 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_01042024/" target="_blank" rel="noopener"><span class="col-md-15">Резюме обсуждения ключевой ставки</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">26&nbsp;апреля 2024 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=26042024_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке<br /><a href="/Content/Document/File/160781/forecast_240426.pdf">Среднесрочный прогноз</a> <br /><a href="/press/event/?id=18647"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">13&nbsp;мая&nbsp;2024 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_13052024/">Резюме обсуждения ключевой ставки</a> <br /><a href="/Content/Document/File/160782/comment_13052024.pdf">Комментарий к&nbsp;среднесрочному прогнозу</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">7&nbsp;июня 2024 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=07062024_133000Key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке<br /><a href="/press/event/?id=18753"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">20&nbsp;июня 2024 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_20062024/"><span class="col-md-15">Резюме обсуждения ключевой ставки</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">26&nbsp;июля 2024 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=26072024_133000Key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке <br /><a href="/Content/Document/File/162284/forecast_240726.pdf">Среднесрочный прогноз</a> <br /><a href="/press/event/?id=18869"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">7&nbsp;августа 2024 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_07082024/">Резюме обсуждения ключевой ставки</a> <br /><a href="/Content/Document/File/162516/comment_07082024.pdf">Комментарий к&nbsp;среднесрочному прогнозу</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">13&nbsp;сентября 2024 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=13092024_133000Key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке <br /><a href="/press/event/?id=20993"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">25&nbsp;сентября 2024 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_25092024/"><span class="col-md-15">Резюме обсуждения ключевой ставки</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">25&nbsp;октября 2024 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=25102024_133000Key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке <br /><a href="/Content/Document/File/166586/forecast_241025.pdf">Среднесрочный прогноз</a> <br /><a href="/press/event/?id=21111"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">6&nbsp;ноября 2024 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><span class="col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_06112024/" target="_blank" rel="noopener">Резюме обсуждения ключевой ставки</a> <br /><a href="/Content/Document/File/166590/comment_06112024.pdf">Комментарий к&nbsp;среднесрочному прогнозу</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">20&nbsp;декабря 2024 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=20122024_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке<br /><a href="/press/event/?id=23249"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">28&nbsp;декабря 2024 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="info col-md-15"><a href="/dkp/mp_dec/decision_key_rate/summary_key_rate_28122024/"><span class="col-md-15">Резюме обсуждения ключевой ставки</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+</div>
+                    </div>
+                    <div role="tabpanel" id="tab_content_t10" aria-labelledby="tab_tab_t10" data-tabs-content="t10" class="hide">
+                        <div class="calendar-main-events">
+<div class="main-events_day">
+<div class="date col-md-5">10&nbsp;февраля 2023 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=10022023_133000Key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке со&nbsp;<a href="/Collection/Collection/File/43735/forecast_230210.pdf">среднесрочным прогнозом</a> <br />(Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><a href="/press/event/?id=14538"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">20&nbsp;февраля 2023 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><a href="/about_br/publ/ddkp/longread_1_41/" target="_blank" rel="noopener"><span class="col-md-15">Доклад о&nbsp;денежно-кредитной политике</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">17&nbsp;марта 2023 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=17032023_133000Key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке<br />(Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><a href="/press/event/?id=14629"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">28&nbsp;апреля 2023 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=28042023_133000Key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке со&nbsp;<a href="/Collection/Collection/File/43931/forecast_230428.pdf" target="_blank" rel="noopener">среднесрочным прогнозом</a> <br />(Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><a href="/press/event/?id=14741"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">11&nbsp;мая&nbsp;2023 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><a href="/about_br/publ/ddkp/longread_2_42/" target="_blank" rel="noopener"><span class="col-md-15">Доклад о&nbsp;денежно-кредитной политике</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">9&nbsp;июня 2023 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=09062023_133024Key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке<br />(Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><a href="/press/event/?id=15826"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">21&nbsp;июля 2023 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=21072023_133000Key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке со&nbsp;<a href="/Collection/Collection/File/45148/forecast_230721.pdf">среднесрочным прогнозом</a> <br />(Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><a href="/press/event/?id=16939"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">31&nbsp;июля 2023 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><a href="/about_br/publ/ddkp/longread_3_43/" target="_blank" rel="noopener"><span class="col-md-15">Доклад о&nbsp;денежно-кредитной политике</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">15&nbsp;<span>августа</span> 2023 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Внеочередное заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=15082023_103000Key.htm">Пресс-релиз по&nbsp;ключевой ставке</a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">15&nbsp;сентября 2023 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><span><a href="/press/pr/?file=15092023_133000Key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке со&nbsp;<a href="/Collection/Collection/File/46328/forecast_230915.pdf">среднесрочным прогнозом</a></span> <br />(Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><a href="/press/event/?id=17070"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">27&nbsp;октября 2023 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=27102023_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке со&nbsp;<a href="/Collection/Collection/File/46535/forecast_231027.pdf">среднесрочным прогнозом</a> <br />(Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><a href="/press/event/?id=17158"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">7&nbsp;ноября 2023 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><a href="/about_br/publ/ddkp/longread_4_44/"><span class="col-md-15">Доклад о&nbsp;денежно-кредитной политике</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">15&nbsp;декабря 2023 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=15122023_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке<br />(Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><a href="/press/event/?id=17291"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</div>
+</div>
+</div>
+</div>
+</div>
+                    </div>
+                    <div role="tabpanel" id="tab_content_t9" aria-labelledby="tab_tab_t9" data-tabs-content="t9" class="hide">
+                        <div class="calendar-main-events">
+<div class="main-events_day">
+<div class="date col-md-5">11&nbsp;февраля 2022 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=11022022_133000Key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке со&nbsp;<a href="/Collection/Collection/File/39791/forecast_220211.pdf">среднесрочным прогнозом</a> <br />(Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/press/event/?id=12677">Пресс-конференция Председателя Банка России</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">21&nbsp;февраля 2022 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/about_br/publ/ddkp/longread_1_37/">Доклад о&nbsp;денежно-кредитной политике</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">28&nbsp;<span>февраля</span> 2022 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Внеочередное заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=28022022_094500Key.htm">Пресс-релиз по&nbsp;ключевой ставке</a></div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/press/event/?id=12729">Заявление Председателя Банка России</a></span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">18&nbsp;марта 2022 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=18032022_133000key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке<br />(Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/press/event/?id=12764">Заявление Председателя Банка России</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">8&nbsp;<span>апреля</span> 2022 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Внеочередное заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=08042022_114000key.htm">Пресс-релиз по&nbsp;ключевой ставке</a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">29&nbsp;апреля 2022 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=29042022_133000Key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке со&nbsp;<a href="/Collection/Collection/File/40964/forecast_220429.pdf">среднесрочным прогнозом</a> <br />(Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/press/event/?id=12857">Пресс-конференция Председателя Банка России</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">11&nbsp;мая&nbsp;2022 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><a href="/Collection/Collection/File/40972/2022_02_ddcp.pdf"><span class="col-md-15">Доклад о&nbsp;денежно-кредитной политике</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">26&nbsp;<span>мая</span>&nbsp;2022 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Внеочередное заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=26052022_103000key.htm">Пресс-релиз по&nbsp;ключевой ставке</a></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">10&nbsp;июня 2022 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=10062022_133000Key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке<br />(Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/press/event/?id=12933">Пресс-конференция Председателя Банка России</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">22&nbsp;июля 2022 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=22072022_133000Key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке со&nbsp;<a href="/Collection/Collection/File/42180/forecast_220722.pdf">среднесрочным прогнозом</a> <br />(Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><a href="/press/event/?id=14033"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">1&nbsp;августа 2022 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><a href="/Collection/Collection/File/42214/2022_03_ddcp.pdf"><span class="col-md-15">Доклад о&nbsp;денежно-кредитной политике</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">16&nbsp;сентября 2022 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=16092022_133000Key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке<br />(Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><a href="/press/event/?id=14171"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">28&nbsp;октября 2022 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15">Пресс-релиз по&nbsp;ключевой ставке со&nbsp;<a href="/Collection/Collection/File/43430/forecast_221028.pdf">среднесрочным прогнозом</a> <br />(Предполагаемое время публикации <a href="/press/pr/?file=28102022_133000Key.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><a href="/press/event/?id=14272"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">8&nbsp;ноября 2022 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><a href="/about_br/publ/ddkp/longread_4_40/" target="_blank" rel="noopener"><span class="col-md-15">Доклад о&nbsp;денежно-кредитной политике</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">16&nbsp;декабря 2022 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по&nbsp;ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=16122022_133000Key.htm">Пресс-релиз</a> по&nbsp;ключевой ставке<br />(Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><a href="/press/event/?id=14404"><span class="col-md-15">Пресс-конференция Председателя Банка России</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</div>
+</div>
+</div>
+</div>
+</div>
+                    </div>
+                    <div role="tabpanel" id="tab_content_t1" aria-labelledby="tab_tab_t1" data-tabs-content="t1" class="hide">
+                        <div class="calendar-main-events">
+<div class="main-events_day">
+<div class="date col-md-5">12 февраля 2021 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=12022021_133000Key.htm">Пресс-релиз</a> по ключевой ставке со <a href="/Collection/Collection/File/31978/forecast_210212.pdf">среднесрочным прогнозом</a><br />(Предполагаемое время публикации пресс-релиза &mdash; 13:30 по московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/press/event/?id=9577">Пресс-конференция Председателя Банка России</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции &mdash; 15:00 по московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">20 февраля 2021 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><a href="/analytics/dkp/ddcp/longread_5_33/page/"><span class="col-md-15">Доклад о денежно-кредитной политике</span></a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">19 марта 2021 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=19032021_133000key.htm">Пресс-релиз</a> по ключевой ставке<br />(Предполагаемое время публикации пресс-релиза &mdash; 13:30 по московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/press/event/?id=9664">Пресс-конференция Председателя Банка России</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции &mdash; 15:00 по московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">23 апреля 2021 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=23042021_133000key.htm">Пресс-релиз</a> по ключевой ставке со <a href="/Collection/Collection/File/32222/forecast_210423.pdf">среднесрочным прогнозом</a><br />(Предполагаемое время публикации пресс-релиза &mdash; 13:30 по московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/press/event/?id=9789">Пресс-конференция Председателя Банка России</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции &mdash; 15:00 по московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">4 мая 2021 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/analytics/dkp/ddcp/longread_2_34/">Доклад о денежно-кредитной политике</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">11 июня 2021 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=11062021_133000Key.htm">Пресс-релиз</a> по ключевой ставке<br />(Предполагаемое время публикации пресс-релиза &mdash; 13:30 по московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/press/event/?id=10944">Пресс-конференция Председателя Банка России</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции &mdash; 15:00 по московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">23 июля 2021 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=23072021_133000Key.htm">Пресс-релиз</a> по ключевой ставке со <a href="/Collection/Collection/File/35488/forecast_210723.pdf">среднесрочным прогнозом</a><br />(Предполагаемое время публикации пресс-релиза &mdash; 13:30 по московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/press/event/?id=11076">Пресс-конференция Председателя Банка России</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции &mdash; 15:00 по московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">2 августа 2021 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/analytics/dkp/ddcp/longread_3_35/page/">Доклад о денежно-кредитной политике</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">10 сентября 2021 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=10092021_133000Key.htm">Пресс-релиз</a> по ключевой ставке<br />(Предполагаемое время публикации пресс-релиза &mdash; 13:30 по московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/press/event/?id=12201">Пресс-конференция Председателя Банка России</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции &mdash; 15:00 по московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">22 октября 2021 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=22102021_133000Key.htm">Пресс-релиз</a> по ключевой ставке со <a href="/Collection/Collection/File/38986/forecast_211022.pdf">среднесрочным прогнозом</a><br />(Предполагаемое время публикации пресс-релиза &mdash; 13:30 по московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/press/event/?id=12361">Пресс-конференция Председателя Банка России</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции &mdash; 15:00 по московскому времени)</div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">1 ноября 2021 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Доклад о денежно-кредитной политике</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">17 декабря 2021 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров Банка России по ключевой ставке</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><a href="/press/pr/?file=17122021_133000Key.htm">Пресс-релиз</a> по ключевой ставке<br />(Предполагаемое время публикации пресс-релиза &mdash; 13:30 по московскому времени)</div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/press/event/?id=12542">Пресс-конференция Председателя Банка России</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15">(Предполагаемое время начала пресс-конференции &mdash; 15:00 по московскому времени)</div>
+</div>
+</div>
+</div>
+</div>
+                    </div>
+                    <div role="tabpanel" id="tab_content_t2" aria-labelledby="tab_tab_t2" data-tabs-content="t2" class="hide">
+                        <div class="calendar-main-events">
+<div class="main-events_day">
+<div class="date col-md-5">7&nbsp;февраля 2020 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров по&nbsp;денежно-кредитной политике</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><span><a href="/press/PR/?file=07022020_133000Key.htm">Пресс-релиз по&nbsp;ключевой ставке</a>, <br /><a href="/Collection/Collection/File/27568/forecast_200207.pdf">Среднесрочный макроэкономический прогноз</a> <br /> (Предполагаемое время публикации <span>пресс-релиза</span> и&nbsp;среднесрочного прогноза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</span></div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/Press/event/?id=6358">Пресс-конференция Председателя Банка России</a></span></div>
+<div class="info col-md-15"><span>Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">17&nbsp;февраля 2020 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Публикация <a href="/about_br/publ/ddkp/longread_1_29/page/">Доклада о&nbsp;денежно-кредитной политике</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><span></span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">20&nbsp;марта 2020 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров по&nbsp;денежно-кредитной политике</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><span><a href="/press/PR/?file=20032020_133000Key.htm">Пресс-релиз по&nbsp;ключевой ставке</a> <br /> (Предполагаемое время публикации <span>пресс-релиза</span> и&nbsp;<span>среднесрочного прогноза</span>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</span></div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/Press/event/?id=6528">Пресс-конференция Председателя Банка России</a></span></div>
+<div class="info col-md-15"><span>Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">24&nbsp;апреля 2020 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров по&nbsp;денежно-кредитной политике</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><span><a href="/press/pr/?file=24042020_133000Key.htm">Пресс-релиз по&nbsp;ключевой ставке</a>, <br /><a href="/Collection/Collection/File/27833/forecast_200424.pdf">Среднесрочный макроэкономический прогноз</a> <br /> (Предполагаемое время публикации <span>пресс-релиза</span> и&nbsp;среднесрочного прогноза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</span></div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/press/event/?id=6674">Пресс-конференция Председателя Банка России</a></span></div>
+<div class="info col-md-15"><span>Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">6&nbsp;мая&nbsp;2020 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Публикация <a href="/Collection/Collection/File/27862/2020_02_ddcp.pdf">Доклада о&nbsp;денежно-кредитной политике</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><span></span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">19&nbsp;июня 2020 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров по&nbsp;денежно-кредитной политике</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><span><a href="/press/pr/?file=19062020_133000Key.htm">Пресс-релиз по&nbsp;ключевой ставке</a> <br /> (Предполагаемое время публикации <span>пресс-релиза</span>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</span></div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/press/event/?id=6851">Пресс-конференция Председателя Банка России</a></span></div>
+<div class="info col-md-15"><span>Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">24&nbsp;июля 2020 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров по&nbsp;денежно-кредитной политике</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><span><a href="/press/pr/?file=24072020_133000Key.htm">Пресс-релиз по&nbsp;ключевой ставке</a>, <br /><a href="/Collection/Collection/File/28034/forecast_200724.pdf">Среднесрочный макроэкономический прогноз</a> <br /> (Предполагаемое время публикации <span>пресс-релиза</span> и&nbsp;среднесрочного прогноза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</span></div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/press/event/?id=7949">Пресс-конференция Председателя Банка России</a></span></div>
+<div class="info col-md-15"><span>Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">3&nbsp;августа 2020 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/analytics/dkp/ddcp/longread_3_31/page/">Публикация Доклада о&nbsp;денежно-кредитной политике</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><span></span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">18&nbsp;сентября 2020 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров по&nbsp;денежно-кредитной политике</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><span><a href="/press/pr/?file=18092020_133000key.htm">Пресс-релиз по&nbsp;ключевой ставке</a> <br /> (Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</span></div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/press/event/?id=8122">Пресс-конференция Председателя Банка России</a></span></div>
+<div class="info col-md-15"><span>Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">23&nbsp;октября 2020 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров по&nbsp;денежно-кредитной политике</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><span><a href="/press/pr/?file=23102020_133000key.htm">Пресс-релиз по&nbsp;ключевой ставке</a>, <br /><a href="/Collection/Collection/File/29374/forecast_201023.pdf">Среднесрочный макроэкономический прогноз</a> <br /> (Предполагаемое время публикации <span>пресс-релиза</span> и&nbsp;среднесрочного прогноза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</span></div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/press/event/?id=8220">Пресс-конференция Председателя Банка России</a></span></div>
+<div class="info col-md-15"><span>Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">2&nbsp;ноября 2020 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/analytics/dkp/ddcp/longread_4_32/">Публикация Доклада о&nbsp;денежно-кредитной политике</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><span></span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">18&nbsp;декабря 2020 года</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров по&nbsp;денежно-кредитной политике</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><span><a href="/press/pr/?file=18122020_133000Key.htm">Пресс-релиз по&nbsp;ключевой ставке</a> <br />(Предполагаемое время публикации пресс-релиза&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</span></div>
+</div>
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/press/event/?id=8392">Пресс-конференция Председателя Банка России</a></span></div>
+<div class="info col-md-15"><span>Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени</span></div>
+</div>
+</div>
+</div>
+</div>
+                    </div>
+                    <div role="tabpanel" id="tab_content_t3" aria-labelledby="tab_tab_t3" data-tabs-content="t3" class="hide">
+                        <div class="calendar-main-events">
+<div class="main-events_day">
+<div class="date col-md-5">8&nbsp;февраля</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров по&nbsp;денежно-кредитной политике</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><span>Предполагаемое время публикации <a href="/press/PR/?file=08022019_133000Key.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">22&nbsp;марта</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров по&nbsp;денежно-кредитной политике</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><span>Предполагаемое время публикации <a href="/press/PR/?file=22032019_133000Key.htm">пресс-релиза</a> и&nbsp;<a href="/Collection/Collection/File/16778/forecast_190322.pdf">среднесрочного прогноза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени</span></div>
+</div>
+<div class="main-event">
+<div class="title"><a class="col-md-15" href="/press/event/?id=2511">Пресс-конференция Председателя Банка России</a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><span>Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">1&nbsp;апреля</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><a class="col-md-15" href="/Collection/Collection/File/18969/2019_01_ddcp.pdf">Публикация Доклада о&nbsp;денежно-кредитной политике</a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><span></span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">26&nbsp;апреля</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров по&nbsp;денежно-кредитной политике</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><span>Предполагаемое время публикации <a href="/press/pr/?file=26042019_133000Key.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">14&nbsp;июня</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров по&nbsp;денежно-кредитной политике</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><span>Предполагаемое время публикации <a href="/press/pr/?file=14062019_133000Key.htm">пресс-релиза</a> и&nbsp;<a href="/Collection/Collection/File/19822/forecast_190614.pdf">среднесрочного прогноза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени</span></div>
+</div>
+<div class="main-event">
+<div class="title"><a class="col-md-15" href="/press/event/?id=2682">Пресс-конференция Председателя Банка России</a>
+<div class="icon_wrapper offset-md-1 col-md-1"></div>
+</div>
+<div class="info col-md-15"><span>Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">24&nbsp;июня</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><a class="col-md-15" href="/Collection/Collection/File/19993/2019_02_ddcp.pdf">Публикация Доклада о&nbsp;денежно-кредитной политике</a>
+<div class="icon_wrapper offset-md-1 col-md-1"></div>
+</div>
+<div class="info col-md-15"><span></span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">26&nbsp;июля</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров по&nbsp;денежно-кредитной политике</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><span>Предполагаемое время публикации <a href="/press/pr/?file=26072019_133000Key.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">6&nbsp;сентября</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров по&nbsp;денежно-кредитной политике</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><span>Предполагаемое время публикации <a href="/press/pr/?file=06092019_133000Key.htm">пресс-релиза </a> и&nbsp;<a href="/Collection/Collection/File/22612/forecast_190906.pdf">среднесрочного прогноза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени</span></div>
+</div>
+<div class="main-event">
+<div class="title"><a class="col-md-15" href="/press/event/?id=2847">Пресс-конференция Председателя Банка России</a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><span>Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">16&nbsp;сентября</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/publ/ddcp/longread_3_27/">Публикация Доклада о&nbsp;денежно-кредитной политике</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><span></span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">25&nbsp;октября</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров по&nbsp;денежно-кредитной политике</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><span>Предполагаемое время публикации <a href="/press/PR/?file=25102019_133000Key.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">13&nbsp;декабря</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15">Заседание Совета директоров по&nbsp;денежно-кредитной политике</span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div class="icon-important"></div>
+</div>
+</div>
+<div class="info col-md-15"><span>Предполагаемое время публикации <a href="/press/PR/?file=13122019_133000Key.htm">пресс-релиза</a> и&nbsp;<a href="/Collection/Collection/File/25585/forecast_191213.pdf">среднесрочного прогноза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени</span></div>
+</div>
+<div class="main-event">
+<div class="title"><a class="col-md-15" href="/Press/event/?id=5242">Пресс-конференция Председателя Банка России</a>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><span>Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени</span></div>
+</div>
+</div>
+</div>
+<div class="main-events_day">
+<div class="date col-md-5">23&nbsp;декабря</div>
+<div class="main-events offset-md-1 col-md-17">
+<div class="main-event">
+<div class="title"><span class="col-md-15"><a href="/Collection/Collection/File/25679/2019_04_ddcp.pdf">Публикация Доклада о&nbsp;денежно-кредитной политике</a></span>
+<div class="icon_wrapper offset-md-1 col-md-1">
+<div></div>
+</div>
+</div>
+<div class="info col-md-15"><span></span></div>
+</div>
+</div>
+</div>
+</div>
+                    </div>
+                    <div role="tabpanel" id="tab_content_t4" aria-labelledby="tab_tab_t4" data-tabs-content="t4" class="hide">
+                        <div class="table-wrapper">
+<table class="data">
+<tbody>
+<tr>
+<th width="10%">Дата</th>
+<th nowrap="nowrap">Событие</th>
+</tr>
+<tr>
+<td>9&nbsp;февраля</td>
+<td nowrap="nowrap">Заседание Совета директоров по&nbsp;денежно-кредитной политике<br /> (Предполагаемое время публикации <a href="/press/PR/?file=09022018_133031keyrate2018-02-09T13_29_29.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td rowspan="3"><b>23&nbsp;марта</b></td>
+<td nowrap="nowrap"><b>Заседание Совета директоров по&nbsp;денежно-кредитной политике<br /> </b>(Предполагаемое время публикации <a href="/press/PR/?file=23032018_133000keyrate2018-03-23T13_20_35.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td nowrap="nowrap"><a href="/Press/event/?id=1722">Пресс-конференция для&nbsp;представителей СМИ</a> <br /> (Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td nowrap="nowrap">Публикация <a href="/Collection/Collection/File/7824/2018_01_ddcp.pdf">Доклада о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+<tr>
+<td>27&nbsp;апреля</td>
+<td nowrap="nowrap">Заседание Совета директоров по&nbsp;денежно-кредитной политике<br /> (Предполагаемое время публикации <a href="/press/PR/?file=27042018_133000key.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td rowspan="3"><b>15&nbsp;июня</b></td>
+<td nowrap="nowrap"><b>Заседание Совета директоров по&nbsp;денежно-кредитной политике<br /> </b>(Предполагаемое время публикации <a href="/press/PR/?file=15062018_133000key.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td nowrap="nowrap"><a href="/Press/event/?id=1893">Пресс-конференция для&nbsp;представителей СМИ</a> <br /> (Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td nowrap="nowrap">Публикация <a href="/Collection/Collection/File/7823/2018_02_ddcp.pdf">Доклада о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+<tr>
+<td>27&nbsp;июля</td>
+<td nowrap="nowrap">Заседание Совета директоров по&nbsp;денежно-кредитной политике<br /> (Предполагаемое время публикации <a href="/press/PR/?file=27072018_133000key.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td rowspan="3"><b>14&nbsp;сентября</b></td>
+<td nowrap="nowrap"><b>Заседание Совета директоров по&nbsp;денежно-кредитной политике<br /> </b>(Предполагаемое время публикации <a href="/press/PR/?file=14092018_133000Key.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td nowrap="nowrap"><a href="/Press/event/?id=2088">Пресс-конференция для&nbsp;представителей СМИ</a> <br /> (Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td nowrap="nowrap">Публикация <a href="/Collection/Collection/File/7822/2018_03_ddcp.pdf">Доклада о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+<tr>
+<td>26&nbsp;октября</td>
+<td nowrap="nowrap">Заседание Совета директоров по&nbsp;денежно-кредитной политике<br /> (Предполагаемое время публикации <a href="/press/pr/?file=26102018_133000Key.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td rowspan="3"><b>14&nbsp;декабря</b></td>
+<td nowrap="nowrap"><b>Заседание Совета директоров по&nbsp;денежно-кредитной политике<br /> </b>(Предполагаемое время публикации <a href="/press/PR/?file=14122018_133000Key.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td nowrap="nowrap"><a href="/press/event/?id=2305">Пресс-конференция для&nbsp;представителей СМИ</a> <br /> (Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td nowrap="nowrap">Публикация <a href="/Collection/Collection/File/14169/2018_04_ddcp.pdf">Доклада о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+</tbody>
+</table></div>
+                    </div>
+                    <div role="tabpanel" id="tab_content_t5" aria-labelledby="tab_tab_t5" data-tabs-content="t5" class="hide">
+                        <div class="table-wrapper">
+<table class="data">
+<tbody>
+<tr>
+<th width="10%">Дата</th>
+<th nowrap="nowrap">Событие</th>
+</tr>
+<tr>
+<td>3&nbsp;февраля</td>
+<td>Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> (Предполагаемое время публикации <a href="/press/PR/?file=03022017_133002keyrate2017-02-03T13_09_54.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td rowspan="3"><b>24&nbsp;марта</b></td>
+<td><b>Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики</b> <br /> (Предполагаемое время публикации <a target="_blank" href="/press/PR/?file=24032017_132958keyrate2017-03-24T13_25_44.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td><a target="_blank" href="/press/event/?id=979">Пресс-конференция</a> <br /> (Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td nowrap="nowrap"><a href="/Collection/Collection/File/7831/2017_01_ddcp.pdf">Доклад о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+<tr>
+<td>28&nbsp;апреля</td>
+<td>Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> (Предполагаемое время публикации <a href="/press/PR/?file=28042017_132959keyrate2017-04-28T13_17_20.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td rowspan="3"><b>16&nbsp;июня</b></td>
+<td><b>Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики</b> <br /> (Предполагаемое время публикации <a href="/press/PR/?file=16062017_133001keyrate2017-06-16T13_21_27.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td><a href="/press/event/?id=1158">Пресс-конференция</a> <br /> (Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td nowrap="nowrap"><a href="/Collection/Collection/File/7830/2017_02_ddcp.pdf">Доклад о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+<tr>
+<td>28&nbsp;июля</td>
+<td>Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> (Предполагаемое время публикации <a href="/press/PR/?file=28072017_133214keyrate2017-07-28T13_23_30.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td rowspan="3"><b>15&nbsp;сентября</b></td>
+<td><b>Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики</b> <br /> (Предполагаемое время публикации <a href="/press/pr/?file=15092017_1330140keyrate2017-09-15T13_22_03.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td><a href="/Press/event/?id=1337">Пресс-конференция</a> <br /> (Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td nowrap="nowrap"><a href="/Collection/Collection/File/7829/2017_03_ddcp.pdf">Доклад о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+<tr>
+<td>27&nbsp;октября</td>
+<td>Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> (Предполагаемое время публикации <a href="/press/PR/?file=27102017_133003keyrate2017-10-27T13_18_28.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td rowspan="3"><b>15&nbsp;декабря</b></td>
+<td><b>Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики</b> <br /> (Предполагаемое время публикации <a href="/press/PR/?file=15122017_133000keyrate2017-12-15T13_25_57.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td><a href="/Press/event/?id=1556">Пресс-конференция</a> <br /> (Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td nowrap="nowrap"><a href="/Collection/Collection/File/7828/2017_04_ddcp.pdf">Доклад о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+</tbody>
+</table>
+</div>
+                    </div>
+                    <div role="tabpanel" id="tab_content_t6" aria-labelledby="tab_tab_t6" data-tabs-content="t6" class="hide">
+                        <div class="table-wrapper">
+<table class="data">
+<tbody>
+<tr>
+<td width="10%">Дата</td>
+<td nowrap="nowrap">Событие</td>
+</tr>
+<tr>
+<td>29&nbsp;января</td>
+<td nowrap="nowrap">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> (Предполагаемое время публикации <a href="/press/PR/?file=29012016_133000keyrate2016-01-29T13_01_16.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td rowspan="3"><b>18&nbsp;марта</b></td>
+<td nowrap="nowrap"><b>Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> </b>(Предполагаемое время публикации <a href="/press/PR/?file=18032016_133000keyrate2016-03-18T13_21_21.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td nowrap="nowrap"><a href="/press/event/?id=221">Пресс-конференция</a></td>
+</tr>
+<tr>
+<td nowrap="nowrap"><a href="/Collection/Collection/File/7839/2016_01_ddcp.pdf">Доклад о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+<tr>
+<td>29&nbsp;апреля</td>
+<td nowrap="nowrap">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> (Предполагаемое время публикации <a href="/press/PR/?file=29042016_133001dkp2016-04-29T13_03_28.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td rowspan="3"><b>10&nbsp;июня</b></td>
+<td nowrap="nowrap"><b>Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> </b>(Предполагаемое время публикации <a href="/press/PR/?file=10062016_133019dkp2016-06-10T13_22_24.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td nowrap="nowrap"><a href="/press/event/?id=386">Пресс-конференция</a></td>
+</tr>
+<tr>
+<td nowrap="nowrap"><a href="/Collection/Collection/File/7838/2016_02_ddcp.pdf">Доклад о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+<tr>
+<td>29&nbsp;июля</td>
+<td nowrap="nowrap">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> (Предполагаемое время публикации <a href="/press/PR/?file=29072016_133016keyrate2016-07-29T13_25_34.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td rowspan="3"><b>16&nbsp;сентября</b></td>
+<td nowrap="nowrap"><b>Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> </b>(Предполагаемое время публикации <a href="/press/PR/?file=16092016_132949keyrate2016-09-16T12_56_02.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td nowrap="nowrap"><a href="/press/event/?id=598">Пресс-конференция</a> <br /> (Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td nowrap="nowrap"><a href="/Collection/Collection/File/7837/2016_03_ddcp.pdf">Доклад о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+<tr>
+<td>28&nbsp;октября</td>
+<td nowrap="nowrap">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> (Предполагаемое время публикации <a href="/press/PR/?file=28102016_133004keyrate2016-10-28T13_09_02.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td rowspan="3"><b>16&nbsp;декабря</b></td>
+<td nowrap="nowrap"><b>Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> </b>(Предполагаемое время публикации <a href="/press/PR/?file=16122016_133003keyrate2016-12-16T13_16_40.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td nowrap="nowrap"><a href="/press/event/?id=807">Пресс-конференция</a> <br /> (Предполагаемое время начала пресс-конференции&nbsp;&mdash; 15:00 по&nbsp;московскому времени)</td>
+</tr>
+<tr>
+<td nowrap="nowrap"><a href="/Collection/Collection/File/7836/2016_04_ddcp.pdf">Доклад о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+</tbody>
+</table></div>
+                    </div>
+                    <div role="tabpanel" id="tab_content_t7" aria-labelledby="tab_tab_t7" data-tabs-content="t7" class="hide">
+                        <div class="table-wrapper">
+<table class="data">
+<tbody>
+<tr>
+<td>Дата</td>
+<td nowrap="nowrap">Событие</td>
+</tr>
+<tr>
+<td valign="top" nowrap="nowrap" width="10%">30&nbsp;января</td>
+<td valign="top" nowrap="nowrap" width="90%">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> <i>(Предполагаемое время публикации <a target="_blank" href="/press/PR/?file=30012015_133122dkp2015-01-30T13_15_49.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</i></td>
+</tr>
+<tr>
+<td valign="top" nowrap="nowrap" width="10%">&nbsp;</td>
+<td valign="top" nowrap="nowrap" width="90%">&nbsp;</td>
+</tr>
+<tr>
+<td valign="top" nowrap="nowrap" width="10%" rowspan="3">13&nbsp;марта</td>
+<td valign="top">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> <i>(Предполагаемое время публикации <a target="_blank" href="/press/PR/?file=13032015_133031dkp2015-03-13T13_20_49.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</i></td>
+</tr>
+<tr>
+<td valign="top"><a target="_blank" href="/press/event/?id=5215">Пресс-конференция</a></td>
+</tr>
+<tr>
+<td valign="top"><a target="_blank" href="/Collection/Collection/File/7847/2015_01_ddcp.pdf">Доклад о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+<tr>
+<td valign="top" nowrap="nowrap" width="10%">&nbsp;</td>
+<td valign="top" nowrap="nowrap" width="90%">&nbsp;</td>
+</tr>
+<tr>
+<td valign="top" nowrap="nowrap" width="10%">30&nbsp;апреля</td>
+<td valign="top" nowrap="nowrap" width="90%">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> <i>(Предполагаемое время публикации <a target="_blank" href="/press/PR/?file=30042015_133103dkp2015-04-30T13_05_21.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</i></td>
+</tr>
+<tr>
+<td valign="top" nowrap="nowrap" width="10%">&nbsp;</td>
+<td valign="top" nowrap="nowrap" width="90%">&nbsp;</td>
+</tr>
+<tr>
+<td valign="top" nowrap="nowrap" width="10%" rowspan="3">15&nbsp;июня</td>
+<td valign="top">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> <i>(Предполагаемое время публикации <a target="_blank" href="/press/PR/?file=15062015_133028keyrate2015-06-15T13_25_44.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</i></td>
+</tr>
+<tr>
+<td valign="top"><a target="_blank" href="/press/event/?id=5219">Пресс-конференция</a></td>
+</tr>
+<tr>
+<td valign="top"><a target="_blank" href="/Collection/Collection/File/7846/2015_02_ddcp.pdf">Доклад о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+<tr>
+<td valign="top" nowrap="nowrap" width="10%">&nbsp;</td>
+<td valign="top" nowrap="nowrap" width="90%">&nbsp;</td>
+</tr>
+<tr>
+<td valign="top" nowrap="nowrap" width="10%">31&nbsp;июля</td>
+<td valign="top" nowrap="nowrap" width="90%">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> <i>(Предполагаемое время публикации <a target="_blank" href="/press/PR/?file=31072015_133033keyrate2015-07-31T13_03_35.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</i></td>
+</tr>
+<tr>
+<td valign="top" nowrap="nowrap" width="10%">&nbsp;</td>
+<td valign="top" nowrap="nowrap" width="90%">&nbsp;</td>
+</tr>
+<tr>
+<td valign="top" nowrap="nowrap" width="10%" rowspan="3">11&nbsp;сентября</td>
+<td valign="top">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> <i>(Предполагаемое время публикации <a target="_blank" href="/press/PR/?file=11092015_133021keyrate2015-09-11T13_01_35.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</i></td>
+</tr>
+<tr>
+<td valign="top"><a target="_blank" href="/press/event/?id=5221">Пресс-конференция</a></td>
+</tr>
+<tr>
+<td valign="top"><a target="_blank" href="/Collection/Collection/File/7845/2015_03_ddcp.pdf">Доклад о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+<tr>
+<td valign="top" nowrap="nowrap" width="10%">&nbsp;</td>
+<td valign="top" nowrap="nowrap" width="90%">&nbsp;</td>
+</tr>
+<tr>
+<td valign="top" nowrap="nowrap" width="10%">30&nbsp;октября</td>
+<td valign="top" nowrap="nowrap" width="90%">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> <i>(Предполагаемое время публикации <a target="_blank" href="/press/PR/?file=30102015_133001keyrate2015-10-30T13_17_50.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</i></td>
+</tr>
+<tr>
+<td valign="top" nowrap="nowrap" width="10%">&nbsp;</td>
+<td valign="top" nowrap="nowrap" width="90%">&nbsp;</td>
+</tr>
+<tr>
+<td valign="top" nowrap="nowrap" width="10%" rowspan="3">11&nbsp;декабря</td>
+<td valign="top">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> <i>(Предполагаемое время публикации <a target="_blank" href="/press/PR/?file=11122015_133000keyrate2015-12-11T13_15_16.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</i></td>
+</tr>
+<tr>
+<td valign="top"><a href="/press/event/?id=71">Пресс-конференция</a></td>
+</tr>
+<tr>
+<td valign="top"><a target="_blank" href="/Collection/Collection/File/7844/2015_04_ddcp.pdf">Доклад о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+</tbody>
+</table></div>
+                    </div>
+                    <div role="tabpanel" id="tab_content_t8" aria-labelledby="tab_tab_t8" data-tabs-content="t8" class="hide">
+                        <div class="table-wrapper">
+<table class="data">
+<tbody>
+<tr>
+<td width="10%">Дата</td>
+<td nowrap="nowrap">Событие</td>
+</tr>
+<tr>
+<td valign="top" rowspan="2">14&nbsp;февраля</td>
+<td valign="top">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> <i>(Предполагаемое время публикации <a href="/press/PR/?file=14022014_133316stavka_ table.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</i></td>
+</tr>
+<tr>
+<td valign="top"><a href="/press/event/?id=5200">Пресс-конференция</a></td>
+</tr>
+<tr>
+<td valign="top">18&nbsp;февраля</td>
+<td valign="top"><a href="/Collection/Collection/File/7853/2014_01_ddcp.pdf">Доклад о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+<tr>
+<td valign="top"></td>
+<td valign="top">&nbsp;</td>
+</tr>
+<tr>
+<td valign="top">3&nbsp;марта</td>
+<td valign="top">Внеочередное заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> <i>(<a href="/press/PR/?file=03032014_10262903_03.htm">Пресс-релиз по&nbsp;итогам заседания</a>)</i></td>
+</tr>
+<tr>
+<td valign="top">14&nbsp;марта</td>
+<td valign="top">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> <i>(Предполагаемое время публикации <a href="/press/PR/?file=14032014_1330144.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</i></td>
+</tr>
+<tr>
+<td valign="top"></td>
+<td valign="top">&nbsp;</td>
+</tr>
+<tr>
+<td valign="top">25&nbsp;апреля</td>
+<td valign="top">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> <i>(Предполагаемое время публикации <a href="/press/PR/?file=25042014_1330501.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</i></td>
+</tr>
+<tr>
+<td valign="top"></td>
+<td valign="top">&nbsp;</td>
+</tr>
+<tr>
+<td valign="top" rowspan="2">16&nbsp;июня</td>
+<td valign="top">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> <i>(Предполагаемое время публикации <a href="/press/PR/?file=16062014_133053dkp2014-06-16T13_18_21.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</i></td>
+</tr>
+<tr>
+<td valign="top"><a href="/press/event/?id=5204">Пресс-конференция</a></td>
+</tr>
+<tr>
+<td valign="top">18&nbsp;июня</td>
+<td valign="top"><a href="/Collection/Collection/File/7852/2014_02_ddcp.pdf">Доклад о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+<tr>
+<td valign="top"></td>
+<td valign="top">&nbsp;</td>
+</tr>
+<tr>
+<td valign="top">25&nbsp;июля</td>
+<td valign="top">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> <i>(Предполагаемое время публикации <a href="/press/PR/?file=25072014_133011dkp2014-07-25T13_00_55.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</i></td>
+</tr>
+<tr>
+<td valign="top"></td>
+<td valign="top">&nbsp;</td>
+</tr>
+<tr>
+<td valign="top" rowspan="2">12&nbsp;сентября</td>
+<td valign="top">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> <i>(Предполагаемое время публикации <a href="/press/PR/?file=12092014_133036dkp2014-09-12T13_15_46.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</i></td>
+</tr>
+<tr>
+<td valign="top"><a href="/press/event/?id=5208">Пресс-конференция</a></td>
+</tr>
+<tr>
+<td valign="top">16&nbsp;сентября</td>
+<td valign="top"><a href="/Collection/Collection/File/7851/2014_03_ddcp.pdf">Доклад о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+<tr>
+<td valign="top"></td>
+<td valign="top">&nbsp;</td>
+</tr>
+<tr>
+<td valign="top">31&nbsp;октября</td>
+<td valign="top">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> <i>(Предполагаемое время публикации <a href="/press/PR/?file=31102014_133027dkp2014-10-31T13_15_16.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</i></td>
+</tr>
+<tr>
+<td valign="top"></td>
+<td valign="top">&nbsp;</td>
+</tr>
+<tr>
+<td valign="top" rowspan="2">11&nbsp;декабря</td>
+<td valign="top">Заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> <i>(Предполагаемое время публикации <a href="/press/PR/?file=11122014_133014dkp2014-12-11T13_08_33.htm">пресс-релиза</a>&nbsp;&mdash; 13:30 по&nbsp;московскому времени)</i></td>
+</tr>
+<tr>
+<td valign="top"><a href="/press/event/?id=5214">Пресс-конференция</a></td>
+</tr>
+<tr>
+<td valign="top" rowspan="2">15&nbsp;декабря</td>
+<td valign="top">Внеочередное заседание Совета директоров Банка России по&nbsp;вопросам денежно-кредитной политики<br /> <i> <a href="/press/PR/?file=16122014_004533dkp2014-12-16T00_39_23.htm"> (Пресс-релиз по&nbsp;итогам заседания)</a></i></td>
+</tr>
+<tr>
+<td valign="top"><a href="/Collection/Collection/File/7850/2014_04_ddcp.pdf">Доклад о&nbsp;денежно-кредитной политике</a></td>
+</tr>
+</tbody>
+</table></div>
+                    </div>
+</div>
+
+<div class="responsible-unit">
+<div class="responsible-unit_text">Ответственное структурное подразделение: <a href="/about_br/bankstructute/ddkp/"> Департамент денежно-кредитной политики</a></div>
+</div>
+                    
+                    <!--/index-->
+
+    <div class="page-info">
+        <!--noindex-->
+        
+
+
+<div class="page-info_helpful"
+     data-page-feedback=""
+     data-feedback-url="/Content/PageInfo/RegisterFeedback">
+    <!--noindex-->
+    <div class="helpful" data-helpful="">
+        Страница была полезной?
+        <div class="helpful_btns">
+            <button class="helpful_btn _yes" data-helpful-btn="yes"><i class="helpful_icon"></i><span>Да</span></button>
+            <button class="helpful_btn _no" data-helpful-btn="no"><i class="helpful_icon"></i><span>Нет</span></button>
+        </div>
+    </div>
+    <!--/noindex-->
+</div>
+
+            <div class="page-info_last-update">Последнее обновление страницы: 30.09.2026</div>
+        <!--/noindex-->
+    </div>
+                </div>
+            </div>
+    </main>
+
+    <footer class="footer" id="footer">
+    <div class="offsetMenu footer_margin-left">
+        <div class="footer_main">
+            <div class="col-md-23 col-xl-22 offset-md-1 offset-xl-2 footer-size">
+                <div class="footer_top">
+                    <a class="footer_logo" href="/"></a>
+                    <div class="footer_up gotoUp">
+                        <div class="footer_up_title">Наверх</div>
+                        <div class="footer_up_icon"></div>
+                    </div>
+                </div>
+                
+<div class="footer_contacts">
+<div class="footer_address">107016, Москва, ул. Неглинная, д.&nbsp;12, к. В, Банк
+России</div>
+<div class="footer_phones">
+<div class="footer_phone"><a class="footer_phone_val" href="tel:300">300</a><span>(круглосуточно, бесплатно для&nbsp;звонков с&nbsp;мобильных телефонов)</span></div>
+<div class="footer_phone"><a class="footer_phone_val" href="tel:88003003000">8&nbsp;800 300-30-00</a><span>(круглосуточно, бесплатно для&nbsp;звонков из&nbsp;регионов России)</span></div>
+<div class="footer_phone"><a class="footer_phone_val" href="tel:+74993003000">+7&nbsp;499 300-30-00</a><span>(круглосуточно, в&nbsp;соответствии с&nbsp;тарифами вашего оператора)</span></div>
+
+</div>
+</div>
+<div class="footer_main_block">
+<div class="footer_left-menu">
+<div class="footer_left-menu_item"><a href="/lk_uio/">Личный кабинет участника информационного обмена</a></div>
+<div class="footer_left-menu_item"><a href="/about_br/irp/">Отношения с&nbsp;инвесторами</a></div>
+<div class="footer_left-menu_item"><a href="/rbr/list_inside/">Перечень инсайдерской информации Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/analytics/na_vr/">Официальное опубликование нормативных актов Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/project_na/">Проекты нормативных актов Банка России</a></div>
+<div class="footer_left-menu_item"><a href="/other/holidays/">Перечень нерабочих праздничных дней и&nbsp;перенесенных выходных дней</a></div>
+</div>
+<div class="networks-circle footer_networks">
+<a class="networks-circle_item _vk" href="https://vk.com/cbr_official"></a>
+<a class="networks-circle_item _yt" href="https://www.youtube.com/user/BankofRussia"></a>
+<a class="networks-circle_item _tg" href="https://telegram.me/centralbank_russia" title="Telegram"></a>
+<a class="networks-circle_item _ydzen" href="https://dzen.ru/cbr" title="Яндекс Дзен"></a>
+<a class="networks-circle_item _ok" href="https://ok.ru/group/68858679787580" title="Одноклассники"></a>
+<a class="networks-circle_item _rt" href="https://rutube.ru/channel/23873201/" title="RUTUBE"></a>
+<a class="networks-circle_item _max" href="https://max.ru/cbr_official" title="Макс"></a>
+</div>
+</div>
+<div class="footer_menu">
+<div class="footer_menu_items">
+<div class="footer_menu_item"><a href="/about/">О&nbsp;сайте</a></div>
+<div class="footer_menu_item"><a href="/contacts/">Контакты</a></div>
+<div class="footer_menu_item"><a href="/about_br/anticor/">Противодействие коррупции</a></div>
+<div class="footer_menu_item"><a href="/development/">Технические ресурсы</a></div>
+</div>
+<a class="footer_menu_item _visually-impaired" href="#" title="Версия для слабовидящих">
+	<div class="footer_visually-impaired-icon"></div>
+	<div><span class="visually-impaired-on">Версия для&nbsp;слабовидящих</span><span class="visually-impaired-off">Обычная версия</span></div>
+</a>
+</div>
+
+            </div>
+        </div>
+        <div class="footer_bottom">
+            <div class="col-md-23 col-xl-23 offset-md-1 offset-xl-2 row footer_bottom-container">
+                <div class="footer_bottom_text col-md-11 col-xl-11">&#169; Банк России, 2000–2026.</div>
+<div class="footer_bottom_aic col-md-12 col-xl-11">Дизайн сайта — <a href="https://aic.ru" target="_blank"><img src="/common/images/icons/aic-logo.svg" /></a></div>
+
+            </div>
+        </div>
+    </div>
+</footer>
+
+    
+    
+
+        <div class="popup-cookies" data-popup-cookies>
+            <div class="popup-cookies_title">
+                На сайте Банка России используются файлы cookie
+            </div>
+            <div class="popup-cookies_subtitle">
+                Оставаясь на <a href="/">www.cbr.ru</a>, вы принимаете
+                <a href='/user_agreement/'>пользовательское соглашение</a>
+            </div>
+            <button class="btn _medium _blue " data-popup-cookies-btn>
+                Подтвердить
+            </button>
+        </div>
+
+    
+<!--[if IE 9]><script>$('body').addClass('ie9')</script><![endif]-->
+<script src="/Modules/Content/Scripts/PageInfo.js?v=v3116962712" type="text/javascript"></script>
+    <script type="text/javascript">
+        $(function () {
+            Content_PageInfo.init($('[data-page-feedback]'));
+        });
+    </script>
+
+
+
+</body>
+</html>

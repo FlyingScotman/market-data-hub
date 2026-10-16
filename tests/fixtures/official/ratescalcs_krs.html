@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>KRS Market Data Editor</title>
+<style>
+
+* { box-sizing: border-box; }
+body {
+    background: #0c0c0c;
+    color: #ffffff;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 13px;
+    padding: 16px;
+    margin: 0;
+}
+a { color: #39ff14; }
+hr { border: none; border-top: 1px solid #ffffff; margin: 8px 0; }
+
+h2 { margin: 0 0 10px 0; font-size: 14px; }
+textarea {
+    background: #111;
+    color: #ffffff;
+    border: 1px solid #ffffff;
+    padding: 8px;
+    font-family: inherit;
+    font-size: 13px;
+    width: 320px;
+    resize: vertical;
+    outline: none;
+}
+.btn {
+    display: block;
+    margin-top: 8px;
+    background: transparent;
+    color: #ffffff;
+    border: 1px solid #ffffff;
+    padding: 5px 18px;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+.btn:hover { background: #1a1a1a; }
+.footer { margin-top: 14px; opacity: 0.45; font-size: 12px; }
+</style>
+</head>
+<body>
+<h2>KRS Market Data</h2>
+
+<form method="post">
+    <textarea name="content" rows="14">RUB KRS run 
+3M 13.90 14.10 
+6M 14.09 14.26 
+9M 14.16 14.34 
+1Y 14.27 14.47 
+2Y 14.40 14.60 
+3Y 14.72 14.89 
+4Y 14.95 15.15 
+5Y 15.17 15.35 
+6Y 15.31 15.50 
+7Y 15.40 15.60 
+8Y 15.47 15.67 
+9Y 15.52 15.72 
+10Y 15.56 15.70</textarea>
+    <button class="btn" type="submit">Save</button>
+</form>
+<div class="footer"><a href="." target="_top">← Dashboard</a></div>
+</body>
+</html>

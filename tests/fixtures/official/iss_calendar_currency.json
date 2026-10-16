@@ -1,0 +1,20 @@
+{
+"calendar": {
+	"columns": ["engine", "date", "is_work_day", "trade_session_date", "reason"], 
+	"data": [
+		["currency", "2026-01-01", 0, null, "H"],
+		["currency", "2026-01-02", 0, null, "H"],
+		["currency", "2026-01-05", 1, null, "N"],
+		["currency", "2026-01-06", 1, null, "N"],
+		["currency", "2026-01-07", 0, null, "H"],
+		["currency", "2026-01-08", 1, null, "N"],
+		["currency", "2026-01-09", 1, null, "N"],
+		["currency", "2026-02-23", 0, null, "H"],
+		["currency", "2026-03-09", 1, null, "N"],
+		["currency", "2026-05-01", 0, null, "H"],
+		["currency", "2026-05-11", 1, null, "N"],
+		["currency", "2026-06-12", 0, null, "H"],
+		["currency", "2026-11-04", 0, null, "H"],
+		["currency", "2026-12-31", 0, null, "H"]
+	]
+}}

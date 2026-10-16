@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>OIS/IRS Market Data Editor</title>
+<style>
+
+* { box-sizing: border-box; }
+body {
+    background: #0c0c0c;
+    color: #ffffff;
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 13px;
+    padding: 16px;
+    margin: 0;
+}
+a { color: #39ff14; }
+hr { border: none; border-top: 1px solid #ffffff; margin: 8px 0; }
+
+h2 { margin: 0 0 10px 0; font-size: 14px; }
+textarea {
+    background: #111;
+    color: #ffffff;
+    border: 1px solid #ffffff;
+    padding: 8px;
+    font-family: inherit;
+    font-size: 13px;
+    width: 320px;
+    resize: vertical;
+    outline: none;
+}
+.btn {
+    display: block;
+    margin-top: 8px;
+    background: transparent;
+    color: #ffffff;
+    border: 1px solid #ffffff;
+    padding: 5px 18px;
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+}
+.btn:hover { background: #1a1a1a; }
+.footer { margin-top: 14px; opacity: 0.45; font-size: 12px; }
+</style>
+</head>
+<body>
+<h2>OIS/IRS Market Data</h2>
+
+<form method="post">
+    <textarea name="content" rows="14">RUB RUONIA OIS run 
+1W   13.70    13.90 
+2W   13.75    13.95 
+1M   13.83    14.03 
+2M   13.95    14.15 
+3M   13.99    14.19 
+6M   14.15    14.35 
+9M   14.23    14.43 
+1Y   14.33    14.53 
+2Y   14.54    14.74 
+3Y   14.79    14.99 
+4Y   15.04    15.24 
+5Y   15.25    15.45 
+6Y   15.34    15.54 
+7Y   15.42    15.62 
+8Y   15.49    15.69 
+9Y   15.54    15.74 
+10Y   15.58    15.78 </textarea>
+    <button class="btn" type="submit">Save</button>
+</form>
+<div class="footer"><a href="." target="_top">← Dashboard</a></div>
+</body>
+</html>
