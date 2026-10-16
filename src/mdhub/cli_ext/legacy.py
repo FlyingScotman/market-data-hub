@@ -2,10 +2,13 @@
 
 mdhub legacy import --md market-data.sqlite3 --bc bond_catalog.sqlite3 [--drop-existing]
 mdhub legacy verify [--md PATH] [--bc PATH]
+mdhub legacy map-md [--only fixings,curves,...] [--json]
+mdhub legacy map-bc [--only bonds,curated_formulas] [--json]
 """
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Annotated
 
@@ -15,6 +18,9 @@ from mdhub.config import ConfigError, Settings
 from mdhub.db.pool import Database
 from mdhub.legacy import LEGACY_SCHEMAS
 from mdhub.legacy.import_sqlite import LegacyImportError, import_sqlite
+from mdhub.legacy.map_bc import TARGETS as BC_TARGETS
+from mdhub.legacy.map_bc import map_bc
+from mdhub.legacy.map_md import TARGETS, TargetReport, map_md
 from mdhub.legacy.verify import latest_import, verify_schema
 
 name = "legacy"
@@ -140,6 +146,86 @@ def verify_cmd(
             )
             failed = failed or not res.ok
         if failed:
+            raise typer.Exit(1)
+    finally:
+        db.close()
+
+
+@app.command("map-md")
+def map_md_cmd(
+    only: Annotated[
+        str | None,
+        typer.Option("--only", help=f"Comma list of targets ({', '.join(TARGETS)}); default all."),
+    ] = None,
+    allow_unverified: Annotated[
+        bool,
+        typer.Option("--allow-unverified", help="Map even if `legacy verify` did not pass."),
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the full report as JSON.")] = False,
+) -> None:
+    """Map legacy_md into md.* / ref.cbr_meeting (idempotent; live rows always win)."""
+    targets = [t.strip() for t in only.split(",") if t.strip()] if only else None
+    db = _database()
+    try:
+        try:
+            res = map_md(db, targets=targets, allow_unverified=allow_unverified, progress=_say)
+        except LegacyImportError as exc:
+            typer.echo(f"map-md: {exc}", err=True)
+            raise typer.Exit(1) from None
+        _print_reports(res.run_id, res.ok, res.targets, as_json, "map-md")
+        if not res.ok:
+            raise typer.Exit(1)
+    finally:
+        db.close()
+
+
+def _print_reports(
+    run_id: int, ok: bool, targets: list[TargetReport], as_json: bool, cmd: str
+) -> None:
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {"run_id": run_id, "targets": {t.target: t.as_dict() for t in targets}},
+                indent=2,
+                default=str,
+                ensure_ascii=False,
+            )
+        )
+    else:
+        for t in targets:
+            for ex in t.mismatch_examples:
+                typer.echo(f"  {t.target} live mismatch: {ex}")
+            if t.notes:
+                typer.echo(f"  {t.target} notes: {json.dumps(t.notes, default=str)[:2000]}")
+    typer.echo(f"legacy {cmd} run {run_id}: {'OK' if ok else 'PARTIAL'}")
+
+
+@app.command("map-bc")
+def map_bc_cmd(
+    only: Annotated[
+        str | None,
+        typer.Option(
+            "--only", help=f"Comma list of targets ({', '.join(BC_TARGETS)}); default all."
+        ),
+    ] = None,
+    allow_unverified: Annotated[
+        bool,
+        typer.Option("--allow-unverified", help="Map even if `legacy verify` did not pass."),
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the full report as JSON.")] = False,
+) -> None:
+    """Map legacy_bc into ref.* for SECIDs absent from the live bonds_static load (+ curated
+    formulas for all bonds)."""
+    targets = [t.strip() for t in only.split(",") if t.strip()] if only else None
+    db = _database()
+    try:
+        try:
+            res = map_bc(db, targets=targets, allow_unverified=allow_unverified, progress=_say)
+        except LegacyImportError as exc:
+            typer.echo(f"map-bc: {exc}", err=True)
+            raise typer.Exit(1) from None
+        _print_reports(res.run_id, res.ok, res.targets, as_json, "map-bc")
+        if not res.ok:
             raise typer.Exit(1)
     finally:
         db.close()
