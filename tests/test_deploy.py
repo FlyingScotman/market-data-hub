@@ -20,6 +20,7 @@ from psycopg import sql
 from pydantic import AliasChoices
 
 from mdhub.config import Settings
+from mdhub.db.migrate import MigrationError, migrate
 from mdhub.loaders.maintenance import BACKUP_DIR_ENV
 
 DEPLOY = Path(__file__).resolve().parents[1] / "deploy"
@@ -402,3 +403,20 @@ def test_make_bundle_and_restore_roundtrip(db_url: str, empty_db_url: str, tmp_p
         timeout=60,
     )
     assert bad.returncode != 0 and "does not match" in bad.stderr
+
+
+def test_migrate_refuses_non_utf8_database(pg_server: Any) -> None:
+    """A SQL_ASCII database (createdb without -E UTF8 on a C-locale host) fails closed."""
+    name = "mdhub_sql_ascii"
+    with pg_server.admin() as conn:
+        conn.execute(
+            sql.SQL(
+                "CREATE DATABASE {} ENCODING 'SQL_ASCII' LC_COLLATE 'C' LC_CTYPE 'C' "
+                "TEMPLATE template0"
+            ).format(sql.Identifier(name))
+        )
+    try:
+        with pytest.raises(MigrationError, match="encoding is 'SQL_ASCII', need UTF8"):
+            migrate(pg_server.url(name))
+    finally:
+        pg_server.drop_db(name)

@@ -109,6 +109,10 @@ if [[ -n "$url" ]]; then
                             AND d.deptype = 'e')")" || die "cannot connect to the target database"
     [[ "$objects" == 0 ]] \
         || die "target database is not empty ($objects relations): drop and re-create it first"
+    encoding="$("${PSQL[@]}" -c "SELECT pg_encoding_to_char(encoding) FROM pg_database
+                                  WHERE datname = current_database()")"
+    [[ "$encoding" == UTF8 ]] \
+        || die "target database encoding is $encoding, need UTF8: re-create it with createdb -E UTF8 -T template0"
     db_name="$("${PSQL[@]}" -c "SELECT current_database()")"
     if [[ "$assume_yes" != 1 && -t 0 ]]; then
         read -r -p "Restore ${dump} into the empty database '${db_name}'? [y/N] " answer

@@ -108,7 +108,7 @@ ALTER ROLE :"ro_user" SET default_transaction_read_only = on;
 ALTER ROLE :"ro_user" SET statement_timeout = '120s';
 SQL
 if ! sudo -u postgres psql -tAc "SELECT 1 FROM pg_database WHERE datname = '${DB_NAME}'" | grep -q 1; then
-    sudo -u postgres createdb -O "$APP_USER" -E UTF8 "$DB_NAME"
+    sudo -u postgres createdb -O "$APP_USER" -E UTF8 -T template0 "$DB_NAME"
 fi
 psql_admin -d "$DB_NAME" -v owner="$APP_USER" -v ro_user="$RO_USER" -v dbname="$DB_NAME" \
     -f "$APP_HOME/deploy/sql/readonly_defaults.sql"

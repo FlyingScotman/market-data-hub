@@ -294,7 +294,7 @@ only from `ratescalcs`. The TDM export does not export swap curves (they need bo
 
 `deploy/docker-compose.yml`: `postgres:16` (volume, tuned), `mdhub-migrate` (one-shot),
 `mdhub-worker` (scheduler), `mdhub-api` (uvicorn behind optional Caddy TLS). `.env` from
-`deploy/env.example`. Shipping: `deploy/make_bundle.sh` builds
+`deploy/env.example`. The database must be UTF8 (compose initdb uses `--encoding=UTF8`; bare metal `createdb -E UTF8 -T template0`): `mdhub migrate` and `restore_seed.sh` refuse any other encoding (with `SQL_ASCII` psycopg returns text as bytes). Shipping: `deploy/make_bundle.sh` builds
 `market-data-hub-<YYYYMMDD>.tar.gz` = `git archive HEAD` + `db/mdhub.dump` (`pg_dump -Fc
 --no-owner --no-acl` of the fully loaded DB) + `SEED_REPORT.md` (`mdhub report seed`, same
 snapshot) + `MANIFEST.txt` + `SHA256SUMS`; `deploy/restore_seed.sh` (compose, or

@@ -196,7 +196,7 @@ Seed restore on bare metal:
 
 ```bash
 sudo systemctl stop mdhub-worker mdhub-api
-sudo -u postgres dropdb --force mdhub && sudo -u postgres createdb -O mdhub mdhub
+sudo -u postgres dropdb --force mdhub && sudo -u postgres createdb -O mdhub -E UTF8 -T template0 mdhub
 sudo -u postgres psql -d mdhub -v owner=mdhub -v ro_user=mdhub_ro -v dbname=mdhub \
     -f /opt/mdhub/deploy/sql/readonly_defaults.sql
 sudo install -o mdhub -g mdhub -m 0640 ~/release/mdhub/db/mdhub.dump \

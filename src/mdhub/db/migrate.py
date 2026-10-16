@@ -161,12 +161,14 @@ def migrate(
     :param lock_timeout: seconds to wait for the advisory lock held by another runner.
     :raises ChecksumMismatchError: an applied file changed; nothing is applied.
     :raises MigrationLockTimeoutError: lock not obtained within ``lock_timeout``.
-    :raises MigrationError: a migration failed (wraps the database error).
+    :raises MigrationError: a migration failed (wraps the database error), or the database is
+        not UTF8-encoded.
     """
     migrations = discover_migrations(directory)
     db = target if isinstance(target, Database) else Database(target)
     report = MigrationReport()
     with db.connect(autocommit=True) as conn:
+        _require_utf8(conn)
         _acquire_lock(conn, lock_timeout)
         try:
             conn.execute(_BOOTSTRAP)
@@ -191,6 +193,25 @@ def migrate(
         finally:
             conn.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (_LOCK_NAME,))
     return report
+
+
+def _require_utf8(conn: psycopg.Connection[Any]) -> None:
+    """Fail closed on a non-UTF8 database: with ``SQL_ASCII`` psycopg returns text as bytes
+    (migration names, every loader key) and non-ASCII source data (issuer names) is not
+    validated. ``createdb -E UTF8 -T template0`` (DESIGN §9, README_DEPLOY)."""
+    with conn.cursor(row_factory=tuple_row) as cur:
+        row = cur.execute(
+            "SELECT pg_encoding_to_char(encoding) FROM pg_database "
+            "WHERE datname = current_database()"
+        ).fetchone()
+    encoding = row[0] if row else None
+    if isinstance(encoding, bytes):
+        encoding = encoding.decode("ascii", "replace")
+    if encoding != "UTF8":
+        raise MigrationError(
+            f"database encoding is {encoding!r}, need UTF8: re-create it with "
+            "`createdb -E UTF8 -T template0 ...`"
+        )
 
 
 def _apply(conn: psycopg.Connection[Any], m: Migration) -> None:
