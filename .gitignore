@@ -1,0 +1,12 @@
+data/
+.venv/
+__pycache__/
+*.pyc
+.env
+*.sqlite3
+*.sqlite3-*
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.handoff/
