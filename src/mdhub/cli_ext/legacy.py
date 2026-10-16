@@ -4,11 +4,13 @@ mdhub legacy import --md market-data.sqlite3 --bc bond_catalog.sqlite3 [--drop-e
 mdhub legacy verify [--md PATH] [--bc PATH]
 mdhub legacy map-md [--only fixings,curves,...] [--json]
 mdhub legacy map-bc [--only bonds,curated_formulas] [--json]
+mdhub legacy andromeda-cny FILE.xlsx|FILE.csv ... [--exported-at ISO] [--dry-run] [--json]
 """
 
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -17,6 +19,7 @@ import typer
 from mdhub.config import ConfigError, Settings
 from mdhub.db.pool import Database
 from mdhub.legacy import LEGACY_SCHEMAS
+from mdhub.legacy.andromeda_cny import AndromedaImportError, import_andromeda_cny
 from mdhub.legacy.import_sqlite import LegacyImportError, import_sqlite
 from mdhub.legacy.map_bc import TARGETS as BC_TARGETS
 from mdhub.legacy.map_bc import map_bc
@@ -227,5 +230,64 @@ def map_bc_cmd(
         _print_reports(res.run_id, res.ok, res.targets, as_json, "map-bc")
         if not res.ok:
             raise typer.Exit(1)
+    finally:
+        db.close()
+
+
+@app.command("andromeda-cny")
+def andromeda_cny_cmd(
+    files: Annotated[
+        list[Path],
+        typer.Argument(help="andromeda_cny_swaps.xlsx and/or the CSV exports.", dir_okay=False),
+    ],
+    exported_at: Annotated[
+        str | None,
+        typer.Option(
+            "--exported-at",
+            help="Export time with offset (e.g. 2026-10-16T18:05:15+03:00); default: the "
+            "workbook's docProps modified time. Required for CSV-only imports.",
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Parse and check only; write nothing.")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the full report as JSON.")] = False,
+) -> None:
+    """Import the owner's Andromeda CNY swap history export (cny_rusfar_ois, cny_ruonia_xccy)
+    into md.curve_snapshot / md.curve_quote (source andromeda; idempotent, revisions to
+    ops.row_history)."""
+    for f in files:
+        if not f.is_file():
+            typer.echo(f"not a file: {f}", err=True)
+            raise typer.Exit(2)
+    when: datetime | None = None
+    if exported_at:
+        try:
+            when = datetime.fromisoformat(exported_at)
+        except ValueError:
+            typer.echo(f"--exported-at: not an ISO 8601 time: {exported_at!r}", err=True)
+            raise typer.Exit(2) from None
+    db = _database()
+    try:
+        try:
+            rep = import_andromeda_cny(db, files, exported_at=when, dry_run=dry_run, progress=_say)
+        except AndromedaImportError as exc:
+            typer.echo(f"andromeda-cny: {exc}", err=True)
+            raise typer.Exit(1) from None
+        data = rep.as_dict()
+        if as_json:
+            typer.echo(json.dumps(data, indent=2, default=str, ensure_ascii=False))
+        else:
+            typer.echo(
+                f"export time {data['exported_at_msk']} ({data['exported_at_basis']}); "
+                f"snapshots {data['snapshots']}; quotes {data['quotes']}"
+            )
+            for ds, st in data["datasets"].items():
+                typer.echo(f"  {ds}: flags {st['flags']}")
+                for j in st["jumps_gt_1000bp"]:
+                    typer.echo(f"    jump > 1000 bp: {j}")
+        typer.echo(
+            "andromeda-cny " + ("dry run (nothing written)" if dry_run else f"run {rep.run_id}: OK")
+        )
     finally:
         db.close()

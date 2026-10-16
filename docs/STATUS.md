@@ -26,9 +26,14 @@
   (andromeda IRS RUONIA 2022-07→, key-rate 2022-10→; otc_monitor 2026-09→; cfets 1 day).
 - AlgoPack orphan stopped (owner OK); re-run 2024-01-03→2026-10-15 on 7354200 (algopack2.log).
 
-- Agent building OTC Monitor swap loader (owner request via forked session; OTC_MONITOR_TOKEN is in env):
-  ruonia_ois, key_rate_swap, cny_ruonia_xccy, NEW cny_rusfar_ois, every 15 min; no history at source.
-- Waiting on owner: AlgoPack scope (drop / 90-day tradestats+futoi / keep). Reload still running.
+- 0e3c7b1 OTC Monitor swap loader (swaps_otc_monitor, 15 min; ruonia_ois, key_rate_swap, cny_ruonia_xccy,
+  NEW cny_rusfar_ois; CNY bounds -50..300). Live run 410 on seed: 4 snapshots stored.
+- Agent (same one) building andromeda CNY importer for owner's export (Downloads/andromeda_cny_swaps.zip,
+  extracted scratchpad/andromeda_in): cny_rusfar_ois 2023-12-12→, cny_ruonia_xccy 2023-07-10→, mid-only,
+  synthetic EOD fetched_at; 2026-10-16 row intraday. Then run on seed.
+- Owner chose AlgoPack option (b): drop obstats, keep tradestats+FUTOI rolling 90 days. Agent building
+  migration 0423 + retention + rolling-window quality; reload stopped (job_run marked failed). Then on seed:
+  apply 0423, delete >90d, reload last 90 days.
 
 ## Seed database (data/pgseed, pgserver PG 16.2, db `mdhub`; gitignored)
 - Migrations applied from frozen copies in data/pgseed_migs (0001…0422).

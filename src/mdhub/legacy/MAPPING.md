@@ -86,6 +86,36 @@ arithmetic lag 7, spread 0). The fixed model RU000A10A8E8 was skipped.
 Legacy-only: `issue_revisions`, `event_revisions` (raw blank), `runs`, `source_availability`,
 `conflicts` (2, manual review), `ratings` (0), `cbonds_*` (evidence for `cbonds_enrich`).
 
+## 2a. Andromeda CNY export → `md.curve_snapshot` (`mdhub legacy andromeda-cny`)
+
+The owner's export of the Andromeda CNY swap archive (`andromeda_cny_swaps.xlsx`, sheets
+`CNY_IRS_RUSFAR_OIS` and `XCCY`, or the same tables as CSV) is not part of the legacy SQLite
+stores; `mdhub.legacy.andromeda_cny` imports it with the conventions of the legacy andromeda
+mapping. The file itself is not in the repository.
+
+| Item | Rule |
+|---|---|
+| Datasets | `CNY_IRS_RUSFAR_OIS` → `cny_rusfar_ois`, `XCCY` (CNY vs RUONIA) → `cny_ruonia_xccy`; source `andromeda`; label = sheet name; `parser_version = andromeda_cny_v1` |
+| Raw | each input file verbatim in `ops.raw_capture` (endpoint `file:andromeda_cny.xlsx` / `file:andromeda_cny.csv:<dataset>`, `url_redacted = file:<name>`, `fetched_at` = `source_ts` = export time → a re-import reuses the capture) |
+| Values | mid-only percent; bid/ask NULL, `quote_basis = mid_only`. Workbook numbers are rounded to Excel's 15 significant digits (the file carries float noise such as `8.029999999999999`; the CSV shows `8,03%`), trailing zeros dropped; the xlsx and the CSV of the same export import identically. `-`/empty = missing → no quote row; negative values are real (2025) |
+| Days | one snapshot per (dataset, date). Some tenors missing → stored with the present ones (positions 0-based in column order), `meta.quality_flags` `andromeda_partial_curve` + `meta.missing_tenors`; no value at all → not stored. Weekend dates (MOEX Saturday sessions 2024-04-27, 2024-11-02, 2024-12-28, 2025-11-01) are stored like any day |
+| fetched_at | dates before the export's Moscow date: 23:59:59 MSK on the date, flagged `fetched_at_synthetic` (as the legacy archive batches). The export-day row: the real export time, `meta.export = 'intraday'`, from `docProps/core.xml dcterms:modified` (UTC) or `--exported-at` (required for CSV-only input; extracted-file mtimes are not trusted) |
+| Hash / key | `content_sha256` = `otc_monitor.content_hash` (= legacy `curve_content_hash`); natural key `(source, dataset, fetched_at)` as the legacy mapping, i.e. one EOD key per date. No "latest stored" dedup (that is the live-poll rule) |
+| Revisions | a later export that changes a stored day updates it in place; history is enabled on `md.curve_snapshot` / `md.curve_quote` (migration 0424); a tenor the later export no longer has is deleted and its old row written to `ops.row_history` by the importer. Snapshots are never deleted. The export-day intraday snapshot stays when a later export brings the same date as EOD (two snapshots, different `fetched_at`) |
+| Fail closed | bad header/date/number, duplicate date, value outside the dataset bounds (CNY −50..300 %), date after the export date, two inputs disagreeing on a day → nothing written |
+| Quality flags | `jump_gt_500bp` (a tenor moved > 500 bp vs the previous date with values, also across exports; `meta.jumps_bp`, `meta.jump_prev_date`), `integer_grid_curve` (≥ 6 values, all whole numbers), `flat_curve` (≥ 6 equal values); curated `meta.quality_note` for 2026-03-18 (stylized placeholder 17/16/14…10 resp. 18/16/16…10 on both sheets) and 2024-09-18 (series maximum 43.15 %, September 2024 CNY squeeze: two days at 42–43 %, reverting on 09-20, same front end on both sheets — judged real) |
+| Quality job | not registered as datasets (history only, not scheduled, nothing can backfill them) |
+
+**Import of the 2026-10-16 export** (throwaway database; export time 2026-10-16 18:05:15 MSK from
+`dcterms:modified` 15:05:15Z — the zip entries' DOS times 15:04–15:05 are the export host's UTC
+wall clock, the zip reached the owner's machine at 18:05:57 MSK): `cny_rusfar_ois` 646 rows →
+646 snapshots / 7,398 quotes (2023-12-12 → 2026-10-16; 87 partial days, 0 empty, 77 negative
+values; flags: jump 15, integer grid 40, flat 1); `cny_ruonia_xccy` 746 rows → 746 snapshots /
+8,048 quotes (2023-07-10 → 2026-10-16; 177 partial, 0 empty, 54 negative; jump 22, integer grid 8,
+flat 2). Re-import of the workbook and import of the two CSVs: all unchanged. The seed DB had no
+andromeda CNY snapshots (nothing to reconcile); against `otc_monitor` `cny_ruonia_xccy` (14
+overlapping days) the median difference is 15 bp, max 85 bp.
+
 ## 3. Data-quality exclusions and flags (audit 04 §6 P3)
 
 | Item | Implemented rule |

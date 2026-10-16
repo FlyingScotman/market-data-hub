@@ -52,7 +52,7 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
 | Source | Auth (env) | Use in hub | Freshness |
 |---|---|---|---|
 | MOEX ISS public `iss.moex.com/iss` | — | bond static + bondization, EOD history (bonds, CETS FX, FORTS, indices), ZCYC, intraday snapshots, indicative FX 14:00/19:00, CETS fixings, RUSFAR | marketdata 15-min delayed; indices/ZCYC current |
-| MOEX APIM `apim.moex.com/iss` | `MOEX_API_KEY` (Bearer) | realtime futures (FX futures bid/offer/last/OI), AlgoPack tradestats/obstats/futoi | futures realtime; bonds/FX delayed |
+| MOEX APIM `apim.moex.com/iss` | `MOEX_API_KEY` (Bearer) | realtime futures (FX futures bid/offer/last/OI), AlgoPack FO tradestats + FUTOI (rolling 90-day window; order-book obstats not collected, dropped in 0423) | futures realtime; bonds/FX delayed |
 | MOEX Passport | `MOEX_PASSPORT_LOGIN/PASSWORD` | optional; login works, account currently **not** realtime-entitled | delayed |
 | MOEX SDFI swap curves `/iss/sdfi/curves` | subscription | catalogue only; loader ready behind feature flag `MDHUB_ENABLE_SDFI` | — |
 | Ratescalcs `ratescalcs.ru` | `RATESCALC_USERNAME/PASSWORD` (Basic, GET only) | RUONIA OIS, KRS (IRS vs key rate), CNY xccy vs RUONIA, CNY futures-implied yields snapshot | dealer runs, 08:50–23:00 MSK |
@@ -60,16 +60,16 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
 | ECB eurofxref | — | G7 crosses (EUR base) daily + history since 1999 | daily ~16:00 CET |
 | Cbonds JSON API | `CBONDS_LOGIN/PASSWORD` | static enrichment (day count, floater conventions, ratings, offers). **Currently HTTP 401** (likely IP allow-list) → optional, auto-disabled on 401 | — |
 | OTC Monitor `otc-monitor.ru/api/bond/` | `OTC_MONITOR_TOKEN` (Bearer; 401 without) | RUONIA OIS (17 tenors 1W–10Y), KRS (13, 3M–10Y), CNY xccy vs RUONIA (14, 1W–5Y), CNY OIS vs RUSFAR CNY (8, 1W–1Y; new, live only) — one JSON list of ~440 rows (bonds, FX, spreads, curves); legacy history 2026-09-04 → 10-15 imported. **No history endpoint** (`?date` ignored, `/api/history` 404) | current state only, polled every 15 min; source clock `date_update` (MSK); two-sided during the day, mid-only off-hours and on some CNY tenors |
-| Andromeda | — | legacy history imported only (Playwright scraping is dropped) | — |
+| Andromeda | — | history only (Playwright scraping is dropped): RUB OIS/KRS from the legacy archive; CNY OIS vs RUSFAR CNY (2023-12-12 →) and CNY xccy vs RUONIA (2023-07-10 →) from the owner's export, imported with `mdhub legacy andromeda-cny` (re-runnable for later exports) | EOD, mid-only; not scheduled |
 
 ## 4. Data model (PostgreSQL schemas)
 
 ### `ops` — provenance and operations
 - `ops.source(code PK, name, base_url, licence_note)`
 - `ops.job_run(id, job, started_at, finished_at, status ∈ {running, succeeded, partial, failed, skipped}, params jsonb, rows_inserted, rows_updated, rows_unchanged, error text, host, trigger ∈ {schedule, catch_up, backfill, cli, api, other})` — `trigger` (0421; NULL for older rows) records who started the run; job health counts only `schedule`/`catch_up` (and NULL) runs as "the scheduled fire ran".
-- `ops.raw_capture(id, run_id, source, endpoint, url_redacted, http_status, content_type, fetched_at, source_ts, parser_version, sha256, payload_gz bytea, size_bytes)` — unique (sha256, endpoint, fetched_at). Retention: intraday raw 90 days (configurable), EOD/static raw forever.
-- `ops.row_history(id, table_name, row_key jsonb, old_row jsonb, replaced_at, replaced_by_run)` — written by trigger `ops.track_changes()`.
-- `ops.data_gap(dataset, key jsonb, gap_date, detected_at, status ∈ {open, backfilled, unfillable, not_expected}, note)` — `unfillable` is terminal (the source confirmed "no data" and at least one **business day** of the dataset's calendar has passed since the day, `mdhub.core.gaps`); data that appears later still turns it `backfilled`. A gap the scan no longer reports becomes `backfilled` only when the table has ≥ `min_rows_per_day` rows for it, otherwise `not_expected` (calendar corrected, e.g. a holiday; re-opened if expected and missing again). `ops.v_coverage` counts `open_gaps`, `unfillable_gaps`, `not_expected_gaps`; `ops.v_open_gaps` lists `open` only.
+- `ops.raw_capture(id, run_id, source, endpoint, url_redacted, http_status, content_type, fetched_at, source_ts, parser_version, sha256, payload_gz bytea, size_bytes)` — unique (sha256, endpoint, fetched_at). Retention: intraday raw 90 days (configurable), AlgoPack raw (all its endpoints, incl. backfill `*_history`) the AlgoPack rolling window (§6), other EOD/static raw forever.
+- `ops.row_history(id, table_name, row_key jsonb, old_row jsonb, replaced_at, replaced_by_run)` — written by trigger `ops.track_changes()` (`AFTER UPDATE` only: deletes, e.g. retention, write no history). Images of AlgoPack rows before the rolling window are deleted with the rows.
+- `ops.data_gap(dataset, key jsonb, gap_date, detected_at, status ∈ {open, backfilled, unfillable, not_expected}, note)` — `unfillable` is terminal (the source confirmed "no data" and at least one **business day** of the dataset's calendar has passed since the day, `mdhub.core.gaps`); data that appears later still turns it `backfilled`. A gap the scan no longer reports becomes `backfilled` only when the table has ≥ `min_rows_per_day` rows for it, otherwise `not_expected` (calendar corrected, e.g. a holiday; re-opened if expected and missing again). An `open` gap of a rolling-window dataset dated before its window also becomes `not_expected` (note "outside the rolling N-day window"; §6), never `unfillable` (the source may have the data) nor `backfilled`; `unfillable` gaps stay. `ops.v_coverage` counts `open_gaps`, `unfillable_gaps`, `not_expected_gaps`; `ops.v_open_gaps` lists `open` only.
 - `ops.backfill_task(id, dataset, params jsonb {date_from, date_to}, status, attempts, last_error, created_at, done_at, not_before, started_at, last_run_id, source)` — one task per (backfill job, range): datasets sharing a job share tasks.
 - `ops.dataset_status` (latest check per dataset), `ops.quality_report` (one report per `quality` run, incl. job health and catch-up); views `ops.v_coverage`, `ops.v_job_health`, `ops.v_open_gaps`, `ops.v_backfill_queue`.
 - `ops.legacy_import` (SQLite import bookkeeping), `ops.schema_migration(version, applied_at, checksum)`
@@ -110,14 +110,14 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
 - `md.fx_intraday(ts, secid, board, source, source_variant, bid, offer, last, waprice, …, latency, capture_id)` PK (secid, board, source, source_variant, ts) — change-only, row history on (same-ts updates keep the old image). `ts` of a quote later than SYSTIME = the previous **trading day** of the engine (business day or weekend session, `mdhub.core.timeutil.previous_session_day`); a changed row older than the last stored `ts` of its series is logged. CETS has no weekend sessions; bond quotes (`md.bond_quote_intraday`) use business days (`BONDS_TRADE_WEEKEND_SESSIONS = False`: bond boards are assumed not to trade in the stock engine's weekend sessions).
 - `md.futures_eod(trade_date, secid, open, low, high, close, settle_price, waprice, volume, value, open_position, capture_id)`
 - `md.futures_intraday(ts, secid, source, source_variant, bid, offer, last, open_position, latency, capture_id)` PK (secid, source, source_variant, ts) — row history on. Dated with FORTS trading days: the Monday 08:50 poll that still shows the Sunday session's last trade dates it Sunday, not Friday.
-- `md.algopack_fo_tradestats` / `md.algopack_fo_obstats` PK (secid, interval_ts) and `md.algopack_futoi` PK (ticker, interval_ts, clgroup) — AlgoPack 5-minute bars of FX futures (`*_rub_per_unit` normalized prices).
+- `md.algopack_fo_tradestats` PK (secid, interval_ts) and `md.algopack_futoi` PK (ticker, interval_ts, clgroup) — AlgoPack 5-minute bars of FX futures (`*_rub_per_unit` normalized prices). **Rolling window, no history beyond it**: only `trade_date` within the last `MDHUB_ALGOPACK_RETENTION_DAYS` (90) calendar days is kept (§6 `maintenance`); row history stays on for revisions inside the window. `md.algopack_fo_obstats` (order-book stats) was dropped in 0423 (owner decision, AlgoPack scope option b; it was ~2 GB of the seed).
 - `md.index_eod(trade_date, secid, board, open, high, low, close, value, volume, duration_days, yield_pct, basis ∈ {history, marketdata}, source_ts, capture_id)` PK (trade_date, secid) (RUSFAR family, RGBI, RUCBI, MOEXREPO…); `basis = marketdata` is a same-day value later replaced by history.
 - `md.fixing(index_code, fixing_date, source, value, unit ∈ {pct, index}, effective_date, published_on, published_at, details jsonb, capture_id)` PK (index_code, fixing_date, source) — KEY_RATE (by effective date), RUONIA (+ details: volume, deals, percentiles), RUONIA_INDEX, TERM_RUONIA_1M/3M/6M, CBR_DEPOSIT_STANDING / CBR_LENDING_STANDING (lending: column 7 "Основной механизм" from 2023-10-16, column 9 before — one column per date, never spliced), legacy RUSFAR/other sources…
 - `md.fx_fixing(fixing_date, secid, rate, rate_pct)` PK (fixing_date, secid) — MOEX currency-market fixings (SRATE_CNY_ON).
 - `md.fx_official(effective_date, ccy, nominal, value, rate_per_unit, set_date, source='cbr', capture_id)` PK (effective_date, ccy)
 - `md.fx_indicative(trade_date, clearing ∈ {tc, mc}, ccy_pair, rate, source='moex', capture_id)` — MOEX indicative 14:00/19:00 (FX mark candidate).
 - `md.ecb_fx(rate_date, ccy, rate_per_eur, capture_id)`
-- `md.curve_snapshot(id, source, dataset ∈ {ruonia_ois, key_rate_swap, cny_ruonia_xccy, cny_rusfar_ois, cny_futures_yields, usd_futures_yields, cfets_fr007_irs, …}, quote_basis ∈ {bid_ask_mid (every quote two-sided), mid_only (at least one mid-only quote; two-sided quotes then carry `extra.quote_basis`)}, fetched_at, snapshot_date, source_ts, market_closed, content_sha256, parser_version, label, meta jsonb, capture_id, legacy_id)` + `md.curve_quote(snapshot_id, tenor, position, tenor_months, tenor_days, pillar_date, bid_pct, ask_pct, mid_pct, extra jsonb)` — unchanged consecutive snapshots are not duplicated (content hash per source+dataset compared to previous).
+- `md.curve_snapshot(id, source, dataset ∈ {ruonia_ois, key_rate_swap, cny_ruonia_xccy, cny_rusfar_ois, cny_futures_yields, usd_futures_yields, cfets_fr007_irs, …}, quote_basis ∈ {bid_ask_mid (every quote two-sided), mid_only (at least one mid-only quote; two-sided quotes then carry `extra.quote_basis`)}, fetched_at, snapshot_date, source_ts, market_closed, content_sha256, parser_version, label, meta jsonb, capture_id, legacy_id)` + `md.curve_quote(snapshot_id, tenor, position, tenor_months, tenor_days, pillar_date, bid_pct, ask_pct, mid_pct, extra jsonb)` — live loaders do not duplicate unchanged consecutive snapshots (content hash per source+dataset compared to the latest). History imports (legacy mapping, `andromeda-cny`) write one snapshot per day and revise it in place; row history is enabled on both tables (0424), and quotes removed by a revision are written to `ops.row_history` by the importer.
 - `md.zcyc_snapshot(trade_date, trade_time, source_ts, params jsonb (B1..B3,T1,G1..G9), standard_yields jsonb, check_max_error_bp, check_tolerance_bp, is_eod, capture_id)` PK (trade_date, trade_time) — published yields must be reproduced from the params; rejected publications go to `md.zcyc_reject(capture_id PK, trade_date, trade_time, max_error_bp, reason)`.
 - `md.cbr_liquidity(observed_on, …14 metrics (columns 2..15 by position, labels checked against the live header)…, methodology_version, revision_no, capture_id)` (+ revisions via row_history)
 - Read helpers (0410): `md.v_bond_eod` (EOD + yields), `md.v_fx_cbr_latest`, as-known-at functions `md.bond_eod_known_at`, `md.bond_eod_yield_known_at`, `md.fixing_known_at`, `md.v_bond_eod_known_at`.
@@ -167,7 +167,7 @@ Migration ownership (to avoid conflicts): `0001-0099` core/ops; `0100-0199` ref 
 | `fx_indicative` | 14:10, 19:10 | ISS indicativerates + fixings | |
 | `futures_intraday` | every 1 min 08:50–23:50 on MOEX_FORTS trading days (business days + weekend sessions) | APIM realtime marketdata (FX futures + perpetuals) | fallback ISS delayed, labelled |
 | `futures_eod` | 19:25 (prelim, D) and 07:25 next day (final, D-1) | ISS FORTS history (settle, OI) | backfill tasks of 10 days |
-| `algopack_fx_futures` | every 5 min, minutes 1-56/5, 07:01–23:56 on MOEX_FORTS trading days (business days + weekend sessions) | APIM tradestats/obstats/futoi | incremental polls read the latest bars (`latest=1`, all contracts; ~4 requests); every `MDHUB_ALGOPACK_FULL_REREAD_MINUTES` (30) and whenever the interval check finds holes the poll re-reads the whole trading day per FX contract and FUTOI ticker (`from=` first weekend-session day before today, else today; ~140 requests), captures `intraday:reread:*` (7-day retention). ≈ 5.4k APIM requests per trading day (was ≈ 28k). Dedup on (secid, interval); backfill tasks of 3 days |
+| `algopack_fx_futures` | every 5 min, minutes 1-56/5, 07:01–23:56 on MOEX_FORTS trading days (business days + weekend sessions) | APIM FO tradestats + FUTOI (no obstats since 0423) | incremental polls read the latest bars (`latest=1`, all contracts; ~3 requests); every `MDHUB_ALGOPACK_FULL_REREAD_MINUTES` (30) and whenever the interval check finds holes the poll re-reads the whole trading day per FX contract and FUTOI ticker (`from=` first weekend-session day before today, else today; ~75 requests), captures `intraday:reread:*` (7-day retention). ≈ 3.1k APIM requests per trading day (≈ 5.4k with obstats, ≈ 28k with a re-read on every poll). Dedup on (secid, interval); backfill tasks of 3 days. **Rolling window** of `MDHUB_ALGOPACK_RETENTION_DAYS` (90) calendar days, see below |
 | `indices_eod` | 12:40 (RUSFAR), 18:10 (RUSFARRT), 19:30 all; `days_back=[0,1]` | ISS index history (+ same-day marketdata) | `indices_all` freshness lag 2 business days (D-1 history arrives with the 12:40 run) |
 | `zcyc` | every 15 min 10:00–19:00 (intraday); EOD 19:05; final 07:10 next day | ISS zcyc | |
 | `cbr_daily` | 09:00, 14:30, 16:30, 18:30 (all days) | CBR | key rate, RUONIA (+index, term), official FX (all ccy), liquidity, standing rates |
@@ -177,7 +177,7 @@ Migration ownership (to avoid conflicts): `0001-0099` core/ops; `0100-0199` ref 
 | `swaps_otc_monitor` | every 15 min 09:00–20:00 (MOEX_STOCK business days; legacy collector polled 10:00–19:45) | OTC Monitor `/api/bond/` (one GET) | datasets `ruonia_ois`, `key_rate_swap`, `cny_ruonia_xccy`, `cny_rusfar_ois` (source `otc_monitor`, `DatasetSpec` `otc_monitor_<dataset>`, frequency `event`). Exact tenor set and sanity bounds `lo ≤ bid ≤ offer ≤ hi` per curve (RUB 0–100; CNY −50–300: negative CNY rates and >200% RUSFARCNY spikes are real 2024 quotes): a failing curve is not stored and the run ends `partial`. Content-hash dedup per (source, dataset) continues the legacy-mapped history (same hash, tenor order and basis rules); one raw capture per fetch, only when a curve changed. Missing token → `skipped`; HTTP 401/403 → `failed` |
 | `quality` | 08:30 and 20:30 | DB | freshness & gap detection → `ops.data_gap` + `ops.backfill_task`; job health (only `schedule`/`catch_up` runs count as a fire that ran); re-runs scheduled fires skipped with `lock_busy` (trigger `catch_up`) |
 | `backfill_worker` | every 10 min (all days) | DB | processes backfill tasks (8-minute budget), yields to waiting scheduled runs |
-| `maintenance` | 02:00 `backup` (pg_dump, keep 14); 03:00 `retention` (all days) | DB | raw retention of `intraday:reread:` captures (7 days, `MDHUB_RAW_RETENTION_DAYS_REREAD`) and other `intraday:` captures (90 days), orphaned `running` job runs (>12 h) → failed, VACUUM ANALYZE |
+| `maintenance` | 02:00 `backup` (pg_dump, keep 14); 03:00 `retention` (all days) | DB | raw retention of `intraday:reread:` captures (7 days, `MDHUB_RAW_RETENTION_DAYS_REREAD`) and other `intraday:` captures (90 days); AlgoPack rolling window (`MDHUB_ALGOPACK_RETENTION_DAYS`, 90 calendar days): tradestats/FUTOI rows with `trade_date` before the window start (one date per committed delete), their `ops.row_history` images, AlgoPack raw captures (all `algopack_fx_futures` endpoints, incl. `*_history`) fetched before 00:00 MSK of the window start; orphaned `running` job runs (>12 h) → failed, VACUUM ANALYZE |
 
 **Lock contention.** Every job holds advisory lock `mdhub.job:<name>`. A scheduled fire waits up to
 15 minutes for it (polling rules — intraday snapshots, AlgoPack, Ratescalcs, OTC Monitor, the backfill worker —
@@ -204,11 +204,36 @@ empty by Monday's final run stays open and Tuesday decides, likewise D-1 = 12-30
 then `unfillable`), not as a partial run. A partial run that leaves gaps of its range
 open counts as a failed attempt (backoff, then `failed` and a 7-day cooldown).
 
+**AlgoPack rolling window (0423, owner decision "option b").** AlgoPack keeps only 5-minute FO
+tradestats and FUTOI of FX futures for the last `MDHUB_ALGOPACK_RETENTION_DAYS` (default 90)
+**calendar days**: window = `today − (N − 1)` .. today (MSK; `mdhub.datasets.rolling_window_start`,
+e.g. 2026-07-19..2026-10-16). Calendar rather than business days, so that the window does not
+depend on calendar data (a failed calendar refresh cannot widen or shrink it) and uses the same
+arithmetic as raw retention; 90 calendar days ≈ 62 FORTS business days. Order-book obstats are not
+collected (table, history, raw captures and bookkeeping dropped by migration 0423). Generic
+mechanism: `DatasetSpec.rolling_window_setting` names the `Settings` field holding N
+(`algopack_retention_days` for `algopack_fo_tradestats` and `algopack_futoi`):
+- `maintenance mode=retention` deletes rows before the window, their row-history images and the
+  AlgoPack raw captures fetched before it (§6 table). History stays enabled on both tables: the
+  trigger is `AFTER UPDATE` only, so the deletes write no `ops.row_history` rows.
+- The quality gap scan never starts before the window (also with `lookback_days`); `open` gaps
+  dated before it are closed as `not_expected` (note "outside the rolling N-day window"; not
+  `unfillable` — the source may still have the day — and not `backfilled`); `unfillable` gaps are
+  left as they are; `pending` backfill tasks of the dataset that end before the window are
+  `cancelled`; queueing never looks before it.
+- `algopack_fx_futures date_from=… date_to=…` clamps `date_from` to the window start (warning,
+  result `requested_from`) and refuses a range that ends before it (`JobParamError`: run `failed`,
+  a backfill task `failed` without retries). After a clamped backfill the worker closes the
+  still-missing pre-window gaps as `not_expected`.
+- Scheduled polls, the whole-day re-read every `MDHUB_ALGOPACK_FULL_REREAD_MINUTES` and the
+  7-day retention of `intraday:reread:*` captures are unchanged.
+
 ## 7. Configuration (env)
 
 `MDHUB_DATABASE_URL` (required), `MDHUB_TZ=Europe/Moscow`, `MDHUB_HTTP_PROXY` (optional),
 `MDHUB_ISS_RPS=3`, `MDHUB_RAW_RETENTION_DAYS_INTRADAY=90`, `MDHUB_RAW_RETENTION_DAYS_REREAD=7`
-(`intraday:reread:` captures), `MDHUB_ALGOPACK_FULL_REREAD_MINUTES=30`, `MDHUB_API_TOKENS` (comma list,
+(`intraday:reread:` captures), `MDHUB_ALGOPACK_FULL_REREAD_MINUTES=30`,
+`MDHUB_ALGOPACK_RETENTION_DAYS=90` (AlgoPack rolling window, calendar days, §6), `MDHUB_API_TOKENS` (comma list,
 read API bearer tokens), `MDHUB_ENABLE_SDFI=false`, `MDHUB_BACKUP_DIR=/var/backups/mdhub`
 (pg_dump target of `maintenance mode=backup` / `mdhub ops backup`), `MDHUB_API_POOL_SIZE=8`
 (read-API connection pool), `MDHUB_LOG_LEVEL=INFO`, `MDHUB_HTTP_TIMEOUT=30`, plus source
@@ -245,15 +270,24 @@ rate/amount only for `known` coupons (others empty, counted in `manifest.json` `
 
 **Curve sources.** `ruonia_ois`, `key_rate_swap` and `cny_ruonia_xccy` have two live sources —
 `ratescalcs` (dealer run pages every 30 min, no source clock; XCCY tenors ON–12M) and
-`otc_monitor` (every 15 min, source clock `date_update`; XCCY 1W–5Y) — plus legacy `andromeda`
-(mid-only history to 2026-09-10). They are separate series: the hub never merges or chooses, and
+`otc_monitor` (every 15 min, source clock `date_update`; XCCY 1W–5Y) — plus `andromeda`
+(mid-only EOD history: RUB OIS/KRS from the legacy archive to 2026-09-10; CNY from the owner's
+export, `mdhub legacy andromeda-cny`, see below). They are separate series: the hub never
+merges or chooses, and
 `/v1/curves/{dataset}` returns one snapshot per source (`source=` filters). A consumer that needs
 one curve should take, at its cut `T`: (1) `otc_monitor` if its snapshot at `T` has a `source_ts`
 on T's Moscow business day and, for OIS/KRS, `quote_basis = bid_ask_mid` (a `mid_only` OIS/KRS
 snapshot is the provider's off-hours mark); else (2) `ratescalcs` if its snapshot at `T` was
-fetched on that day; else (3) no value for the day (no forward fill). `andromeda` serves history
-before the live sources only. `cny_rusfar_ois` (CNY OIS vs RUSFAR CNY) exists only from
-`otc_monitor`, live from 2026-10-16 with no history; `cny_futures_yields` / `usd_futures_yields`
+fetched on that day; else (3) `andromeda` for that day (EOD snapshots carry a synthetic
+`fetched_at` of 23:59:59 MSK, so only end-of-day cuts see them; no look-ahead for intraday cuts);
+else (4) no value for the day (no forward fill). `cny_rusfar_ois` (CNY OIS vs RUSFAR CNY, 12
+tenors 1W–5Y in andromeda, 8 in OTC Monitor): `andromeda` history 2023-12-12 → 2026-10-16 (the
+2026-10-16 row is the export's intraday state at 18:05:15 MSK) plus `otc_monitor` live from
+2026-10-16. `cny_ruonia_xccy`: `andromeda` history from 2023-07-10 (1W–5Y) extends the
+`otc_monitor` history (2026-09-22 →); on the 14 overlapping days the two differ by a median 15 bp
+(max 85 bp). The andromeda CNY rows keep quality flags in `meta` (jumps > 500 bp, whole-number or
+flat placeholder-like curves, e.g. 2026-03-18; MAPPING.md) — a consumer that takes marks from
+them should check `meta.quality_flags` / `meta.quality_note`. `cny_futures_yields` / `usd_futures_yields`
 only from `ratescalcs`. The TDM export does not export swap curves (they need bootstrapping).
 
 ## 9. Deployment
