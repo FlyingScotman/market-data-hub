@@ -46,13 +46,17 @@
 - Backfilled: bonds_eod 2024→, futures/fx EOD + fx_indicative 2024→, zcyc 2022→, indices 2022→; AlgoPack last 90 days.
 - Swaps: andromeda history (RUONIA OIS, KRS, CNY OIS/xccy), otc_monitor 2026-09→ + live, ratescalcs live.
 
+## Bundle (2026-10-16)
+- dist/market-data-hub-20261016.tar.gz (668 MB, sha256 54c17d26…) from 1c67321; seed dump 670 MB (DB 3.4 GB).
+- Restore tested into a fresh UTF8 PostgreSQL 16 (restore_seed.sh --database-url): 14 migrations, checksums
+  match, seed report identical to the bundled one. 1c67321: migrate/restore refuse non-UTF8 databases.
+- main pushed to GitHub (1c67321).
+
 ## Remaining steps
-1. After backfills finish: re-run `mdhub calendar seed` (observed days from full history).
-2. After backfills: run quality job on seed DB, fill remaining gaps (incl. 2026-09-25/28 outage
-   window via ISS history), bonds_eod/futures/fx for 2026-10-16.
-3. Integrity re-check of seed DB (counts, coverage per dataset, gaps report) → docs/SEED_REPORT.md.
-4. Package VPS archive: git archive of code + `pg_dump -Fc` seed + deploy/ + README_DEPLOY; checksums.
-   Push repo to GitHub. Final report to owner.
+1. First VPS deployment (deploy/README_DEPLOY.md §1-5) with the owner; after start, quality +
+   backfill_worker fill the days between the seed date (2026-10-16) and the deploy date automatically.
+2. Snapshot layer (session hub-snapshot-layer, worktree): review + merge when done.
+3. Bond static verification: accrued interest / yield recomputed from ref schedules vs MOEX EOD.
 
 ## Open items for owner
 - Cbonds API → HTTP 401 for any login (likely IP allow-list of old server); hub auto-skips.
