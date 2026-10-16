@@ -91,6 +91,7 @@ from mdhub.sources.moex_fx import (
 )
 
 __all__ = [
+    "ALGOPACK_HISTORY_ENDPOINTS",
     "ALGOPACK_RAW_ENDPOINTS",
     "ALGOPACK_RETENTION_TABLES",
     "ALGOPACK_WINDOW_SETTING",
@@ -154,6 +155,9 @@ ALGOPACK_RAW_ENDPOINTS: Final = (
 """``ops.raw_capture.endpoint`` values written by ``algopack_fx_futures`` (source
 ``moex_apim``): captures fetched before the rolling window are deleted by retention - also the
 backfill (``*_history``) captures, which other raw retention keeps forever."""
+ALGOPACK_HISTORY_ENDPOINTS: Final = ("algopack_fo_tradestats_history", "futoi_history")
+"""Backfill captures (``?from=&till=``): also deleted when the requested range ends before the
+window, whenever they were fetched."""
 
 register_dataset(
     DatasetSpec(

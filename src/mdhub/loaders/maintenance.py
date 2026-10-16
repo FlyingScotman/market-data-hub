@@ -56,7 +56,11 @@ from mdhub.core.timeutil import MSK
 from mdhub.datasets import rolling_window_start
 from mdhub.db.pool import Database
 from mdhub.jobs import JobContext, JobParamError, job
-from mdhub.loaders.futures import ALGOPACK_RAW_ENDPOINTS, ALGOPACK_RETENTION_TABLES
+from mdhub.loaders.futures import (
+    ALGOPACK_HISTORY_ENDPOINTS,
+    ALGOPACK_RAW_ENDPOINTS,
+    ALGOPACK_RETENTION_TABLES,
+)
 
 __all__ = [
     "BACKUP_DIR_ENV",
@@ -72,6 +76,7 @@ __all__ = [
     "purge_algopack_window",
     "purge_intraday_raw",
     "purge_raw_endpoints",
+    "purge_raw_requested_before",
     "purge_rows_before",
     "restore_command",
     "rotate_backups",
@@ -377,8 +382,29 @@ def purge_algopack_window(db: Database, today: date, window_days: int) -> dict[s
         ALGOPACK_RAW_ENDPOINTS,
         datetime.combine(start, time(0), tzinfo=MSK),
         source="moex_apim",
-    )
+    ) + purge_raw_requested_before(db, ALGOPACK_HISTORY_ENDPOINTS, start, source="moex_apim")
     return out
+
+
+_TILL_DATE: Final = r"[?&]till=(\d{4}-\d{2}-\d{2})"
+
+
+def purge_raw_requested_before(
+    db: Database,
+    endpoints: Sequence[str],
+    before: date,
+    *,
+    source: str,
+    batch: int = DELETE_BATCH,
+) -> int:
+    """Delete date-range captures (``...?from=&till=``) of ``source``/``endpoints`` whose
+    requested range ends (``till``) before ``before``, whenever they were fetched: a backfill
+    of old dates fetched today is outside the window although its ``fetched_at`` is not.
+    Captures without a ``till`` parameter are left to the ``fetched_at`` rule."""
+    match = sql.SQL(
+        "r.source = %s AND r.endpoint = ANY(%s) AND substring(r.url_redacted from %s)::date < %s"
+    )
+    return _purge_raw(db, match, [source, list(endpoints), _TILL_DATE, before], batch)
 
 
 def vacuum_tables(db: Database, *, min_mb: int = 64) -> list[str]:

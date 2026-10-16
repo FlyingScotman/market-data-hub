@@ -191,6 +191,38 @@ def test_retention_deletes_only_rows_and_captures_before_the_window(
     assert conn.execute("SELECT count(*) AS n FROM ops.row_history").fetchone() == {"n": 4}
 
 
+def test_backfill_captures_of_old_dates_are_purged_whenever_fetched(
+    conn: Conn, db: Database
+) -> None:
+    """A backfill fetched today for dates before the window is outside it (``till``)."""
+    fetched = msk(TODAY, 9)
+    base = "https://apim.moex.com/iss/datashop/algopack/fo/tradestats/SiZ6.json?iss.meta=off"
+    urls = {
+        "old": f"{base}&from=2026-09-01&till=2026-10-06&start=0",
+        "straddles": f"{base}&from=2026-10-01&till=2026-10-08&start=0",
+        "no_till": "https://x",
+    }
+    ids = {}
+    for tag, url in urls.items():
+        cid = capture(conn, "algopack_fo_tradestats_history", fetched, tag, "moex_apim")
+        conn.execute("UPDATE ops.raw_capture SET url_redacted = %s WHERE id = %s", (url, cid))
+        ids[tag] = cid
+    old_futoi = capture(conn, "futoi_history", fetched, "f", "moex_apim")
+    conn.execute(
+        "UPDATE ops.raw_capture SET url_redacted = %s WHERE id = %s",
+        (
+            "https://apim.moex.com/iss/analyticalproducts/futoi/securities/si.json"
+            "?iss.meta=off&from=2026-10-06&till=2026-10-06",
+            old_futoi,
+        ),
+    )
+    conn.commit()
+    out = mt.purge_algopack_window(db, TODAY, 10)  # window from 2026-10-07
+    assert out["raw_deleted"] == 2
+    left = {r["id"] for r in conn.execute("SELECT id FROM ops.raw_capture")}
+    assert left == {ids["straddles"], ids["no_till"]}
+
+
 def test_purge_algopack_window_parameter(conn: Conn, db: Database) -> None:
     _bar(conn, "md.algopack_fo_tradestats", date(2026, 10, 1), None, "A")
     _bar(conn, "md.algopack_fo_tradestats", date(2026, 10, 7), None, "B")
