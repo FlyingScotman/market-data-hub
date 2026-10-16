@@ -201,3 +201,15 @@ def test_decimal_helpers() -> None:
     assert quantize(Decimal("1.235"), 2) == Decimal("1.24")
     with pytest.raises(FormatDriftError, match="missing"):
         require_decimal(None, field="close")
+
+
+def test_parse_cursor_pagesize_zero_only_when_empty() -> None:
+    from mdhub.core.iss import IssFormatError, parse_cursor
+
+    def cur(total: int, size: int) -> dict[str, object]:
+        return {"x.cursor": {"columns": ["INDEX", "TOTAL", "PAGESIZE"], "data": [[0, total, size]]}}
+
+    c = parse_cursor(cur(0, 0), "x.cursor")
+    assert c is not None and c.total == 0 and c.pagesize == 0
+    with pytest.raises(IssFormatError):
+        parse_cursor(cur(5, 0), "x.cursor")

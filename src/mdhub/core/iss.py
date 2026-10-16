@@ -169,7 +169,8 @@ def parse_cursor(payload: Mapping[str, Any], name: str) -> IssCursor | None:
         cur = IssCursor(int(r["INDEX"]), int(r["TOTAL"]), int(r["PAGESIZE"]))
     except (TypeError, ValueError) as exc:
         raise IssFormatError(f"ISS cursor {name!r}: bad values {r}") from exc
-    if cur.pagesize <= 0 or cur.total < 0 or cur.index < 0:
+    # PAGESIZE 0 is legitimate only for an empty result (ISS returns it with limit=unlimited).
+    if cur.pagesize < 0 or cur.total < 0 or cur.index < 0 or (cur.pagesize == 0 and cur.total):
         raise IssFormatError(f"ISS cursor {name!r}: bad values {r}")
     return cur
 
