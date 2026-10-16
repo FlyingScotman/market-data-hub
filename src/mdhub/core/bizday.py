@@ -35,7 +35,9 @@ __all__ = ["CALENDARS", "DEFAULT_CALENDAR", "CalendarPredicate", "DbCalendar", "
 
 log = logging.getLogger(__name__)
 
-CALENDARS: Final = ("MOEX_STOCK", "MOEX_FX", "MOEX_FORTS", "RU_PRODUCTION")
+CALENDARS: Final = ("MOEX_STOCK", "MOEX_FX", "MOEX_FORTS", "RU_PRODUCTION", "TARGET")
+"""Known business-day calendars (``ref.calendar_day.calendar`` CHECK, migration 0422): the MOEX
+engines, the Russian production calendar and TARGET (euro area; ECB reference-rate days)."""
 DEFAULT_CALENDAR: Final = "MOEX_STOCK"
 
 
@@ -57,8 +59,9 @@ weekday_calendar: Final = CalendarPredicate()
 
 class DbCalendar(CalendarPredicate):
     """Looks up ``ref.calendar_day`` - per day the row of the highest-priority source
-    (``ref.calendar_source_rank``: observed > MOEX ISS calendar > curated > curated_unverified,
-    ``known_at`` breaks ties; same rule as ``ref.calendar_effective``); falls back to weekdays.
+    (``ref.calendar_source_rank``: observed > MOEX ISS calendar > curated > rule >
+    curated_unverified, ``known_at`` breaks ties; same rule as ``ref.calendar_effective``);
+    falls back to weekdays.
 
     Results are cached per ``(calendar, day)`` for ``ttl`` seconds. Database errors (table
     missing, connection down) fall back to weekdays with a warning - gating must never stop

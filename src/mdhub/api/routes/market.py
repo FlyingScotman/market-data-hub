@@ -446,15 +446,17 @@ def calendar(
     request: Request,
     page: PageDep,
     calendar: Annotated[
-        str | None, Query(description="MOEX_STOCK, MOEX_FX, MOEX_FORTS, RU_PRODUCTION (comma)")
+        str | None,
+        Query(description="MOEX_STOCK, MOEX_FX, MOEX_FORTS, RU_PRODUCTION, TARGET (comma)"),
     ] = None,
     day: DateQ = None,
     date_from: FromQ = None,
     date_to: ToQ = None,
 ) -> Response:
     """Flag per (calendar, day) from ``ref.calendar_effective`` - the highest-priority source
-    (observed > MOEX ISS calendar > curated > curated_unverified; ``known_at`` breaks ties) -
-    with its source and version. Days without any information are absent (never assumed)."""
+    (observed > MOEX ISS calendar > curated > rule > curated_unverified; ``known_at`` breaks
+    ties) - with its source and version. Days without any information are absent (never
+    assumed)."""
     d1, d2 = date_range(day, date_from, date_to, default_days=366)
     where = Where().add("day BETWEEN %(d1)s AND %(d2)s", d1=d1, d2=d2)
     cals = split_list(calendar, upper=True)

@@ -5,6 +5,11 @@
 :data:`HISTORY_START` instead). With a range: ``eurofxref-hist-90d.xml`` when the range lies
 within the last 89 days, else ``eurofxref-hist.zip`` (one request, filtered to the range).
 Identical payloads (same SHA-256 as the previous capture of the endpoint) are not stored again.
+
+Dataset calendar ``TARGET`` (:mod:`mdhub.loaders.calendar`, source ``rule_target``): weekends
+and the TARGET closing days (Jan 1, Good Friday, Easter Monday, May 1, Dec 25, Dec 26) are not
+expected by the gap scan; every other day is, so a failed load stays a gap. The calendar
+refresh cross-checks the rule against the stored rate dates (warning, run ``partial``).
 """
 
 from __future__ import annotations
@@ -31,13 +36,13 @@ register_dataset(
         name="ecb_fx",
         table="md.ecb_fx",
         date_column="rate_date",
-        calendar=None,
+        calendar="TARGET",
         frequency="business_daily",
         max_lag_days=1,
         backfill_job="ecb_fx",
         history_start=HISTORY_START,
         min_rows_per_day=20,
-        description="ECB euro reference rates (per EUR), TARGET days; holidays end unfillable",
+        description="ECB euro reference rates (per EUR), TARGET business days (calendar TARGET)",
     )
 )
 

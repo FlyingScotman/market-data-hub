@@ -141,7 +141,12 @@ src/mdhub/
   `last_seen_run bigint`, `last_seen` — these are the **meta columns** that never count as a
   data change (`core.upsert.META_COLUMNS`, `ops.track_changes()`).
 - Numbers: next free number of the range; review fixes of 2026-10-16 are `0420_review_fixes.sql`
-  and `0421_review2_fixes.sql` (follow-up review).
+  and `0421_review2_fixes.sql` (follow-up review); `0422_target_calendar.sql` adds the TARGET
+  calendar. A new calendar needs `mdhub.core.bizday.CALENDARS` plus a migration widening the
+  `ref.calendar_day.calendar` CHECK (find the constraint by definition, as 0420/0422 do).
+  Prefer an exact computed rule (a `rule_*` source, like `rule_target`) over deriving a calendar
+  from the data it gates: an observed calendar turns a failed load into a holiday. Use the data
+  as a cross-check instead (`target_crosscheck`: mismatch -> warning, run `partial`).
 - Every new FK to `ops.raw_capture` gets an index on `capture_id` in the same migration
   (retention probes and `ON DELETE SET NULL` actions; `tests/test_review2_fixes.py` checks it).
 - Enable history on revisable tables (keys = natural key):
@@ -257,7 +262,7 @@ manually: `uv run mdhub run bonds_eod -p day=2026-10-15 -p mode=final`.
 `first_business_of_month`, calendar, `gate_offset_days`, `lock_wait_s`, `catch_up`;
 `_poll(...)` for polling rules that neither wait nor catch up) per DESIGN §6. Cron is 5-field
 crontab in Europe/Moscow. Business-day gating uses `ref.calendar_day` when present (per day the
-highest-priority source: observed > MOEX ISS calendar > curated > curated_unverified), else
+highest-priority source: observed > MOEX ISS calendar > curated > rule > curated_unverified), else
 Monday–Friday. `uv run mdhub scheduler` runs it; rules of
 jobs that are not registered are skipped with a warning. `uv run mdhub jobs list` shows the
 registry, cron rules, import failures and schedule problems.

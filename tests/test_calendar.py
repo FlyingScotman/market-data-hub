@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from collections.abc import Iterator
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -14,15 +15,18 @@ import pytest
 import respx
 from psycopg.rows import DictRow
 
-import mdhub.loaders.cbr  # noqa: F401 - registers cbr_meetings
+import mdhub.loaders.cbr  # registers cbr_meetings
+import mdhub.loaders.ecb  # noqa: F401 - registers the ecb_fx dataset
 from mdhub.config import Settings
-from mdhub.core.bizday import DbCalendar
+from mdhub.core.bizday import CALENDARS, DbCalendar, weekday_calendar
 from mdhub.core.errors import FormatDriftError
 from mdhub.core.http import HttpClient, RateLimiter
 from mdhub.core.iss import ISS_BASE_URL
+from mdhub.datasets import get_dataset
 from mdhub.db.pool import Database
 from mdhub.jobs import run_job
 from mdhub.loaders import calendar as cal
+from mdhub.quality.checks import expected_days, scan_dataset, sync_gaps
 from mdhub.sources import cbr
 
 FIX = Path(__file__).parent / "fixtures" / "official"
@@ -61,7 +65,7 @@ def test_curated_file_is_valid() -> None:
     [
         lambda d: d["calendars"]["RU_PRODUCTION"][0]["non_working"].append("2026-01-03"),
         lambda d: d["calendars"]["RU_PRODUCTION"][0]["working_weekends"].append("2026-01-05"),
-        lambda d: d["calendars"].update({"TARGET": []}),
+        lambda d: d["calendars"].update({"NYSE": []}),
         lambda d: d.update({"known_at": "2026-10-16T12:00:00"}),
     ],
 )
@@ -362,3 +366,273 @@ def test_seed_calendar_function(
     assert summary["curated"] != "failed" and summary["moex_iss_calendar"] != "failed"
     run = conn.execute("SELECT job, status FROM ops.job_run").fetchone()
     assert run == {"job": "calendar_seed", "status": "succeeded"}
+
+
+# -------------------------------------------------------------------------- TARGET
+
+
+@pytest.mark.parametrize(
+    ("year", "easter", "good_friday", "easter_monday"),
+    [
+        (2015, date(2015, 4, 5), date(2015, 4, 3), date(2015, 4, 6)),
+        (2019, date(2019, 4, 21), date(2019, 4, 19), date(2019, 4, 22)),
+        (2024, date(2024, 3, 31), date(2024, 3, 29), date(2024, 4, 1)),
+        (2025, date(2025, 4, 20), date(2025, 4, 18), date(2025, 4, 21)),
+        (2026, date(2026, 4, 5), date(2026, 4, 3), date(2026, 4, 6)),
+        (2027, date(2027, 3, 28), date(2027, 3, 26), date(2027, 3, 29)),
+        (2038, date(2038, 4, 25), date(2038, 4, 23), date(2038, 4, 26)),  # latest possible
+        (2285, date(2285, 3, 22), date(2285, 3, 20), date(2285, 3, 23)),  # earliest possible
+    ],
+)
+def test_easter_computus(year: int, easter: date, good_friday: date, easter_monday: date) -> None:
+    assert cal.easter_sunday(year) == easter
+    assert cal.target_closing_days(year) == {
+        date(year, 1, 1),
+        good_friday,
+        easter_monday,
+        date(year, 5, 1),
+        date(year, 12, 25),
+        date(year, 12, 26),
+    }
+
+
+def test_target_rule_days() -> None:
+    assert "TARGET" in CALENDARS
+    days = cal.target_rule_days(date(2025, 12, 20), date(2026, 1, 5))
+    assert len(days) == 17
+    closed = sorted(d for d, v in days.items() if not v)
+    assert closed == [
+        date(2025, 12, 20),
+        date(2025, 12, 21),
+        date(2025, 12, 25),
+        date(2025, 12, 26),
+        date(2025, 12, 27),
+        date(2025, 12, 28),
+        date(2026, 1, 1),
+        date(2026, 1, 3),
+        date(2026, 1, 4),
+    ]
+    assert days[date(2025, 12, 31)] is True  # TARGET is open on Dec 31
+
+
+def test_target_precedence(db: Database, conn: Conn) -> None:
+    """curated > rule_target > curated_unverified (a curated entry can override the rule)."""
+    t_old = datetime(2026, 1, 1, tzinfo=UTC)
+    t_new = datetime(2026, 10, 16, tzinfo=UTC)
+    d1, d2 = date(2026, 4, 3), date(2026, 4, 6)
+    with db.connection() as c:
+        rule = {d1: False, d2: False}
+        cal.write_calendar_days(
+            c, "TARGET", cal.TARGET_RULE_SOURCE, rule, known_at=t_new, run_id=None
+        )
+        cal.write_calendar_days(c, "TARGET", "curated", {d1: True}, known_at=t_old, run_id=None)
+        cal.write_calendar_days(
+            c, "TARGET", "curated_unverified", {d2: True}, known_at=t_new, run_id=None
+        )
+    bc = DbCalendar(db, ttl=0)
+    assert bc(d1, "TARGET") is True  # curated beats the rule (e.g. an extraordinary change)
+    assert bc(d2, "TARGET") is False  # the rule beats a newer unverified guess
+    eff = conn.execute(
+        "SELECT day, source FROM ref.calendar_effective WHERE calendar = 'TARGET' ORDER BY day"
+    ).fetchall()
+    assert eff == [
+        {"day": d1, "source": "curated"},
+        {"day": d2, "source": cal.TARGET_RULE_SOURCE},
+    ]
+    ranks = conn.execute(
+        "SELECT ref.calendar_source_rank(s) AS r FROM unnest(ARRAY['observed_x', "
+        "'moex_iss_calendar', 'curated', 'rule_target', 'curated_unverified', 'x']) s"
+    ).fetchall()
+    assert [r["r"] for r in ranks] == [1, 2, 3, 4, 5, 9]
+    assert cal.SOURCE_PRIORITY == {
+        "observed": 1,
+        "moex_iss_calendar": 2,
+        "curated": 3,
+        "rule": 4,
+        "curated_unverified": 5,
+    }
+
+
+def test_target_crosscheck() -> None:
+    rule = cal.target_rule_days(date(2026, 3, 1), date(2026, 5, 31))
+    bd = rule.__getitem__
+    good = [d for d, v in rule.items() if v and d <= date(2026, 4, 30)]
+    assert cal.target_crosscheck(good, bd, date(2026, 5, 15)) == ([], [])
+    assert cal.target_crosscheck([], bd, date(2026, 5, 15)) == ([], [])
+    # a failed load (business day without rates) and rates on a closing day / a weekend
+    lost = [d for d in good if d != date(2026, 4, 9)]
+    extra = [*good, date(2026, 4, 3), date(2026, 4, 4)]
+    assert cal.target_crosscheck(lost, bd, date(2026, 5, 15)) == ([date(2026, 4, 9)], [])
+    assert cal.target_crosscheck(extra, bd, date(2026, 5, 15)) == (
+        [],
+        [date(2026, 4, 3), date(2026, 4, 4)],
+    )
+    # grace: no TARGET business day between the missing day and today yet -> not reported
+    # (Thu 04-09 missing, Fri 04-10 loaded, today Mon 04-13: Fri lies between -> reported;
+    # with today = Fri 04-10 nothing lies between)
+    recent = [d for d in good if d <= date(2026, 4, 10) and d != date(2026, 4, 9)]
+    assert cal.target_crosscheck(recent, bd, date(2026, 4, 13))[0] == [date(2026, 4, 9)]
+    assert cal.target_crosscheck(recent, bd, date(2026, 4, 10))[0] == []
+
+
+def _insert_ecb(conn: Conn, days: list[date], n_ccy: int = 20) -> None:
+    with conn.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO md.ecb_fx (rate_date, ccy, rate_per_eur) VALUES (%s, %s, 1.5)",
+            [(d, "C" + chr(65 + i // 26) + chr(65 + i % 26)) for d in days for i in range(n_ccy)],
+        )
+    conn.commit()
+
+
+def _ecb_days(start: date, end: date, closed: set[date]) -> list[date]:
+    out, d = [], start
+    while d <= end:
+        if d.weekday() < 5 and d not in closed:
+            out.append(d)
+        d += timedelta(days=1)
+    return out
+
+
+def test_target_calendar_rule_only(
+    iss: respx.MockRouter,
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TARGET comes from the rule alone (2002 .. end of next year); ECB rates only cross-check
+    it - a failed ECB load never turns a day into a holiday."""
+    monkeypatch.setattr("mdhub.jobs.msk_today", lambda: date(2026, 4, 15))
+    holidays = {date(2026, 4, 3), date(2026, 4, 6)}  # Good Friday, Easter Monday
+    _insert_ecb(conn, _ecb_days(date(2026, 3, 25), date(2026, 4, 14), holidays))
+    summary = cal.seed_calendar(settings, db, http_factory=_http_factory)
+    assert summary["target_crosscheck"] == {"checked_days": 13, "missing": 0, "unexpected": 0}
+    run = conn.execute("SELECT status FROM ops.job_run").fetchone()
+    assert run == {"status": "succeeded"}
+    rows = conn.execute(
+        "SELECT source, min(day) AS lo, max(day) AS hi, count(*) AS n, count(*) FILTER "
+        "(WHERE NOT is_business_day AND extract(isodow FROM day) < 6) AS holidays "
+        "FROM ref.calendar_day WHERE calendar = 'TARGET' GROUP BY source"
+    ).fetchall()
+    n_days = (date(2027, 12, 31) - date(2002, 1, 1)).days + 1
+    weekday_holidays = sum(
+        1 for y in range(2002, 2028) for d in cal.target_closing_days(y) if d.weekday() < 5
+    )
+    assert rows == [
+        {
+            "source": cal.TARGET_RULE_SOURCE,
+            "lo": date(2002, 1, 1),
+            "hi": date(2027, 12, 31),
+            "n": n_days,
+            "holidays": weekday_holidays,
+        }
+    ]
+    bc = DbCalendar(db, ttl=0)
+    assert bc(date(2026, 4, 3), "TARGET") is False
+    assert bc(date(2026, 4, 6), "TARGET") is False
+    assert bc(date(2026, 4, 2), "TARGET") is True
+    assert bc(date(2026, 4, 4), "TARGET") is False
+    assert bc(date(2015, 12, 25), "TARGET") is False
+    assert bc(date(2026, 12, 31), "TARGET") is True  # TARGET is open on Dec 31
+    assert bc(date(2027, 3, 26), "TARGET") is False  # Good Friday 2027
+    assert bc(date(2027, 3, 29), "TARGET") is False  # Easter Monday 2027
+
+    # an incremental refresh writes nothing new
+    out = run_job(
+        "cbr_meetings", {"mode": "calendar"}, settings=settings, db=db, http_factory=_http_factory
+    )
+    assert out.status == "succeeded", out.result
+    assert out.result["calendar"][cal.TARGET_RULE_SOURCE]["written"] == 0
+
+
+@pytest.mark.parametrize("direction", ["missing", "unexpected"])
+def test_target_crosscheck_marks_run_partial(
+    direction: str,
+    iss: respx.MockRouter,
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("mdhub.jobs.msk_today", lambda: date(2026, 4, 15))
+    holidays = {date(2026, 4, 3), date(2026, 4, 6)}
+    if direction == "missing":
+        holidays.add(date(2026, 4, 8))  # a failed ECB load
+    else:
+        _insert_ecb(conn, [date(2026, 4, 6)])  # rates on Easter Monday
+    _insert_ecb(conn, _ecb_days(date(2026, 3, 25), date(2026, 4, 14), holidays))
+    out = run_job(
+        "cbr_meetings", {"mode": "calendar"}, settings=settings, db=db, http_factory=_http_factory
+    )
+    assert out.status == "partial", out.result
+    check = out.result["calendar"]["target_crosscheck"]
+    if direction == "missing":
+        assert (check["missing"], check["unexpected"]) == (1, 0)
+    else:
+        assert (check["missing"], check["unexpected"]) == (0, 1)
+    err = conn.execute("SELECT error FROM ops.job_run WHERE id = %s", (out.run_id,)).fetchone()
+    assert err is not None and "TARGET cross-check" in err["error"]
+    assert ("2026-04-08" if direction == "missing" else "2026-04-06") in err["error"]
+    # the calendar follows the rule regardless of the ECB data
+    bc = DbCalendar(db, ttl=0)
+    assert bc(date(2026, 4, 8), "TARGET") is True
+    assert bc(date(2026, 4, 6), "TARGET") is False
+
+
+def test_target_calendar_respects_since(
+    iss: respx.MockRouter,
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("mdhub.jobs.msk_today", lambda: date(2026, 4, 15))
+    sql = (
+        "SELECT min(day) AS lo, max(day) AS hi FROM ref.calendar_day WHERE calendar = 'TARGET' "
+        "AND source = 'rule_target'"
+    )
+    cal.seed_calendar(settings, db, since=date(2026, 4, 1), http_factory=_http_factory)
+    assert conn.execute(sql).fetchone() == {"lo": date(2026, 4, 1), "hi": date(2027, 12, 31)}
+    cal.seed_calendar(settings, db, since=date(1999, 1, 4), http_factory=_http_factory)
+    assert conn.execute(sql).fetchone() == {"lo": date(2002, 1, 1), "hi": date(2027, 12, 31)}
+
+
+def test_ecb_fx_gap_scan_follows_target(
+    iss: respx.MockRouter,
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ECB publishes nothing on Dec 25/26: with calendar TARGET the gap scan no longer expects
+    those days, and the old unfillable gaps are closed as not_expected."""
+    spec = get_dataset("ecb_fx")
+    assert spec.calendar == "TARGET"
+    xmas = {date(2025, 12, 25), date(2025, 12, 26), date(2026, 1, 1)}
+    _insert_ecb(conn, _ecb_days(date(2025, 12, 15), date(2026, 1, 9), xmas))
+    for d in sorted(xmas):  # what the Monday-Friday calendar left behind
+        conn.execute(
+            "INSERT INTO ops.data_gap (dataset, key, gap_date, status, note) "
+            "VALUES ('ecb_fx', '{}'::jsonb, %s, 'unfillable', 'no data from source')",
+            (d,),
+        )
+    conn.commit()
+    scoped = dataclasses.replace(spec, history_start=date(2025, 12, 15))
+    wd = scan_dataset(conn, scoped, today=date(2026, 1, 12), calendar=weekday_calendar)
+    assert {g.day for g in wd.gaps} == xmas  # the old behaviour
+
+    monkeypatch.setattr("mdhub.jobs.msk_today", lambda: date(2026, 1, 12))
+    cal.seed_calendar(settings, db, http_factory=_http_factory)
+    bc = DbCalendar(db, ttl=0)
+    days = expected_days(scoped, date(2025, 12, 22), date(2026, 1, 2), bc)
+    assert date(2025, 12, 25) not in days and date(2025, 12, 26) not in days
+    assert date(2026, 1, 1) not in days and date(2025, 12, 31) in days
+    check = scan_dataset(conn, scoped, today=date(2026, 1, 12), calendar=bc)
+    assert check.gaps == []
+    res = sync_gaps(conn, scoped, check, run_id=None)
+    conn.commit()
+    assert res.closed == 3
+    st = conn.execute(
+        "SELECT DISTINCT status FROM ops.data_gap WHERE dataset = 'ecb_fx'"
+    ).fetchall()
+    assert st == [{"status": "not_expected"}]

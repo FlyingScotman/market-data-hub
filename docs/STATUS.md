@@ -12,24 +12,23 @@
 4e0f4bb API + TDM export · b52fc54 legacy mapping · b878fa6 review fixes (0420). 441 tests green, mypy strict clean.
 
 ## In flight
-- Review fixes committed (b878fa6). 0420 applied to seed DB; repair done (calendar seed run 74,
-  bonds_static full run 76: 267 current_published coupons, 668 active unlabelled → unknown).
-- 74ed84f: `mdhub report seed` + deploy/make_bundle.sh + restore_seed.sh (bundle→restore tested). 451 tests.
-- Second review done (scratchpad/review2/REVIEW2.md: N1 weekend-session quote dating, N2 unlabelled fixed bonds
-  withheld in TDM, N3 health masked by backfill runs, N4 AlgoPack request volume, N5 grace in business days,
-  N6 gap relabel, N7 weekend sessions, N8 empty ISS calendar, N9 capture_id indexes). Fix agent running →
-  migration 0421; then commit, migrate seed, repair runs it lists.
-- Known: Saturday sessions 2024-04-27, 2024-11-02, 2024-12-28, 2025-11-01 missing in bonds/futures/fx EOD
-  (calendar fixed after those backfill chunks) — quality job + backfill_worker must fill them.
+- Commits: b878fa6 review fixes (0420) · 74ed84f seed report + bundle tooling · 7354200 second-review fixes (0421).
+  479 tests green. Seed DB at 0421 (applied with scratchpad/seed/migrate_locked.py: ordered table locks,
+  because plain `migrate` deadlocked against a running loader).
+- Chain 1 DONE (backfill1b.log): bonds_eod to 2026-10-15, zcyc 2022→, indices 2022→.
+- `mdhub calendar seed --since 2010-01-01` (run 201): observed calendars 2010→ (pre-2019 CBR holidays → not_expected).
+- backfill_worker run 204: all 4 Saturday sessions backfilled (bonds/yield/futures/fx/indicative/zcyc/indices).
+  Unfillable (source confirms no data, verified vs ISS): RUSFAR* holiday/thin days, RUSFARCNY China holidays,
+  some bond indices, zcyc 2022-01-07, bond yields 2024-02-08, CBR standing 2018-04-25, ECB TARGET holidays (57).
+- Agent adding TARGET calendar (observed from ECB + Easter rule) → migration 0422; ecb_fx gaps → not_expected.
+- AlgoPack orphan stopped (owner OK); re-run 2024-01-03→2026-10-15 on 7354200 (algopack2.log).
 
 ## Seed database (data/pgseed, pgserver PG 16.2, db `mdhub`; gitignored)
-- Migrations applied from frozen copies in data/pgseed_migs (0001…0420).
+- Migrations applied from frozen copies in data/pgseed_migs (0001…0421).
 - Loaded: bond static (16,055 bonds), CBR full history (key rate 2013+, RUONIA 2010+, FX 2020+, liquidity,
   meetings, calendars), ECB 2015+, legacy MD/BC verbatim (verified) + mapped (curves, intraday, zcyc,
   fixings, liquidity, 3 curated formulas).
-- Running (scratchpad/seed/*.log, runner scripts seed_backfill.py / seed_once.py):
-  - chain 1 (backfill1.log): bonds_eod 2024-01-03→2026-10-15 (at ~2025-06), then zcyc 2022→, indices 2022→.
-  - chain 2 (backfill_fx.log, ISS 2 rps): futures_eod → fx_moex_eod → fx_indicative 2024→ → algopack 2024→.
+- Backfilled: bonds_eod 2024→, futures/fx EOD + fx_indicative 2024→, zcyc 2022→, indices 2022→; AlgoPack re-running.
 
 ## Remaining steps
 1. After backfills finish: re-run `mdhub calendar seed` (observed days from full history).

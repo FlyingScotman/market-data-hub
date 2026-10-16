@@ -2,7 +2,7 @@
 
 Calendars and sources (``DbCalendar`` / ``ref.calendar_effective`` take, per day, the row of
 the highest-priority source - :data:`SOURCE_PRIORITY`: observed > MOEX ISS calendar > curated >
-curated_unverified; ``known_at`` only breaks ties):
+rule > curated_unverified; ``known_at`` only breaks ties):
 
 =============== ============================ ===============================================
 calendar        past days (observed)          future days
@@ -15,11 +15,23 @@ MOEX_FORTS      ``observed_moex_forts``: Si
                 futures volume > 0
 RU_PRODUCTION   ``observed_cbr_ruonia``: a    ``curated`` (Government decrees on transfers)
                 RUONIA fixing exists (md.fixing)
+TARGET          (none - rule only)            ``rule_target`` for past *and* future days:
+                                              :func:`target_closing_days` (Jan 1, Good Friday,
+                                              Easter Monday, May 1, Dec 25, Dec 26) + weekends,
+                                              from :data:`TARGET_RULE_START` (2002) through the
+                                              end of next year
 =============== ============================ ===============================================
 
 Observed rows cover every calendar day from the start date (:data:`OBSERVED_START`, 2019) to the
-last observed trading day (days without trading -> ``false``). Curated and ISS-calendar rows
-are written only for days after the last observed day of the calendar. A row is (re)written
+last observed day (days without trading / a fixing -> ``false``). Curated and ISS-calendar rows
+are written only for days after the last observed day of the calendar. TARGET has no observed
+source: the rule is exact (ECB rate dates 2015-2026 match it day for day), and deriving the
+calendar from ``md.ecb_fx`` would turn a failed ECB load into a holiday. ECB data only
+cross-checks the rule (:func:`target_crosscheck`): a rule business day without rates (past the
+no-data grace period, inside the ECB data range) or rates on a rule closing day -> warning and
+run ``partial``, the calendar is not changed. Known limitation of the observed calendars
+(RU_PRODUCTION from RUONIA, MOEX from trading history): a day whose source data failed to load
+before a refresh becomes a non-business day. A row is (re)written
 only when ``is_business_day`` changes (``known_at`` = when that became known; the old image
 goes to ``ops.row_history``). Repair on every refresh: ISS-calendar rows that the current ISS
 answer no longer lists are deleted (image kept in ``ops.row_history``), and an observed
@@ -56,6 +68,7 @@ from mdhub.config import Settings
 from mdhub.core.bizday import CALENDARS, weekday_calendar
 from mdhub.core.capture import job_run, record_capture
 from mdhub.core.errors import FormatDriftError, MdhubError
+from mdhub.core.gaps import no_data_status
 from mdhub.core.http import HttpClient
 from mdhub.core.iss import ISS_BASE_URL, iter_pages, parse_block, to_date, to_decimal
 from mdhub.core.timeutil import date_range, utc_now
@@ -67,13 +80,19 @@ __all__ = [
     "CURATED_RESOURCE",
     "OBSERVED_START",
     "SOURCE_PRIORITY",
+    "TARGET_RULE_SOURCE",
+    "TARGET_RULE_START",
     "CuratedCalendar",
     "CuratedYear",
+    "easter_sunday",
     "iss_calendar_days",
     "iss_weekend_sessions",
     "load_curated",
     "refresh_calendar",
     "seed_calendar",
+    "target_closing_days",
+    "target_crosscheck",
+    "target_rule_days",
     "write_calendar_days",
 ]
 
@@ -88,13 +107,24 @@ SOURCE_PRIORITY: Final = {
     "observed": 1,
     ISS_SOURCE: 2,
     "curated": 3,
-    "curated_unverified": 4,
+    "rule": 4,
+    "curated_unverified": 5,
 }
-"""Source precedence per (calendar, day), lower wins (``observed`` = any ``observed_*``):
-observed trading/fixings > days the official MOEX ISS calendar lists > curated file >
-unverified curated file > anything else; the weekday rule applies only when no row exists.
-Recency (``known_at``) only breaks ties within a rank. Mirrored by ``ref.calendar_source_rank``
-(migration 0420) used by ``ref.calendar_effective`` and :class:`mdhub.core.bizday.DbCalendar`."""
+"""Source precedence per (calendar, day), lower wins (``observed`` = any ``observed_*``,
+``rule`` = any ``rule_*``): observed trading/fixings/rates > days the official MOEX ISS
+calendar lists > curated file > computed holiday rule (e.g. ``rule_target``) > unverified
+curated file > anything else; the weekday rule applies only when no row exists. Recency
+(``known_at``) only breaks ties within a rank. Mirrored by ``ref.calendar_source_rank``
+(migrations 0420, 0422) used by ``ref.calendar_effective`` and
+:class:`mdhub.core.bizday.DbCalendar`."""
+TARGET_CALENDAR: Final = "TARGET"
+TARGET_RULE_SOURCE: Final = "rule_target"
+"""The only TARGET source: :func:`target_rule_days` for every day (past and future)."""
+TARGET_RULE_START: Final = date(2002, 1, 1)
+"""The six TARGET closing days apply since 2002 (TARGET calendar default start)."""
+TARGET_RULE_VERSION: Final = "target-closing-days-1"
+CROSSCHECK_MAX_LISTED: Final = 10
+"""Mismatching days listed in the cross-check warning (the count is always given)."""
 INCREMENTAL_OVERLAP_DAYS: Final = 14
 PARSER_VERSION: Final = "1"
 KEY: Final = ["calendar", "day", "source"]
@@ -169,6 +199,75 @@ def load_curated(text: str | None = None) -> CuratedCalendar:
                 )
             years.append(CuratedYear(cal, year, e["source"], str(e["reference"]), nw, ww))
     return CuratedCalendar(version=version, known_at=known_at, years=tuple(years))
+
+
+# ------------------------------------------------------------------------ TARGET rule
+
+
+def easter_sunday(year: int) -> date:
+    """Western (Gregorian) Easter Sunday - anonymous Gregorian computus (Meeus/Jones/Butcher)."""
+    a = year % 19
+    b, c = divmod(year, 100)
+    d, e = divmod(b, 4)
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i, k = divmod(c, 4)
+    ell = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * ell) // 451
+    month, day = divmod(h + ell - 7 * m + 114, 31)
+    return date(year, month, day + 1)
+
+
+def target_closing_days(year: int) -> frozenset[date]:
+    """TARGET (T2) closing days of ``year`` besides weekends: New Year's Day, Good Friday,
+    Easter Monday, Labour Day (May 1), Christmas Day and Boxing Day (Dec 26) - the ECB
+    publishes no euro reference rates on these days."""
+    easter = easter_sunday(year)
+    return frozenset(
+        {
+            date(year, 1, 1),
+            easter - timedelta(days=2),
+            easter + timedelta(days=1),
+            date(year, 5, 1),
+            date(year, 12, 25),
+            date(year, 12, 26),
+        }
+    )
+
+
+def target_rule_days(start: date, end: date) -> dict[date, bool]:
+    """Every day of ``[start, end]`` -> TARGET business day (weekday, not a closing day)."""
+    closed: dict[int, frozenset[date]] = {}
+    out: dict[date, bool] = {}
+    for d in date_range(start, end):
+        if d.year not in closed:
+            closed[d.year] = target_closing_days(d.year)
+        out[d] = d.weekday() < 5 and d not in closed[d.year]
+    return out
+
+
+def target_crosscheck(
+    rate_dates: Iterable[date], is_business_day: Callable[[date], bool], today: date
+) -> tuple[list[date], list[date]]:
+    """Compare ECB rate dates with the TARGET calendar ``is_business_day``.
+
+    Returns ``(missing, unexpected)``: business days inside ``[first, last]`` rate date without
+    rates whose no-data grace period is over (:func:`mdhub.core.gaps.no_data_status`: at least
+    one TARGET business day lies between the day and ``today``), and rate dates that are not
+    business days. Both empty when the rule and the ECB data agree."""
+    dates = set(rate_dates)
+    if not dates:
+        return [], []
+    missing = [
+        d
+        for d in date_range(min(dates), max(dates))
+        if d not in dates
+        and is_business_day(d)
+        and no_data_status(d, today, is_business_day) == "unfillable"
+    ]
+    unexpected = sorted(d for d in dates if not is_business_day(d))
+    return missing, unexpected
 
 
 # --------------------------------------------------------------------------- writing
@@ -555,15 +654,19 @@ def _fetch_iss_calendars(
 
 
 def refresh_calendar(
-    ctx: JobContext, *, full: bool = False, since: date = OBSERVED_START
+    ctx: JobContext, *, full: bool = False, since: date | None = None
 ) -> dict[str, Any]:
-    """Refresh ``ref.calendar_day`` (observed history, MOEX ISS calendar, curated file).
+    """Refresh ``ref.calendar_day`` (observed history, MOEX ISS calendar, curated file,
+    TARGET rule) and cross-check TARGET against the ECB rate dates.
 
     ``full`` re-reads observed history from ``since``; otherwise from the last observed day
-    minus :data:`INCREMENTAL_OVERLAP_DAYS`. Each step commits separately; a failing step marks
+    minus :data:`INCREMENTAL_OVERLAP_DAYS`. ``since`` defaults to :data:`OBSERVED_START`
+    (TARGET: :data:`TARGET_RULE_START`; an explicit ``since`` earlier than that is raised to
+    it). Each step commits separately; a failing step (or a TARGET cross-check mismatch) marks
     the run ``partial``. Returns per-step counts.
     """
     today = ctx.today()
+    base = since if since is not None else OBSERVED_START
     summary: dict[str, Any] = {}
     failures: list[str] = []
 
@@ -586,7 +689,7 @@ def refresh_calendar(
             def observed(
                 conn: psycopg.Connection[Any], cal: str = cal, source: str = source
             ) -> UpsertResult:
-                start = _observed_start(conn, cal, source, full=full, since=since)
+                start = _observed_start(conn, cal, source, full=full, since=base)
                 traded = _observed_moex(ctx, http, conn, cal, start, today)
                 return write_calendar_days(
                     conn,
@@ -602,7 +705,7 @@ def refresh_calendar(
 
         def ruonia(conn: psycopg.Connection[Any]) -> UpsertResult:
             source = "observed_cbr_ruonia"
-            start = _observed_start(conn, "RU_PRODUCTION", source, full=full, since=since)
+            start = _observed_start(conn, "RU_PRODUCTION", source, full=full, since=base)
             with conn.cursor(row_factory=tuple_row) as cur:
                 dates = [
                     r[0]
@@ -692,20 +795,89 @@ def refresh_calendar(
         return total
 
     step("curated", curated)
+
+    def target_rule(conn: psycopg.Connection[Any]) -> UpsertResult:
+        start = TARGET_RULE_START if since is None else max(since, TARGET_RULE_START)
+        return write_calendar_days(
+            conn,
+            TARGET_CALENDAR,
+            TARGET_RULE_SOURCE,
+            target_rule_days(start, date(today.year + 1, 12, 31)),
+            known_at=utc_now(),
+            run_id=ctx.run.id,
+            version=TARGET_RULE_VERSION,
+            note="TARGET closing days rule: Jan 1, Good Friday, Easter Monday, May 1, Dec 25, "
+            "Dec 26 (+ weekends)",
+        )
+
+    step(TARGET_RULE_SOURCE, target_rule)
+
+    def target_check(conn: psycopg.Connection[Any]) -> None:
+        """ECB rate dates vs the effective TARGET calendar (rule, or a curated override; rule
+        for days without a row). Reports only - never changes the calendar."""
+        with conn.cursor(row_factory=tuple_row) as cur:
+            dates = [
+                r[0] for r in cur.execute("SELECT DISTINCT rate_date FROM md.ecb_fx").fetchall()
+            ]
+            if not dates:
+                summary["target_crosscheck"] = {"checked_days": 0}
+                return
+            lo, hi = min(dates), today
+            flags = target_rule_days(lo, hi)
+            flags.update(
+                cur.execute(
+                    """SELECT day, is_business_day FROM ref.calendar_effective
+                       WHERE calendar = %s AND day BETWEEN %s AND %s""",
+                    (TARGET_CALENDAR, lo, hi),
+                ).fetchall()
+            )
+        missing, unexpected = target_crosscheck(
+            dates, lambda d: flags.get(d, d.weekday() < 5), today
+        )
+        result = {
+            "checked_days": len(dates),
+            "missing": len(missing),
+            "unexpected": len(unexpected),
+        }
+        if missing or unexpected:
+            msg = (
+                f"calendar TARGET cross-check: {len(missing)} TARGET business day(s) without "
+                f"ECB rates {_short(missing)}, {len(unexpected)} ECB rate date(s) on TARGET "
+                f"closing days {_short(unexpected)}; calendar unchanged"
+            )
+            ctx.logger.warning(msg)
+            failures.append(msg)
+        summary["target_crosscheck"] = result
+
+    try:
+        with ctx.connection() as conn:
+            target_check(conn)
+    except (psycopg.Error, ValueError) as exc:
+        ctx.logger.exception("calendar TARGET cross-check failed")
+        failures.append(f"calendar target_crosscheck: {type(exc).__name__}: {exc}")
+        summary["target_crosscheck"] = "failed"
     if failures:
         ctx.run.mark_partial("; ".join(failures))
     return summary
+
+
+def _short(days: list[date]) -> str:
+    listed = ", ".join(d.isoformat() for d in days[:CROSSCHECK_MAX_LISTED])
+    more = ", ..." if len(days) > CROSSCHECK_MAX_LISTED else ""
+    return f"[{listed}{more}]"
 
 
 def seed_calendar(
     settings: Settings,
     db: Database,
     *,
-    since: date = OBSERVED_START,
+    since: date | None = None,
     http_factory: Callable[..., HttpClient] = HttpClient,
 ) -> dict[str, Any]:
     """Initial full seeding outside the scheduler (one ``ops.job_run`` named
-    ``calendar_seed``). Load RUONIA history first (``cbr_daily``) for RU_PRODUCTION."""
+    ``calendar_seed``). ``since`` defaults to :data:`OBSERVED_START` (TARGET:
+    :data:`TARGET_RULE_START`). Load RUONIA history first (``cbr_daily``) for RU_PRODUCTION
+    (and ECB history, ``ecb_fx``, for the TARGET cross-check)."""
     with job_run(db, "calendar_seed", {"since": since}, settings=settings, trigger="cli") as run:
         ctx = JobContext(
             settings=settings,
