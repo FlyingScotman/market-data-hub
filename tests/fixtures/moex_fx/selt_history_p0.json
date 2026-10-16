@@ -1,0 +1,68 @@
+{
+ "history": {
+  "columns": [
+   "BOARDID",
+   "TRADEDATE",
+   "SHORTNAME",
+   "SECID",
+   "OPEN",
+   "LOW",
+   "HIGH",
+   "CLOSE",
+   "NUMTRADES",
+   "WAPRICE"
+  ],
+  "data": [
+   [
+    "CNGD",
+    "2026-10-15",
+    "AED_TDSTMS",
+    "AEDRUBTDSTMS",
+    0,
+    0,
+    0,
+    0,
+    0,
+    null
+   ],
+   [
+    "LICU",
+    "2026-10-15",
+    "AED_TDSTMS",
+    "AEDRUBTDSTMS",
+    0,
+    0,
+    0,
+    0,
+    0,
+    null
+   ],
+   [
+    "CETS",
+    "2026-10-15",
+    "CNYRUB_TOM",
+    "CNYRUB_TOM",
+    12.4425,
+    12.4285,
+    12.5595,
+    12.4825,
+    78695,
+    12.5086
+   ]
+  ]
+ },
+ "history.cursor": {
+  "columns": [
+   "INDEX",
+   "TOTAL",
+   "PAGESIZE"
+  ],
+  "data": [
+   [
+    0,
+    5,
+    3
+   ]
+  ]
+ }
+}

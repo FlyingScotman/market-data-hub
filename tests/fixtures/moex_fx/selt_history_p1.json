@@ -1,0 +1,56 @@
+{
+ "history": {
+  "columns": [
+   "BOARDID",
+   "TRADEDATE",
+   "SHORTNAME",
+   "SECID",
+   "OPEN",
+   "LOW",
+   "HIGH",
+   "CLOSE",
+   "NUMTRADES",
+   "WAPRICE"
+  ],
+  "data": [
+   [
+    "CNGD",
+    "2026-10-15",
+    "CNYRUB_TOM",
+    "CNYRUB_TOM",
+    12.43,
+    12.4295,
+    12.559,
+    12.486,
+    3442,
+    null
+   ],
+   [
+    "LICU",
+    "2026-10-15",
+    "CNYRUB_TOM",
+    "CNYRUB_TOM",
+    0,
+    0,
+    0,
+    0,
+    0,
+    null
+   ]
+  ]
+ },
+ "history.cursor": {
+  "columns": [
+   "INDEX",
+   "TOTAL",
+   "PAGESIZE"
+  ],
+  "data": [
+   [
+    3,
+    5,
+    3
+   ]
+  ]
+ }
+}
