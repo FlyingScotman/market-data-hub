@@ -79,18 +79,11 @@ def test_rule_gating() -> None:
 
 def test_db_calendar(db: Database, conn: psycopg.Connection[DictRow]) -> None:
     cal = DbCalendar(db, ttl=0)
-    assert cal(date(2026, 10, 16)) is True  # Friday, table absent -> weekday
+    assert cal(date(2026, 10, 16)) is True  # Friday, no rows -> weekday fallback
     assert cal(date(2026, 10, 17)) is False
     conn.execute(
         """
-        CREATE TABLE ref.calendar_day (
-            calendar text, day date, is_business_day boolean, source text, known_at timestamptz
-        )
-        """
-    )
-    conn.execute(
-        """
-        INSERT INTO ref.calendar_day VALUES
+        INSERT INTO ref.calendar_day (calendar, day, is_business_day, source, known_at) VALUES
           ('MOEX_STOCK', '2026-11-04', false, 'test', '2026-01-01'),
           ('MOEX_STOCK', '2026-11-04', true,  'old',  '2025-01-01'),
           ('MOEX_STOCK', '2026-11-07', true,  'test', '2026-01-01')
@@ -131,3 +124,10 @@ def test_build_scheduler_skips_unregistered(
     assert ran == ["ecb_fx"]
     row = conn.execute("SELECT job, status FROM ops.job_run").fetchone()
     assert row == {"job": "ecb_fx", "status": "succeeded"}
+
+
+def test_rule_helper_calendar_is_gating_not_param() -> None:
+    for rule in RULES["fx_moex_intraday"] + RULES["futures_eod"]:
+        assert "calendar" not in rule.params
+    assert RULES["fx_moex_intraday"][0].calendar == "MOEX_FX"
+    assert RULES["futures_eod"][0].calendar == "MOEX_FORTS"

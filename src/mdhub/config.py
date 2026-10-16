@@ -58,6 +58,7 @@ class Settings(BaseSettings):
         populate_by_name=True,
         case_sensitive=False,
         frozen=True,
+        env_ignore_empty=True,
     )
 
     database_url: SecretStr | None = Field(
@@ -76,6 +77,10 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices(
             "MDHUB_RAW_RETENTION_DAYS_INTRADAY", "raw_retention_days_intraday"
         ),
+    )
+    backup_dir: str = Field(
+        default="/var/backups/mdhub",
+        validation_alias=AliasChoices("MDHUB_BACKUP_DIR", "backup_dir"),
     )
     api_tokens: SecretStr | None = Field(
         default=None, validation_alias=AliasChoices("MDHUB_API_TOKENS", "api_tokens")

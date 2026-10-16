@@ -1,0 +1,31 @@
+{
+"params": {
+"columns": [
+"tradedate",
+"tradetime",
+"B1",
+"B2",
+"B3",
+"T1",
+"G1",
+"G2",
+"G3",
+"G4",
+"G5",
+"G6",
+"G7",
+"G8",
+"G9"
+],
+"data": []
+},
+"yearyields": {
+"columns": [
+"tradedate",
+"tradetime",
+"period",
+"value"
+],
+"data": []
+}
+}

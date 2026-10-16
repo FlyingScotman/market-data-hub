@@ -11,6 +11,7 @@ from psycopg.conninfo import conninfo_to_dict
 from typer.testing import CliRunner
 
 from mdhub import cli
+from mdhub.db.migrate import discover_migrations
 from mdhub.jobs import REGISTRY, JobContext
 
 runner = CliRunner()
@@ -34,7 +35,7 @@ def test_migrate_twice(empty_db_url: str, monkeypatch: pytest.MonkeyPatch) -> No
     assert "applied 0001_core" in first.output
     second = runner.invoke(cli.app, ["migrate"])
     assert second.exit_code == 0
-    assert "0 applied, 1 already applied" in second.output
+    assert f"0 applied, {len(discover_migrations())} already applied" in second.output
 
 
 def test_migrate_without_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -59,7 +60,7 @@ def test_db_info_hides_password(db_url: str, monkeypatch: pytest.MonkeyPatch) ->
     assert conninfo_to_dict(url)["password"] == "topsecretpw"
     # pgserver trust auth ignores the password, so the command succeeds.
     assert result.exit_code == 0, result.output
-    assert "1 applied, 0 pending" in result.output
+    assert f"{len(discover_migrations())} applied, 0 pending" in result.output
 
 
 @pytest.fixture

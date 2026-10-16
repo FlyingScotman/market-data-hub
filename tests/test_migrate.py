@@ -32,14 +32,15 @@ def test_packaged_migrations_are_well_formed() -> None:
 
 
 def test_migrate_is_idempotent(empty_db_url: str) -> None:
+    all_versions = [m.version for m in discover_migrations()]
     first = migrate(empty_db_url)
-    assert first.applied == ["0001_core"]
+    assert first.applied == all_versions
     second = migrate(empty_db_url)
     assert second.applied == []
-    assert second.already_applied == ["0001_core"]
+    assert second.already_applied == all_versions
     with psycopg.connect(empty_db_url) as conn:
         applied = applied_migrations(conn)
-        assert set(applied) == {"0001_core"}
+        assert set(applied) == set(all_versions)
         assert applied["0001_core"] == discover_migrations()[0].checksum
         schemas = {
             r[0]
@@ -108,7 +109,7 @@ def test_advisory_lock_blocks_concurrent_runner(empty_db_url: str) -> None:
         other.execute("SELECT pg_advisory_lock(hashtextextended('mdhub.migrate', 0))")
         with pytest.raises(MigrationLockTimeoutError):
             migrate(empty_db_url, lock_timeout=0.3)
-    assert migrate(empty_db_url).applied == ["0001_core"]
+    assert migrate(empty_db_url).applied == [m.version for m in discover_migrations()]
 
 
 def test_enable_history_validates_columns(conn: psycopg.Connection[dict[str, object]]) -> None:

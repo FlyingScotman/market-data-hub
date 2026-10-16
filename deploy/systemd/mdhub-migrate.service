@@ -1,0 +1,22 @@
+# One-shot schema migration; pulled in by mdhub-worker/mdhub-api (Requires=/After=).
+[Unit]
+Description=market-data-hub database migrations
+After=network-online.target postgresql.service
+Wants=network-online.target
+Requires=postgresql.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=mdhub
+Group=mdhub
+WorkingDirectory=/opt/mdhub
+EnvironmentFile=/etc/mdhub/mdhub.env
+ExecStart=/opt/mdhub/.venv/bin/mdhub migrate
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target

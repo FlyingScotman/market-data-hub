@@ -1,0 +1,11 @@
+# Optional alternative to the scheduler's backup rule: daily 02:30 Europe/Moscow.
+[Unit]
+Description=Daily market-data-hub backup
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 Europe/Moscow
+Persistent=true
+RandomizedDelaySec=120
+
+[Install]
+WantedBy=timers.target

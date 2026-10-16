@@ -1,0 +1,132 @@
+# market-data-hub - single-VPS deployment (DESIGN §9).
+#
+#   cd deploy && cp env.example .env && $EDITOR .env
+#   docker compose up -d --build            # postgres, migrate (one-shot), worker, api
+#   docker compose --profile tls up -d      # + Caddy TLS reverse proxy for the API
+#
+# Postgres and the API are published on 127.0.0.1 only; expose the API publicly through
+# Caddy (443). See README_DEPLOY.md.
+
+name: mdhub
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-mdhub: &mdhub
+  image: mdhub:${MDHUB_IMAGE_TAG:-latest}
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  env_file: .env
+  environment:
+    MDHUB_DATABASE_URL: postgresql://${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-mdhub}
+    MDHUB_BACKUP_DIR: /var/backups/mdhub
+  logging: *logging
+  restart: unless-stopped
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    shm_size: 256mb
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-mdhub}
+      POSTGRES_USER: ${POSTGRES_USER:-mdhub}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8 --data-checksums"
+      MDHUB_RO_USER: ${MDHUB_RO_USER:-mdhub_ro}
+      MDHUB_RO_PASSWORD: ${MDHUB_RO_PASSWORD:-}
+      TZ: UTC
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
+      - ./sql:/mdhub-sql:ro
+    ports:
+      # Local only (SSH tunnel for admin / backend consumers). Never publish 5432 publicly.
+      - "127.0.0.1:${MDHUB_PG_HOST_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\" -h 127.0.0.1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    stop_grace_period: 60s
+    logging: *logging
+
+  migrate:
+    <<: *mdhub
+    command: ["mdhub", "migrate"]
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    <<: *mdhub
+    command: ["mdhub", "scheduler"]
+    volumes:
+      - ${MDHUB_BACKUP_HOST_DIR:-./backups}:/var/backups/mdhub
+    stop_grace_period: 120s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  api:
+    <<: *mdhub
+    # mdhub.api.app is the FastAPI read API (DESIGN §8).
+    command:
+      - uvicorn
+      - mdhub.api.app:app
+      - --host=0.0.0.0
+      - --port=8080
+      - --proxy-headers
+      - --forwarded-allow-ips=*
+      - --workers=2
+    ports:
+      - "127.0.0.1:${MDHUB_API_HOST_PORT:-8080}:8080"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8080/health/live', timeout=3).status == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  caddy:
+    image: caddy:2
+    profiles: ["tls"]
+    restart: unless-stopped
+    environment:
+      MDHUB_API_DOMAIN: ${MDHUB_API_DOMAIN:-}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+      MDHUB_API_UPSTREAM: api:8080
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+    logging: *logging
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

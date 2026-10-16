@@ -1,0 +1,43 @@
+# TLS reverse proxy for the market-data-hub read API.
+# Compose: `docker compose --profile tls up -d` (upstream api:8080).
+# Bare metal: install caddy (apt), copy to /etc/caddy/Caddyfile and set
+#   MDHUB_API_DOMAIN, ACME_EMAIL and MDHUB_API_UPSTREAM=127.0.0.1:8080
+# in /etc/default/caddy (or a systemd drop-in Environment=).
+# The DNS A/AAAA record of MDHUB_API_DOMAIN must point at this host; ports 80+443 open
+# (80 is only needed for the ACME HTTP challenge and redirects to 443).
+{
+	email {$ACME_EMAIL}
+	servers {
+		protocols h1 h2
+	}
+}
+
+{$MDHUB_API_DOMAIN} {
+	encode zstd gzip
+
+	# Only the read API is exposed; it authenticates with bearer tokens (MDHUB_API_TOKENS).
+	@api path /health/* /v1/*
+	handle @api {
+		reverse_proxy {$MDHUB_API_UPSTREAM:api:8080} {
+			header_up X-Real-IP {remote_host}
+			transport http {
+				read_timeout 120s
+			}
+		}
+	}
+	handle {
+		respond "Not found" 404
+	}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

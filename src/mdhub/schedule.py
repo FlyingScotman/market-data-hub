@@ -95,8 +95,14 @@ class Rule:
     note: str = ""
 
 
-def _r(cron: str, days: DayFilter = "business", note: str = "", **params: Any) -> Rule:
-    return Rule(cron=cron, params=params, days=days, note=note)
+def _r(
+    cron: str,
+    days: DayFilter = "business",
+    note: str = "",
+    calendar: str = DEFAULT_CALENDAR,
+    **params: Any,
+) -> Rule:
+    return Rule(cron=cron, params=params, days=days, calendar=calendar, note=note)
 
 
 RULES: Final[Mapping[str, tuple[Rule, ...]]] = {

@@ -1,0 +1,30 @@
+# market-data-hub read API (FastAPI, DESIGN §8) on 127.0.0.1:8080; expose via Caddy (TLS).
+[Unit]
+Description=market-data-hub read API
+After=network-online.target postgresql.service mdhub-migrate.service
+Wants=network-online.target
+Requires=postgresql.service mdhub-migrate.service
+
+[Service]
+Type=simple
+User=mdhub
+Group=mdhub
+WorkingDirectory=/opt/mdhub
+EnvironmentFile=/etc/mdhub/mdhub.env
+ExecStart=/opt/mdhub/.venv/bin/uvicorn mdhub.api.app:app --host 127.0.0.1 --port 8080 --proxy-headers --workers 2
+Restart=always
+RestartSec=5s
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryMax=768M
+
+[Install]
+WantedBy=multi-user.target

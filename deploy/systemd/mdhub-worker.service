@@ -1,0 +1,36 @@
+# market-data-hub scheduler: all loaders, quality, backfill_worker and maintenance
+# (incl. nightly pg_dump to MDHUB_BACKUP_DIR) per DESIGN §6.
+[Unit]
+Description=market-data-hub scheduler (loaders, quality, backfill, maintenance)
+After=network-online.target postgresql.service mdhub-migrate.service
+Wants=network-online.target
+Requires=postgresql.service mdhub-migrate.service
+
+[Service]
+Type=simple
+User=mdhub
+Group=mdhub
+WorkingDirectory=/opt/mdhub
+EnvironmentFile=/etc/mdhub/mdhub.env
+Environment=MDHUB_BACKUP_DIR=/var/backups/mdhub
+ExecStart=/opt/mdhub/.venv/bin/mdhub scheduler
+Restart=always
+RestartSec=10s
+TimeoutStopSec=120s
+KillSignal=SIGTERM
+# Hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+ReadWritePaths=/var/backups/mdhub
+MemoryMax=1500M
+
+[Install]
+WantedBy=multi-user.target
