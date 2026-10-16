@@ -6,6 +6,15 @@ Source precedence (not recency) decides between rows of one day: see
 ``ref.calendar_day(calendar, day, is_business_day, source, known_at)`` (DESIGN §4) is owned by
 the calendar loader. Until that table exists - or for days it does not cover - the
 Monday-Friday fallback applies.
+
+Two notions per calendar (DESIGN §4 ``ref.weekend_session``):
+
+* **business day** (``predicate(day, calendar)``) - the settlement calendar: trade dates of
+  EOD history, ``days_back`` offsets, gap expectations;
+* **trading day** (:meth:`CalendarPredicate.is_trading_day`) - a business day *or* a day on
+  which the engine holds a weekend/holiday session (MOEX ISS calendar ``reason='W'``, stored in
+  ``ref.weekend_session``; trades belong to the next business day's session). Used to date
+  quotes ("the previous session") and to gate polling of markets that trade on such days.
 """
 
 from __future__ import annotations
@@ -36,6 +45,11 @@ class CalendarPredicate:
     def __call__(self, day: date, calendar: str = DEFAULT_CALENDAR) -> bool:
         return is_weekday(day)
 
+    def is_trading_day(self, day: date, calendar: str = DEFAULT_CALENDAR) -> bool:
+        """Business day or a weekend/holiday session day of ``calendar``'s engine. The base
+        implementation knows no weekend sessions (= business day)."""
+        return self(day, calendar)
+
 
 weekday_calendar: Final = CalendarPredicate()
 """Monday-Friday for every calendar."""
@@ -55,6 +69,7 @@ class DbCalendar(CalendarPredicate):
         self._db = db
         self._ttl = ttl
         self._cache: dict[tuple[str, date], tuple[float, bool]] = {}
+        self._sessions: dict[tuple[str, date], tuple[float, bool]] = {}
         self._lock = threading.Lock()
 
     def __call__(self, day: date, calendar: str = DEFAULT_CALENDAR) -> bool:
@@ -69,6 +84,37 @@ class DbCalendar(CalendarPredicate):
         with self._lock:
             self._cache[key] = (now, result)
         return result
+
+    def is_trading_day(self, day: date, calendar: str = DEFAULT_CALENDAR) -> bool:
+        """Business day, or a day listed in ``ref.weekend_session`` for ``calendar`` (any
+        source). Database errors / a missing table: business days only."""
+        if self(day, calendar):
+            return True
+        key = (calendar, day)
+        now = time.monotonic()
+        with self._lock:
+            hit = self._sessions.get(key)
+        if hit is not None and now - hit[0] < self._ttl:
+            return hit[1]
+        result = self._session_lookup(day, calendar)
+        with self._lock:
+            self._sessions[key] = (now, result)
+        return result
+
+    def _session_lookup(self, day: date, calendar: str) -> bool:
+        try:
+            with self._db.connection() as conn, conn.cursor(row_factory=tuple_row) as cur:
+                exists = cur.execute("SELECT to_regclass('ref.weekend_session')").fetchone()
+                if not exists or exists[0] is None:
+                    return False
+                row = cur.execute(
+                    "SELECT 1 FROM ref.weekend_session WHERE calendar = %s AND day = %s LIMIT 1",
+                    (calendar, day),
+                ).fetchone()
+        except psycopg.Error as exc:
+            log.warning("weekend-session lookup failed (%s); business days only", exc)
+            return False
+        return row is not None
 
     def _lookup(self, day: date, calendar: str) -> bool | None:
         try:

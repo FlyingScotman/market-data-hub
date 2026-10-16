@@ -259,6 +259,7 @@ def run_backfill_range(
             calendar=calendar,
             http_factory=http_factory,
             yield_to_waiters=True,
+            trigger="backfill",
         )
     except JobParamError:
         raise

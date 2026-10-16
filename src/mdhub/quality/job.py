@@ -13,6 +13,7 @@ SQL error) makes the run ``partial``.
 
 from __future__ import annotations
 
+import time
 from datetime import date, datetime
 from typing import Any
 
@@ -136,6 +137,7 @@ def catch_up_missed(
     """Re-run scheduled fires that were skipped because the job lock stayed busy
     (:attr:`JobHealth.missed_by_lock`, rules with ``catch_up``). Returns one entry per job."""
     out: list[dict[str, Any]] = []
+    started = time.monotonic()
     for j in jobs:
         rule, fire = j.expected_rule, j.last_expected_at
         if not j.missed_by_lock or rule is None or fire is None or not rule.catch_up:
@@ -163,6 +165,7 @@ def catch_up_missed(
                 calendar=ctx.calendar,
                 http_factory=ctx.http_factory,
                 lock_wait_s=lock_wait_s,
+                trigger="catch_up",
             )
         except Exception as exc:
             ctx.logger.exception("catch-up run of %s failed", j.job)
@@ -171,6 +174,10 @@ def catch_up_missed(
         else:
             entry.update(status=outcome.status, run_id=outcome.run_id)
         out.append(entry)
+    if out:
+        ctx.logger.info(
+            "catch-up: %d missed fire(s) handled in %.0f s", len(out), time.monotonic() - started
+        )
     return out
 
 

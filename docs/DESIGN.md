@@ -66,18 +66,19 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
 
 ### `ops` — provenance and operations
 - `ops.source(code PK, name, base_url, licence_note)`
-- `ops.job_run(id, job, started_at, finished_at, status ∈ {running, succeeded, partial, failed, skipped}, params jsonb, rows_inserted, rows_updated, rows_unchanged, error text, host)`
+- `ops.job_run(id, job, started_at, finished_at, status ∈ {running, succeeded, partial, failed, skipped}, params jsonb, rows_inserted, rows_updated, rows_unchanged, error text, host, trigger ∈ {schedule, catch_up, backfill, cli, api, other})` — `trigger` (0421; NULL for older rows) records who started the run; job health counts only `schedule`/`catch_up` (and NULL) runs as "the scheduled fire ran".
 - `ops.raw_capture(id, run_id, source, endpoint, url_redacted, http_status, content_type, fetched_at, source_ts, parser_version, sha256, payload_gz bytea, size_bytes)` — unique (sha256, endpoint, fetched_at). Retention: intraday raw 90 days (configurable), EOD/static raw forever.
 - `ops.row_history(id, table_name, row_key jsonb, old_row jsonb, replaced_at, replaced_by_run)` — written by trigger `ops.track_changes()`.
-- `ops.data_gap(dataset, key jsonb, gap_date, detected_at, status ∈ {open, backfilled, unfillable}, note)` — `unfillable` is terminal (the source confirmed "no data" for a day older than the 1-day grace period, `mdhub.core.gaps`); data that appears later still turns it `backfilled`.
+- `ops.data_gap(dataset, key jsonb, gap_date, detected_at, status ∈ {open, backfilled, unfillable, not_expected}, note)` — `unfillable` is terminal (the source confirmed "no data" and at least one **business day** of the dataset's calendar has passed since the day, `mdhub.core.gaps`); data that appears later still turns it `backfilled`. A gap the scan no longer reports becomes `backfilled` only when the table has ≥ `min_rows_per_day` rows for it, otherwise `not_expected` (calendar corrected, e.g. a holiday; re-opened if expected and missing again). `ops.v_coverage` counts `open_gaps`, `unfillable_gaps`, `not_expected_gaps`; `ops.v_open_gaps` lists `open` only.
 - `ops.backfill_task(id, dataset, params jsonb {date_from, date_to}, status, attempts, last_error, created_at, done_at, not_before, started_at, last_run_id, source)` — one task per (backfill job, range): datasets sharing a job share tasks.
 - `ops.dataset_status` (latest check per dataset), `ops.quality_report` (one report per `quality` run, incl. job health and catch-up); views `ops.v_coverage`, `ops.v_job_health`, `ops.v_open_gaps`, `ops.v_backfill_queue`.
 - `ops.legacy_import` (SQLite import bookkeeping), `ops.schema_migration(version, applied_at, checksum)`
 
 ### `ref` — static / reference
 - `ref.calendar_day(calendar ∈ {MOEX_STOCK, MOEX_FX, MOEX_FORTS, RU_PRODUCTION}, day, source, is_business_day, known_at, version, note)` PK (calendar, day, source) — past days from observed trading / RUONIA observations (from 2019-01-01), the days the official MOEX ISS calendar lists (never a synthesized year), future days from the curated data file. **Precedence by source, not recency**: `ref.calendar_source_rank()` observed > moex_iss_calendar > curated > curated_unverified (`known_at` breaks ties); view `ref.calendar_effective`, `mdhub.core.bizday.DbCalendar`; days without rows: Monday–Friday.
+- `ref.weekend_session(calendar, day, source, trade_session_date, known_at, note, capture_id, run_id)` PK (calendar, day, source) (0421) — days on which a MOEX engine trades although they are not settlement business days (ISS `engines/{engine}/calendar.json` rows `is_work_day=1, reason='W'`; trades belong to `trade_session_date`). Stored for every listed day of the year (past ones too: the observed calendars cannot see them); future rows ISS no longer lists are deleted. **Trading day of an engine** = business day (`ref.calendar_effective`) or a day listed here (`CalendarPredicate.is_trading_day`); `ref.calendar_day` keeps these days non-business. Trading days date quotes ("previous session") and gate the FORTS polls; business days drive EOD trade dates, `days_back` and gap expectations. Calendar refresh: an ISS engine answer with < 5 rows of its engine or none in the current year is treated as incomplete — listed days are written, nothing is deleted (warning, run `partial`).
 - `ref.issuer(issuer_id PK (MOEX emitent_id), inn, ogrn, okpo, name, short_name, country, sector, is_sovereign, …, updated_at)`
-- `ref.bond(secid PK, isin, regnumber, issuer_id, name, short_name, bond_type (MOEX label), bond_class (derived enum: ofz_pd, ofz_pk, ofz_in, ofz_ad, sovereign_fx, subfederal, municipal, corporate, exchange_bond, structured, mbs, …), coupon_type ∈ {fixed, floating, indexed_face, zero, variable_known, unknown}, face_value, initial_face_value, face_unit, currency_id (settlement), issue_date, maturity_date (NULL for perpetual), is_perpetual, coupon_frequency, day_count, is_amortizing, is_subordinated, is_structured, qualified_only, high_risk, listing_level, issue_size, primary_board, start_date_moex, status ∈ {active, matured, delisted}, …, source, updated_at, last_seen_run)`
+- `ref.bond(secid PK, isin, regnumber, issuer_id, name, short_name, bond_type (MOEX label), bond_class (derived enum: ofz_pd, ofz_pk, ofz_in, ofz_ad, sovereign_fx, subfederal, municipal, corporate, exchange_bond, structured, mbs, …), coupon_type ∈ {fixed, floating, indexed_face, zero, variable_known, unknown}, face_value, initial_face_value, face_unit, currency_id (settlement), issue_date, maturity_date (NULL for perpetual), is_perpetual, coupon_frequency, day_count, is_amortizing, is_subordinated, is_structured, qualified_only, high_risk, listing_level, issue_size, primary_board, start_date_moex, status ∈ {active, matured, delisted}, …, source, updated_at, last_seen_run)` — `coupon_type_basis` ∈ {moex_label, benchmark, ofz_series, schedule, schedule_constant, none}: `schedule_constant` (0421) = an active unlabelled bond classified `fixed` because it has no benchmark / COUPON_DETAILS and no rate formula from any source, ≥ 2 paid coupons, one constant `value_prc` over all paid and future coupons, and a CBR key-rate change (`md.fixing` KEY_RATE) after the start of its first and on/before the start of its last paid coupon period (a key-rate floater would show different paid rates); never for structured notes. Seed 2026-10-16: 335 of the 433 active `unknown/schedule` bonds qualify (mostly subfederal/municipal/corporate amortizers).
 - `ref.bond_board(secid, board, is_primary, lot_size, min_step, decimals, settle_code, currency_id, listed, first_seen, last_seen)`
 - `ref.bond_coupon(secid, coupon_no, start_date, pay_date (coupondate), record_date, amount, value_rub, value_prc, face_value, face_unit, status ∈ {known, current_published, projected_by_moex, unknown}, is_deleted, source, updated_at)` PK (secid, coupon_no) — `coupon_no` = position in the complete MOEX schedule. Status semantics for consumers: `known` = fixed published amount or paid coupon; `current_published` = the current floater period as MOEX shows it, not proven fixed in advance (may be a projection; `known` only with a curated formula stating a fixing before the period); `projected_by_moex` = MOEX forward-fill / in-arrears / indexed face / unknown coupon type; `unknown` = no value. An active bond without MOEX fixed/floating labels is never `fixed` just because its schedule is fully valued.
 - `ref.bond_amortization(secid, amort_date, value_prc, value (amount), face_value, data_source)` PK (secid, amort_date)
@@ -94,9 +95,9 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
 - `md.bond_eod_yield(trade_date, secid, board, yield_date, yield_date_type (MATDATE/OFFER/…), price, effective_yield_pct, waprice, effective_yield_waprice_pct, duration_days, zspread_bp, gspread_bp, yield_to_offer_pct, …)` PK (trade_date, secid, board) — ISS `/history/.../yields` (EFFECTIVEYIELD to MOEX's yield date: nearest offer while ahead, else maturity).
 - `md.bond_quote_intraday(ts (source UPDATETIME), secid, board, bid, offer, last, waprice, yield, accrued, num_trades, value, latency ∈ {realtime, delayed}, capture_id ON DELETE SET NULL)` PK (secid, board, ts) — only changed rows stored; `md.bond_quote_last` = last state per (secid, board) for change detection. Raw endpoint `intraday:bonds_marketdata` (retention).
 - `md.fx_eod(trade_date, secid, board, open, low, high, close, waprice, volume, value, num_trades, capture_id)` — CETS history (all `*_TOD/_TOM` and crosses).
-- `md.fx_intraday(ts, secid, board, source, source_variant, bid, offer, last, waprice, …, latency, capture_id)` PK (secid, board, source, source_variant, ts) — change-only, row history on (same-ts updates keep the old image). `ts` of a quote older than SYSTIME's session = previous business day of the calendar.
+- `md.fx_intraday(ts, secid, board, source, source_variant, bid, offer, last, waprice, …, latency, capture_id)` PK (secid, board, source, source_variant, ts) — change-only, row history on (same-ts updates keep the old image). `ts` of a quote later than SYSTIME = the previous **trading day** of the engine (business day or weekend session, `mdhub.core.timeutil.previous_session_day`); a changed row older than the last stored `ts` of its series is logged. CETS has no weekend sessions; bond quotes (`md.bond_quote_intraday`) use business days (`BONDS_TRADE_WEEKEND_SESSIONS = False`: bond boards are assumed not to trade in the stock engine's weekend sessions).
 - `md.futures_eod(trade_date, secid, open, low, high, close, settle_price, waprice, volume, value, open_position, capture_id)`
-- `md.futures_intraday(ts, secid, source, source_variant, bid, offer, last, open_position, latency, capture_id)` PK (secid, source, source_variant, ts) — row history on.
+- `md.futures_intraday(ts, secid, source, source_variant, bid, offer, last, open_position, latency, capture_id)` PK (secid, source, source_variant, ts) — row history on. Dated with FORTS trading days: the Monday 08:50 poll that still shows the Sunday session's last trade dates it Sunday, not Friday.
 - `md.algopack_fo_tradestats` / `md.algopack_fo_obstats` PK (secid, interval_ts) and `md.algopack_futoi` PK (ticker, interval_ts, clgroup) — AlgoPack 5-minute bars of FX futures (`*_rub_per_unit` normalized prices).
 - `md.index_eod(trade_date, secid, board, open, high, low, close, value, volume, duration_days, yield_pct, basis ∈ {history, marketdata}, source_ts, capture_id)` PK (trade_date, secid) (RUSFAR family, RGBI, RUCBI, MOEXREPO…); `basis = marketdata` is a same-day value later replaced by history.
 - `md.fixing(index_code, fixing_date, source, value, unit ∈ {pct, index}, effective_date, published_on, published_at, details jsonb, capture_id)` PK (index_code, fixing_date, source) — KEY_RATE (by effective date), RUONIA (+ details: volume, deals, percentiles), RUONIA_INDEX, TERM_RUONIA_1M/3M/6M, CBR_DEPOSIT_STANDING / CBR_LENDING_STANDING (lending: column 7 "Основной механизм" from 2023-10-16, column 9 before — one column per date, never spliced), legacy RUSFAR/other sources…
@@ -151,34 +152,49 @@ Migration ownership (to avoid conflicts): `0001-0099` core/ops; `0100-0199` ref 
 | `fx_moex_intraday` | every 5 min 07:00–23:55 (MOEX_FX) | ISS CETS marketdata | change-only |
 | `fx_moex_eod` | 00:20 (prelim, the session that just ended) and 07:20 (final, D-1 recheck) | ISS selt history | |
 | `fx_indicative` | 14:10, 19:10 | ISS indicativerates + fixings | |
-| `futures_intraday` | every 1 min 08:50–23:50 (MOEX_FORTS) | APIM realtime marketdata (FX futures + perpetuals) | fallback ISS delayed, labelled |
+| `futures_intraday` | every 1 min 08:50–23:50 on MOEX_FORTS trading days (business days + weekend sessions) | APIM realtime marketdata (FX futures + perpetuals) | fallback ISS delayed, labelled |
 | `futures_eod` | 19:25 (prelim, D) and 07:25 next day (final, D-1) | ISS FORTS history (settle, OI) | backfill tasks of 10 days |
-| `algopack_fx_futures` | every 5 min, minutes 1-56/5, 07:01–23:56 | APIM tradestats/obstats/futoi | each poll re-reads the whole day per FX contract (`from=till=today`), dedup on (secid, interval); interval completeness check; backfill tasks of 3 days |
+| `algopack_fx_futures` | every 5 min, minutes 1-56/5, 07:01–23:56 on MOEX_FORTS trading days (business days + weekend sessions) | APIM tradestats/obstats/futoi | incremental polls read the latest bars (`latest=1`, all contracts; ~4 requests); every `MDHUB_ALGOPACK_FULL_REREAD_MINUTES` (30) and whenever the interval check finds holes the poll re-reads the whole trading day per FX contract and FUTOI ticker (`from=` first weekend-session day before today, else today; ~140 requests), captures `intraday:reread:*` (7-day retention). ≈ 5.4k APIM requests per trading day (was ≈ 28k). Dedup on (secid, interval); backfill tasks of 3 days |
 | `indices_eod` | 12:40 (RUSFAR), 18:10 (RUSFARRT), 19:30 all; `days_back=[0,1]` | ISS index history (+ same-day marketdata) | `indices_all` freshness lag 2 business days (D-1 history arrives with the 12:40 run) |
 | `zcyc` | every 15 min 10:00–19:00 (intraday); EOD 19:05; final 07:10 next day | ISS zcyc | |
 | `cbr_daily` | 09:00, 14:30, 16:30, 18:30 (all days) | CBR | key rate, RUONIA (+index, term), official FX (all ccy), liquidity, standing rates |
 | `cbr_meetings` | 09:10 on the 1st business day of the month (calendar refresh + meetings); 15:00 daily `post_meeting` (no-op unless a meeting in the last 4 days is unconfirmed) | CBR + MOEX ISS calendars | refreshes `ref.calendar_day` first, then meetings, then resolves effective dates |
 | `ecb_fx` | 18:30 (all days) | ECB | |
 | `swaps_ratescalcs` | every 30 min 09:00–23:00 | Ratescalcs | skip identical content |
-| `quality` | 08:30 and 20:30 | DB | freshness & gap detection → `ops.data_gap` + `ops.backfill_task`; job health; re-runs scheduled fires skipped with `lock_busy` |
+| `quality` | 08:30 and 20:30 | DB | freshness & gap detection → `ops.data_gap` + `ops.backfill_task`; job health (only `schedule`/`catch_up` runs count as a fire that ran); re-runs scheduled fires skipped with `lock_busy` (trigger `catch_up`) |
 | `backfill_worker` | every 10 min (all days) | DB | processes backfill tasks (8-minute budget), yields to waiting scheduled runs |
-| `maintenance` | 02:00 `backup` (pg_dump, keep 14); 03:00 `retention` (all days) | DB | raw retention of `intraday:` captures (90 days), orphaned `running` job runs (>12 h) → failed, VACUUM ANALYZE |
+| `maintenance` | 02:00 `backup` (pg_dump, keep 14); 03:00 `retention` (all days) | DB | raw retention of `intraday:reread:` captures (7 days, `MDHUB_RAW_RETENTION_DAYS_REREAD`) and other `intraday:` captures (90 days), orphaned `running` job runs (>12 h) → failed, VACUUM ANALYZE |
 
 **Lock contention.** Every job holds advisory lock `mdhub.job:<name>`. A scheduled fire waits up to
 15 minutes for it (polling rules — intraday snapshots, AlgoPack, Ratescalcs, the backfill worker —
 do not wait). Backfill tasks of heavy datasets are short and yield to a waiting scheduled run. A fire
 that still cannot run is recorded as `skipped` with error `lock_busy: …`; job health reports it as
 `missed` and the next `quality` run re-executes it (`days_back` resolved against the fire date).
+Every run records its origin in `ops.job_run.trigger` (scheduler `schedule`, quality catch-up
+`catch_up`, backfill task `backfill`, `mdhub run`/`mdhub ops` `cli`): for "did the fire run" job
+health considers only `schedule`/`catch_up` runs, so a backfill or CLI run of the same job after a
+lock-busy skip (or after a fire the scheduler never attempted) no longer hides the missed fire. A
+waiter re-announces itself on every poll (`mdhub.jobwait:<name>`) until it gets the lock.
+
+**Weekend sessions (known limitation).** Polls of `futures_intraday` and `algopack_fx_futures`
+run on weekend-session days and the Monday re-read covers the preceding weekend-session dates, but
+the quality gap scan does **not** expect data on weekend-session days for any dataset
+(`futures_eod`: ISS FORTS history attributes weekend trades to the next session date; AlgoPack's
+`tradedate` attribution of weekend-session bars is unverified). A weekend session whose polls all
+failed is therefore not reported as a gap; `interval_holes` still checks each polled day.
 
 **Backfill contract.** A dataset's `backfill_job` accepts `date_from`/`date_to`; a day for which the
-source confirms "no data" is recorded with `mdhub.core.gaps.record_no_data` (`open` within a 1-day
-grace period, then `unfillable`), not as a partial run. A partial run that leaves gaps of its range
+source confirms "no data" is recorded with `mdhub.core.gaps.record_no_data` (`open` until at least
+one **business day of the dataset's calendar** lies between the day and today — so Friday found
+empty by Monday's final run stays open and Tuesday decides, likewise D-1 = 12-30 seen on 01-11 —
+then `unfillable`), not as a partial run. A partial run that leaves gaps of its range
 open counts as a failed attempt (backoff, then `failed` and a 7-day cooldown).
 
 ## 7. Configuration (env)
 
 `MDHUB_DATABASE_URL` (required), `MDHUB_TZ=Europe/Moscow`, `MDHUB_HTTP_PROXY` (optional),
-`MDHUB_ISS_RPS=3`, `MDHUB_RAW_RETENTION_DAYS_INTRADAY=90`, `MDHUB_API_TOKENS` (comma list,
+`MDHUB_ISS_RPS=3`, `MDHUB_RAW_RETENTION_DAYS_INTRADAY=90`, `MDHUB_RAW_RETENTION_DAYS_REREAD=7`
+(`intraday:reread:` captures), `MDHUB_ALGOPACK_FULL_REREAD_MINUTES=30`, `MDHUB_API_TOKENS` (comma list,
 read API bearer tokens), `MDHUB_ENABLE_SDFI=false`, `MDHUB_BACKUP_DIR=/var/backups/mdhub`
 (pg_dump target of `maintenance mode=backup` / `mdhub ops backup`), `MDHUB_API_POOL_SIZE=8`
 (read-API connection pool), `MDHUB_LOG_LEVEL=INFO`, `MDHUB_HTTP_TIMEOUT=30`, plus source
@@ -224,7 +240,9 @@ snapshot) + `MANIFEST.txt` + `SHA256SUMS`; `deploy/restore_seed.sh` (compose, or
 `--database-url` for any PostgreSQL 16) restores it (pg_restore `--no-owner --no-privileges`,
 `mdhub migrate`, `ops.schema_migration` checksum check, read-only grants). Ad-hoc dump: `mdhub ops backup` (same as `maintenance mode=backup`). After
 restoring an older seed run `mdhub migrate`, then `mdhub calendar seed` (calendars from 2019,
-repairs ISS-calendar rows) and the next `bonds_static` full run (coupon status semantics).
+repairs ISS-calendar rows, fills `ref.weekend_session` from the ISS calendar) and the next
+`bonds_static` full run (coupon status semantics, `schedule_constant` classification) — or
+`mdhub run bonds_static -p mode=full` right away.
 Bare-metal alternative: `deploy/systemd/*.service|*.timer` + `deploy/install.sh` (Ubuntu 24.04:
 postgresql-16, uv).
 

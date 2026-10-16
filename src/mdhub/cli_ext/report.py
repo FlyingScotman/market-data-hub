@@ -410,6 +410,12 @@ def _section_summary(
     ]
     problems = [f"{c.spec.name}: {c.problem}" for c in datasets if c.problem]
     open_gaps = sum(int(g["gaps"]) for g in gaps if g["status"] == "open")
+    by_status: dict[str, int] = {}
+    for g in gaps:
+        by_status[str(g["status"])] = by_status.get(str(g["status"]), 0) + int(g["gaps"])
+    closed = ", ".join(
+        f"{st} {by_status.get(st, 0)}" for st in ("backfilled", "unfillable", "not_expected")
+    )
     failed = [r["job"] for r in runs if r["status"] in ("failed", "partial")]
     return [
         "## Summary",
@@ -420,7 +426,7 @@ def _section_summary(
         "- series with missing days: " + (", ".join(series_missing) if series_missing else "none"),
         "- days below min_rows_per_day: " + (", ".join(thin) if thin else "none"),
         "- dataset problems: " + ("; ".join(problems) if problems else "none"),
-        f"- open gaps (ops.data_gap): {open_gaps}",
+        f"- open gaps (ops.data_gap): {open_gaps} (other gap rows: {closed})",
         "- jobs whose last run failed/partial: " + (", ".join(failed) if failed else "none"),
         "",
     ]
@@ -602,7 +608,17 @@ def _section_datasets(
 def _section_ops(
     gaps: Sequence[dict[str, Any]], tasks: Sequence[dict[str, Any]], runs: Sequence[dict[str, Any]]
 ) -> list[str]:
-    lines = ["## Operations", "", "### ops.data_gap by dataset and status", ""]
+    lines = [
+        "## Operations",
+        "",
+        "### ops.data_gap by dataset and status",
+        "",
+        "Status: `open` = missing, queued for backfill; `backfilled` = data present now; "
+        "`unfillable` = the source confirmed no data after the grace period (one business "
+        "day); `not_expected` = the calendar no longer expects the day and there is no data "
+        "(e.g. a holiday added to the calendar).",
+        "",
+    ]
     lines += _md_table(
         ["dataset", "status", "gaps", "days", "first", "last"],
         [(g["dataset"], g["status"], g["gaps"], g["days"], g["first"], g["last"]) for g in gaps],

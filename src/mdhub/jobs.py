@@ -372,6 +372,11 @@ class JobContext:
     def is_business_day(self, day: date, calendar: str = DEFAULT_CALENDAR) -> bool:
         return self.calendar(day, calendar)
 
+    def is_trading_day(self, day: date, calendar: str = DEFAULT_CALENDAR) -> bool:
+        """Business day or a weekend/holiday session of ``calendar``'s engine
+        (:meth:`mdhub.core.bizday.CalendarPredicate.is_trading_day`)."""
+        return self.calendar.is_trading_day(day, calendar)
+
     def business_dates(
         self,
         days_back: list[int] | tuple[int, ...],
@@ -442,10 +447,14 @@ def _job_lock(
                     _unlock(cur, wait_key)
                 locked = _try_lock(cur, key)
                 if not locked and wait_s > 0:
+                    # Announce the wait; a backfill run holds wait_key for an instant while it
+                    # checks for waiters, so a failed announcement is retried on every poll.
                     announced = _try_lock(cur, wait_key)
                     deadline = time.monotonic() + wait_s
                     while not locked and time.monotonic() < deadline:
                         time.sleep(max(0.0, min(poll_s, deadline - time.monotonic())))
+                        if not announced:
+                            announced = _try_lock(cur, wait_key)
                         locked = _try_lock(cur, key)
                     if announced:
                         _unlock(cur, wait_key)
@@ -470,6 +479,7 @@ def run_job(
     lock_wait_s: float = 0.0,
     lock_poll_s: float = 5.0,
     yield_to_waiters: bool = False,
+    trigger: str = "other",
 ) -> JobOutcome:
     """Run job ``name`` once and record it in ``ops.job_run``.
 
@@ -480,6 +490,9 @@ def run_job(
     :param lock_wait_s: how long to wait for the lock (scheduled runs wait; default 0).
     :param yield_to_waiters: skip (``lock_busy``) when another caller is waiting for the lock
         (used by backfill runs so that scheduled runs go first).
+    :param trigger: origin recorded in ``ops.job_run.trigger`` (``schedule``, ``catch_up``,
+        ``backfill``, ``cli``, ``api``, ``other``); job health counts only ``schedule`` and
+        ``catch_up`` runs as a scheduled fire that ran.
     :returns: outcome with the run id and final status.
     :raises UnknownJobError: job not registered.
     :raises JobParamError: invalid parameters (nothing recorded).
@@ -498,7 +511,7 @@ def run_job(
     )
     with lock_cm as busy:
         result: Any = None
-        with job_run(db, name, coerced, settings=settings) as run:
+        with job_run(db, name, coerced, settings=settings, trigger=trigger) as run:
             if busy is not None:
                 raise JobAlreadyRunning(busy)
             ctx = JobContext(
@@ -523,10 +536,11 @@ def record_skipped_run(
     reason: str,
     *,
     settings: Settings | None = None,
+    trigger: str = "schedule",
 ) -> int:
     """Record a run of ``name`` that was not executed (``skipped`` with ``reason``)."""
     run_id = -1
-    with job_run(db, name, params, settings=settings) as run:
+    with job_run(db, name, params, settings=settings, trigger=trigger) as run:
         run_id = run.id
         run.mark_skipped(reason)
     return run_id

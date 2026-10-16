@@ -38,6 +38,8 @@ from mdhub.core.upsert import UpsertResult, atomic
 from mdhub.db.pool import Database
 
 __all__ = [
+    "JOB_TRIGGERS",
+    "SCHEDULED_TRIGGERS",
     "JobRun",
     "job_run",
     "json_default",
@@ -50,6 +52,14 @@ __all__ = [
 log = logging.getLogger(__name__)
 
 MAX_ERROR_CHARS = 4000
+
+JOB_TRIGGERS: Final = ("schedule", "catch_up", "backfill", "cli", "api", "other")
+"""Values of ``ops.job_run.trigger`` (0421): scheduler fire, quality catch-up of a fire skipped
+with ``lock_busy``, backfill task run, CLI, read API, anything else."""
+
+SCHEDULED_TRIGGERS: Final = ("schedule", "catch_up")
+"""Runs that count as "the scheduled fire ran" for job health (``NULL`` = recorded before 0421
+also counts)."""
 
 
 def json_default(value: Any) -> Any:
@@ -109,8 +119,12 @@ def job_run(
     params: Mapping[str, Any] | None = None,
     *,
     settings: Settings | None = None,
+    trigger: str | None = None,
 ) -> Iterator[JobRun]:
     """Record a job execution in ``ops.job_run``.
+
+    ``trigger`` (:data:`JOB_TRIGGERS`) records who started the run (``ops.job_run.trigger``):
+    job health counts only ``schedule``/``catch_up`` runs as "the scheduled fire ran".
 
     Inserts a ``running`` row on entry (committed immediately). On exit sets ``finished_at``,
     row counts and the status:
@@ -123,11 +137,14 @@ def job_run(
     * ``succeeded`` - otherwise.
     """
     params = dict(params or {})
+    if trigger is not None and trigger not in JOB_TRIGGERS:
+        raise ValueError(f"unknown job trigger {trigger!r} (one of {', '.join(JOB_TRIGGERS)})")
     secrets = settings.secret_values() if settings is not None else []
     with db.connection() as conn, conn.cursor(row_factory=tuple_row) as cur:
         row = cur.execute(
-            "INSERT INTO ops.job_run (job, params, host) VALUES (%s, %s, %s) RETURNING id",
-            (job, _jsonb(params), socket.gethostname()),
+            "INSERT INTO ops.job_run (job, params, host, trigger) VALUES (%s, %s, %s, %s) "
+            "RETURNING id",
+            (job, _jsonb(params), socket.gethostname(), trigger),
         ).fetchone()
     assert row is not None
     run = JobRun(int(row[0]), job, params)

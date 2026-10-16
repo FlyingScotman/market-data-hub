@@ -8,8 +8,11 @@
     ``pg_dump`` major version must match the server (16).
 
 ``mode="retention"`` (03:00)
-    Deletes ``ops.raw_capture`` rows of **intraday** endpoints older than
-    ``MDHUB_RAW_RETENTION_DAYS_INTRADAY`` days (default 90) in batches, then runs
+    Deletes ``ops.raw_capture`` rows of **re-read** endpoints (prefix
+    :data:`REREAD_ENDPOINT_PREFIX`, ``intraday:reread:``: AlgoPack whole-day re-reads whose bars
+    mostly repeat stored ones) older than ``MDHUB_RAW_RETENTION_DAYS_REREAD`` days (default 7)
+    and of all other **intraday** endpoints older than ``MDHUB_RAW_RETENTION_DAYS_INTRADAY``
+    days (default 90) in batches, then runs
     ``VACUUM (ANALYZE)`` (autocommit, outside a transaction) on ``ops.raw_capture`` and every
     table in ``ops``/``ref``/``md`` larger than ``vacuum_min_mb``. EOD/static raw is kept
     forever.
@@ -47,6 +50,7 @@ __all__ = [
     "BACKUP_DIR_ENV",
     "DEFAULT_BACKUP_DIR",
     "INTRADAY_ENDPOINT_PREFIX",
+    "REREAD_ENDPOINT_PREFIX",
     "BackupResult",
     "backup_command",
     "backup_dir",
@@ -62,6 +66,9 @@ __all__ = [
 
 INTRADAY_ENDPOINT_PREFIX: Final = "intraday:"
 """``ops.raw_capture.endpoint`` prefix marking intraday captures (subject to retention)."""
+REREAD_ENDPOINT_PREFIX: Final = "intraday:reread:"
+"""Intraday captures of periodic re-reads (shorter retention,
+``MDHUB_RAW_RETENTION_DAYS_REREAD``)."""
 
 BACKUP_DIR_ENV: Final = "MDHUB_BACKUP_DIR"
 DEFAULT_BACKUP_DIR: Final = "/var/backups/mdhub"
@@ -226,8 +233,15 @@ def blocking_capture_refs(conn: psycopg.Connection[Any]) -> list[tuple[str, str,
     return [(str(a), str(b), str(c)) for a, b, c in rows]
 
 
-def purge_intraday_raw(db: Database, retention_days: int, *, batch: int = DELETE_BATCH) -> int:
-    """Delete intraday raw captures older than ``retention_days``; returns rows deleted.
+def purge_intraday_raw(
+    db: Database,
+    retention_days: int,
+    *,
+    batch: int = DELETE_BATCH,
+    prefix: str = INTRADAY_ENDPOINT_PREFIX,
+) -> int:
+    """Delete raw captures whose endpoint starts with ``prefix`` (default ``intraday:``) older
+    than ``retention_days``; returns rows deleted.
 
     Captures still referenced through a foreign key that does not null itself on delete
     (:func:`blocking_capture_refs`) are kept, so retention never fails on, e.g., a rejected
@@ -258,7 +272,8 @@ def purge_intraday_raw(db: Database, retention_days: int, *, batch: int = DELETE
     total = 0
     while True:
         with db.connection() as conn:
-            cur = conn.execute(query, (INTRADAY_ENDPOINT_PREFIX + "%", retention_days, batch))
+            like = prefix.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            cur = conn.execute(query, (like, retention_days, batch))
             n = cur.rowcount
         total += n
         if n < batch:
@@ -297,6 +312,7 @@ def maintenance(
     keep: int = 14,
     backup_dir_path: str | None = None,
     retention_days: int | None = None,
+    reread_retention_days: int | None = None,
     vacuum: bool = True,
     vacuum_min_mb: int = 64,
 ) -> dict[str, Any]:
@@ -305,6 +321,7 @@ def maintenance(
     :param keep: dumps to keep (backup).
     :param backup_dir_path: override ``MDHUB_BACKUP_DIR``.
     :param retention_days: override ``MDHUB_RAW_RETENTION_DAYS_INTRADAY``.
+    :param reread_retention_days: override ``MDHUB_RAW_RETENTION_DAYS_REREAD``.
     :param vacuum: run ``VACUUM (ANALYZE)`` after retention.
     """
     secrets = ctx.settings.secret_values()
@@ -324,10 +341,17 @@ def maintenance(
         }
     if mode == "retention":
         days = retention_days or ctx.settings.raw_retention_days_intraday
-        result: dict[str, Any] = {"mode": mode, "retention_days": days}
+        reread_days = min(days, reread_retention_days or ctx.settings.raw_retention_days_reread)
+        result: dict[str, Any] = {
+            "mode": mode,
+            "retention_days": days,
+            "reread_retention_days": reread_days,
+        }
         result["orphaned_runs_reaped"] = reap_orphaned_runs(ctx.db)
         try:
-            result["raw_deleted"] = purge_intraday_raw(ctx.db, days)
+            result["raw_deleted"] = purge_intraday_raw(
+                ctx.db, reread_days, prefix=REREAD_ENDPOINT_PREFIX
+            ) + purge_intraday_raw(ctx.db, days)
         except psycopg.errors.ForeignKeyViolation as exc:
             diag = exc.diag.table_name or "?"
             ctx.run.mark_partial(

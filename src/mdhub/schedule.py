@@ -6,6 +6,9 @@ filter evaluated on the run date (or on the date ``gate_offset_days`` before it)
 
 * ``"business"`` - only on business days of ``calendar`` (``ref.calendar_day``, fallback
   Monday-Friday),
+* ``"trading"`` - business days plus the weekend/holiday sessions of ``calendar``'s engine
+  (``ref.weekend_session``, :meth:`~mdhub.core.bizday.CalendarPredicate.is_trading_day`):
+  polls of markets that trade on such days (FORTS FX futures),
 * ``"all"`` - every day,
 * ``"first_business_of_month"`` - only on the first business day of the month.
 
@@ -64,7 +67,7 @@ __all__ = [
 
 log = logging.getLogger(__name__)
 
-DayFilter = Literal["business", "all", "first_business_of_month"]
+DayFilter = Literal["business", "trading", "all", "first_business_of_month"]
 
 SCHEDULED_LOCK_WAIT_S: Final = 900
 """A scheduled (non-polling) run waits up to 15 minutes for its job lock. Backfill tasks of
@@ -173,9 +176,14 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
     ),
     "fx_indicative": (_r("10 14 * * *"), _r("10 19 * * *")),
     "futures_intraday": (
-        _poll("50-59 8 * * *", calendar="MOEX_FORTS", note="every 1 min 08:50-23:50"),
-        _poll("* 9-22 * * *", calendar="MOEX_FORTS"),
-        _poll("0-50 23 * * *", calendar="MOEX_FORTS"),
+        _poll(
+            "50-59 8 * * *",
+            days="trading",
+            calendar="MOEX_FORTS",
+            note="every 1 min 08:50-23:50, business days and weekend sessions",
+        ),
+        _poll("* 9-22 * * *", days="trading", calendar="MOEX_FORTS"),
+        _poll("0-50 23 * * *", days="trading", calendar="MOEX_FORTS"),
     ),
     "futures_eod": (
         _r("25 19 * * *", calendar="MOEX_FORTS", mode="prelim", days_back=[0]),
@@ -184,8 +192,10 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
     "algopack_fx_futures": (
         _poll(
             "1-56/5 7-23 * * *",
+            days="trading",
             calendar="MOEX_FORTS",
-            note="every 5 min, +1 min offset, 07:01-23:56; each poll re-reads the whole day",
+            note="every 5 min, +1 min offset, 07:01-23:56, business days and weekend sessions; "
+            "incremental (latest bars), whole-day re-read every 30 min or on holes",
         ),
     ),
     "indices_eod": (
@@ -241,6 +251,8 @@ def rule_applies(rule: Rule, run_date: date, calendar: CalendarPredicate) -> boo
         return True
     if rule.days == "business":
         return calendar(day, rule.calendar)
+    if rule.days == "trading":
+        return calendar.is_trading_day(day, rule.calendar)
     if rule.days == "first_business_of_month":
         if not calendar(day, rule.calendar):
             return False
@@ -321,6 +333,7 @@ class _RuleRunner:
                     f"{LOCK_BUSY}: job {self.name}: previous run in this process still in "
                     f"progress after {wait:g} s",
                     settings=self.settings,
+                    trigger="schedule",
                 )
             return
         try:
@@ -332,6 +345,7 @@ class _RuleRunner:
                 registry=self.registry,
                 calendar=self.calendar,
                 lock_wait_s=max(0.0, wait - (time.monotonic() - started)),
+                trigger="schedule",
             )
             log.info("%s finished: %s (run %s)", self.name, outcome.status, outcome.run_id)
         except Exception:

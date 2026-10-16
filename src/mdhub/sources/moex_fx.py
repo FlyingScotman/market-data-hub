@@ -49,7 +49,7 @@ from mdhub.core.iss import (
     to_str,
     to_time,
 )
-from mdhub.core.timeutil import MSK
+from mdhub.core.timeutil import MSK, previous_session_day
 
 __all__ = [
     "CETS_SECURITIES",
@@ -123,30 +123,21 @@ def _price(value: Any, *, field: str, zero_is_null: bool) -> Decimal | None:
     return d
 
 
-def previous_session_day(day: date, is_business_day: Callable[[date], bool] | None) -> date:
-    """The last business day before ``day`` (``is_business_day``; default Monday-Friday)."""
-    pred = is_business_day or (lambda d: d.weekday() < 5)
-    cur = day - timedelta(days=1)
-    for _ in range(31):
-        if pred(cur):
-            return cur
-        cur -= timedelta(days=1)
-    return day - timedelta(days=1)
-
-
 def snapshot_ts(
     update_time: Any,
     systime: datetime | None,
     *,
     field: str = "UPDATETIME",
-    is_business_day: Callable[[date], bool] | None = None,
+    is_trading_day: Callable[[date], bool] | None = None,
 ) -> datetime | None:
     """Combine an ISS ``UPDATETIME`` (MSK wall clock) with the date of ``SYSTIME``.
 
     If the time lies after SYSTIME the quote is from an earlier session (a snapshot taken
     after midnight, or before Monday's session, still carries the last session's update):
-    the previous **business day** of the trading calendar is used (``is_business_day``,
-    default Monday-Friday) - never a weekend/holiday by calendar arithmetic.
+    the previous **trading day** of the engine is used (``is_trading_day``: business days
+    plus weekend/holiday sessions, :func:`mdhub.core.timeutil.previous_session_day`; default
+    Monday-Friday) - a Monday pre-open FORTS snapshot after a Sunday session is dated Sunday,
+    never Friday by the settlement calendar.
     """
     t = to_time(update_time, field=field)
     if t is None or systime is None:
@@ -154,7 +145,7 @@ def snapshot_ts(
     sys_msk = systime.astimezone(MSK)
     ts = datetime.combine(sys_msk.date(), t, tzinfo=MSK)
     if ts > sys_msk + timedelta(seconds=1):
-        ts = datetime.combine(previous_session_day(sys_msk.date(), is_business_day), t, tzinfo=MSK)
+        ts = datetime.combine(previous_session_day(sys_msk.date(), is_trading_day), t, tzinfo=MSK)
     return ts
 
 
@@ -303,7 +294,7 @@ FX_INTRADAY_VALUE_COLUMNS: Final = (
 
 
 def parse_fx_marketdata(
-    payload: Mapping[str, Any], *, is_business_day: Callable[[date], bool] | None = None
+    payload: Mapping[str, Any], *, is_trading_day: Callable[[date], bool] | None = None
 ) -> tuple[list[dict[str, Any]], str]:
     """``marketdata`` block of a selt/CETS snapshot -> (rows for ``md.fx_intraday``, latency).
 
@@ -313,7 +304,7 @@ def parse_fx_marketdata(
     rows: list[dict[str, Any]] = []
     for r in parse_block(payload, "marketdata", required=_FX_MD_REQUIRED):
         systime = to_datetime(r["SYSTIME"], field="SYSTIME")
-        ts = snapshot_ts(r["UPDATETIME"], systime, is_business_day=is_business_day)
+        ts = snapshot_ts(r["UPDATETIME"], systime, is_trading_day=is_trading_day)
         row = {
             "ts": ts,
             "secid": str(_req(r, "SECID")),
@@ -727,7 +718,7 @@ def parse_futures_marketdata(
     payload: Mapping[str, Any],
     factors: Mapping[str, Decimal | None],
     *,
-    is_business_day: Callable[[date], bool] | None = None,
+    is_trading_day: Callable[[date], bool] | None = None,
 ) -> tuple[list[dict[str, Any]], str]:
     """FORTS ``marketdata`` -> (``md.futures_intraday`` rows without source_variant, latency).
 
@@ -747,7 +738,7 @@ def parse_futures_marketdata(
         last = _price(r["LAST"], field="LAST", zero_is_null=True)
         rows.append(
             {
-                "ts": snapshot_ts(r["UPDATETIME"], systime, is_business_day=is_business_day),
+                "ts": snapshot_ts(r["UPDATETIME"], systime, is_trading_day=is_trading_day),
                 "secid": secid,
                 "trade_date": to_date(r["TRADEDATE"], field="TRADEDATE"),
                 "bid": bid,

@@ -2,8 +2,10 @@
 
 Runs :func:`mdhub.loaders.calendar.seed_calendar` (one ``ops.job_run`` named
 ``calendar_seed``): observed MOEX trading days and CBR RUONIA observation days from ``--since``
-(default 2019-01-01), the days the MOEX ISS calendar lists, and the curated file. Re-running it
-repairs earlier data (ISS rows no longer listed are removed; source precedence decides).
+(default 2019-01-01), the days the MOEX ISS calendar lists (plus the weekend sessions of each
+engine -> ``ref.weekend_session``), and the curated file. Re-running it repairs earlier data
+(ISS rows no longer listed are removed unless the ISS answer looks incomplete; source precedence
+decides).
 Load RUONIA history first (``cbr_daily``) for RU_PRODUCTION.
 """
 

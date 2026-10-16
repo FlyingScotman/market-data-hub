@@ -1262,7 +1262,7 @@ def map_md(
         raise LegacyImportError(f"unknown target(s) {unknown}; choose from {list(TARGETS)}")
     import_id = _check_import(db, allow_unverified)
     reports: list[TargetReport] = []
-    with job_run(db, JOB, {"targets": chosen, "legacy_import_id": import_id}) as run:
+    with job_run(db, JOB, {"targets": chosen, "legacy_import_id": import_id}, trigger="cli") as run:
         for name in chosen:
             rep = TargetReport(target=name)
             t0 = _time.monotonic()

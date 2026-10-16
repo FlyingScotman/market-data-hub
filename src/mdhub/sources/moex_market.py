@@ -47,7 +47,7 @@ from mdhub.core.iss import (
     to_str,
     to_time,
 )
-from mdhub.core.timeutil import MSK, date_range, msk_datetime
+from mdhub.core.timeutil import MSK, date_range, msk_datetime, previous_session_day
 
 __all__ = [
     "BONDS_HISTORY_PATH",
@@ -378,21 +378,15 @@ class BondSnapshot:
 def _quote_ts(
     systime: datetime,
     update_time: time,
-    is_business_day: Callable[[date], bool] | None = None,
+    is_trading_day: Callable[[date], bool] | None = None,
 ) -> datetime:
     """Quote datetime: SYSTIME's date + UPDATETIME; a time after SYSTIME is from the previous
-    session - the previous **business day** of the calendar (``is_business_day``, default
-    Monday-Friday), not simply the day before (a Monday pre-session snapshot carries Friday's
-    last update)."""
+    session - the previous **trading day** of the market (``is_trading_day``, default
+    Monday-Friday; :func:`mdhub.core.timeutil.previous_session_day`), not simply the day
+    before (a Monday pre-session snapshot carries the last session's update)."""
     ts = msk_datetime(systime.date(), update_time)
     if ts > systime + timedelta(minutes=1):
-        pred = is_business_day or (lambda d: d.weekday() < 5)
-        day = systime.date() - timedelta(days=1)
-        for _ in range(31):
-            if pred(day):
-                break
-            day -= timedelta(days=1)
-        ts = msk_datetime(day, update_time)
+        ts = msk_datetime(previous_session_day(systime.date(), is_trading_day), update_time)
     return ts
 
 
@@ -410,9 +404,11 @@ def detect_latency(lags: Iterable[float]) -> tuple[Latency, float | None]:
 
 
 def parse_bond_marketdata(
-    payload: Mapping[str, Any], *, is_business_day: Callable[[date], bool] | None = None
+    payload: Mapping[str, Any], *, is_trading_day: Callable[[date], bool] | None = None
 ) -> BondSnapshot:
     """Parse the all-boards bond snapshot (``iss.only=marketdata,marketdata_yields``).
+
+    ``is_trading_day``: days on which bond boards trade (dates quotes older than SYSTIME).
 
     Rows lacking ``UPDATETIME``/``SYSTIME`` are skipped (no quote clock, nothing to store).
     """
@@ -448,7 +444,7 @@ def parse_bond_marketdata(
         upd = to_time(raw["UPDATETIME"], field="UPDATETIME")
         if systime is None or upd is None:
             continue
-        ts = _quote_ts(systime, upd, is_business_day)
+        ts = _quote_ts(systime, upd, is_trading_day)
         lags.append((systime - ts).total_seconds())
         max_sys = systime if max_sys is None or systime > max_sys else max_sys
         row: dict[str, Any] = {"secid": secid, "board": board, "ts": ts, "source_ts": systime}

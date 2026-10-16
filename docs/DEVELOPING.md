@@ -60,7 +60,9 @@ src/mdhub/
 - **Intraday raw.** Captures of intraday snapshots/polls use an endpoint starting with
   `intraday:` (`intraday:bonds_marketdata`, `intraday:fx_cets_marketdata`,
   `intraday:algopack_fo_tradestats` ...): `maintenance mode=retention` deletes them after
-  `MDHUB_RAW_RETENTION_DAYS_INTRADAY`. Tables referencing such captures declare
+  `MDHUB_RAW_RETENTION_DAYS_INTRADAY`; captures of periodic re-reads whose content mostly repeats
+  stored rows (AlgoPack whole-day re-reads) use `intraday:reread:` and expire after
+  `MDHUB_RAW_RETENTION_DAYS_REREAD` (7 days). Tables referencing such captures declare
   `capture_id bigint REFERENCES ops.raw_capture (id) ON DELETE SET NULL`; a capture still
   referenced through any other FK (NO ACTION or a NOT NULL column, e.g. `md.zcyc_reject`) is
   skipped by retention, never deleted.
@@ -74,15 +76,21 @@ src/mdhub/
   run (`ctx.run.mark_partial("...")`), never as a value copied from an earlier date.
 - **No-data days (backfill contract).** A business day for which the source returns a valid
   but empty answer is recorded with `mdhub.core.gaps.record_no_data(conn, dataset, day, note,
-  today=ctx.today())` - `open` within a 1-day grace period (data may be published late), then
-  `unfillable` (terminal, never re-queued) - and a loaded day is closed with `close_gap()`. Do
+  today=ctx.today())` - `open` until at least one business day of the dataset's calendar
+  (`DatasetSpec.calendar`) lies between the day and today (data may be published late; Friday
+  seen on Monday stays open), then `unfillable` (terminal, never re-queued) - and a loaded day is
+  closed with `close_gap()`. Gaps the quality scan no longer expects and that have no data
+  become `not_expected`, never `backfilled`. Do
   **not** `mark_partial` for it: a partial backfill run that leaves gaps of its range open is
   retried with backoff and ends `failed`. `prelim` runs only log empty days. Datasets sharing
   a `backfill_job` share its tasks (one per job and range); heavy jobs set
   `DatasetSpec.max_task_days` so one task finishes within the worker's budget.
 - **Revisable intraday tables** keep row history too (a same-`ts` update writes the previous
-  image). A quote time later than the snapshot's SYSTIME belongs to the previous *business day*
-  of the trading calendar (pass `is_business_day` to the parser), not "SYSTIME date - 1".
+  image). A quote time later than the snapshot's SYSTIME belongs to the previous **trading day**
+  of the engine (pass `is_trading_day=lambda d: ctx.is_trading_day(d, CALENDAR)` to the parser:
+  business days plus MOEX weekend sessions from `ref.weekend_session`), not "SYSTIME date - 1"
+  and not the previous settlement business day (FORTS trades on many weekends). Pass
+  `logger=ctx.logger` to `only_changed()` so a quote time that goes backwards is logged.
 - **Decimals.** Prices, rates, amounts are `numeric` in SQL and `Decimal` in Python. Convert
   JSON numbers with `to_decimal()` (goes through `str()`), never `Decimal(float)` or `float`.
 - **Units in column names**: `_pct` (percent, 14.5 = 14.5 %), `_bp` (basis points), `_rub`
@@ -132,7 +140,10 @@ src/mdhub/
   `ingested_at timestamptz NOT NULL DEFAULT now()`, optionally `updated_at timestamptz`,
   `last_seen_run bigint`, `last_seen` — these are the **meta columns** that never count as a
   data change (`core.upsert.META_COLUMNS`, `ops.track_changes()`).
-- Numbers: next free number of the range; review fixes of 2026-10-16 are `0420_review_fixes.sql`.
+- Numbers: next free number of the range; review fixes of 2026-10-16 are `0420_review_fixes.sql`
+  and `0421_review2_fixes.sql` (follow-up review).
+- Every new FK to `ops.raw_capture` gets an index on `capture_id` in the same migration
+  (retention probes and `ON DELETE SET NULL` actions; `tests/test_review2_fixes.py` checks it).
 - Enable history on revisable tables (keys = natural key):
   `CALL ops.enable_history('md.bond_eod', ARRAY['trade_date','secid','board']);`
   Extra table-specific meta columns: third argument, e.g.
@@ -206,7 +217,8 @@ def bonds_eod(
 
 `JobContext` gives `settings`, `db`/`connection()`, `http(**kwargs)`, `run`
 (`id`, `add_counts`, `mark_partial`, `mark_skipped`), `logger`, `today()`,
-`is_business_day()`, `business_dates(days_back)`. `run_job` already wraps the call in
+`is_business_day()` (settlement calendar), `is_trading_day()` (business day or weekend session of
+the engine), `business_dates(days_back)`. `run_job` already wraps the call in
 `job_run` (one `ops.job_run` row) and a per-job advisory lock — do not open another
 `job_run`. Raise `JobSkipped("reason")` to end as `skipped` (e.g. Cbonds 401, feature flag
 off). Any other exception marks the run `failed` and is re-raised.
@@ -216,6 +228,10 @@ fires: 15 minutes, polling rules 0); a run that does not get it is recorded `ski
 error starting `lock_busy:` (job health: `missed`; the `quality` job re-runs it). Backfill runs
 pass `yield_to_waiters=True` and step aside while a scheduled run waits. Runs left `running` by
 a dead process are failed by `reap_orphaned_runs` (scheduler start, nightly maintenance).
+`run_job(..., trigger=...)` records the origin in `ops.job_run.trigger`: the scheduler passes
+`schedule`, the quality catch-up `catch_up`, the backfill worker `backfill`, the CLI `cli`
+(default `other`). Job health treats only `schedule`/`catch_up` runs as "the fire ran"; new
+callers must pass the right trigger.
 
 **Parameters.** Keyword-only, with defaults and type annotations; CLI strings are coerced
 (`int`, `float`, `bool`, `Decimal`, `date`, `datetime`, `X | None`, `list[X]` as `a,b`).
@@ -237,7 +253,8 @@ manually: `uv run mdhub run bonds_eod -p day=2026-10-15 -p mode=final`.
 ## Schedule
 
 `mdhub/schedule.py` holds `RULES` (job → cron rules with params, day filter `business` /
-`all` / `first_business_of_month`, calendar, `gate_offset_days`, `lock_wait_s`, `catch_up`;
+`trading` (business days plus weekend sessions of the calendar's engine) / `all` /
+`first_business_of_month`, calendar, `gate_offset_days`, `lock_wait_s`, `catch_up`;
 `_poll(...)` for polling rules that neither wait nor catch up) per DESIGN §6. Cron is 5-field
 crontab in Europe/Moscow. Business-day gating uses `ref.calendar_day` when present (per day the
 highest-priority source: observed > MOEX ISS calendar > curated > curated_unverified), else

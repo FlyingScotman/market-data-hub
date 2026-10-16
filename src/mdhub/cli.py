@@ -171,6 +171,7 @@ def run_cmd(
             db=db,
             calendar=DbCalendar(db),
             exclusive=not no_lock,
+            trigger="cli",
         )
     except (UnknownJobError, JobParamError) as exc:
         typer.echo(f"error: {exc}", err=True)

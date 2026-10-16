@@ -90,7 +90,7 @@ def coverage_cmd(
             rows = conn.execute(
                 """
                 SELECT dataset, first_date, last_date, row_count, expected_latest, is_stale,
-                       open_gaps, unfillable_gaps, open_tasks, backfill_job,
+                       open_gaps, unfillable_gaps, not_expected_gaps, open_tasks, backfill_job,
                        last_run_status, last_run_at, problem, checked_at
                 FROM ops.v_coverage
                 WHERE (NOT %s OR is_stale)
@@ -114,6 +114,7 @@ def coverage_cmd(
             "is_stale",
             "open_gaps",
             "unfillable_gaps",
+            "not_expected_gaps",
             "open_tasks",
             "last_run_status",
             "last_run_at",
@@ -254,7 +255,7 @@ def backup_cmd(
     if directory is not None:
         params["backup_dir_path"] = str(directory)
     try:
-        outcome = run_job("maintenance", params, settings=settings, db=db)
+        outcome = run_job("maintenance", params, settings=settings, db=db, trigger="cli")
     except (UnknownJobError, JobParamError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(2) from None

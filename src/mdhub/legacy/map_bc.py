@@ -662,7 +662,9 @@ def map_bc(
         )
     day = today or msk_today()
     reports: list[TargetReport] = []
-    with job_run(db, JOB, {"targets": chosen, "legacy_import_id": int(row[0])}) as run:
+    with job_run(
+        db, JOB, {"targets": chosen, "legacy_import_id": int(row[0])}, trigger="cli"
+    ) as run:
         for name in chosen:
             rep = TargetReport(target=name)
             t0 = _time.monotonic()

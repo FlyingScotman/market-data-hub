@@ -23,7 +23,17 @@ are written only for days after the last observed day of the calendar. A row is 
 only when ``is_business_day`` changes (``known_at`` = when that became known; the old image
 goes to ``ops.row_history``). Repair on every refresh: ISS-calendar rows that the current ISS
 answer no longer lists are deleted (image kept in ``ops.row_history``), and an observed
-history that starts after :data:`OBSERVED_START` is extended backwards.
+history that starts after :data:`OBSERVED_START` is extended backwards. The deletion is skipped
+(warning, run ``partial``) when the ISS answer of that engine looks incomplete - fewer than
+:data:`ISS_CALENDAR_MIN_ROWS` rows of the engine or none in the current year - so a transient
+empty answer never wipes the stored ISS rows.
+
+Weekend sessions (``ref.weekend_session``): ISS rows with ``is_work_day=1, reason='W'`` (the
+engine trades on a weekend/holiday; trades belong to ``trade_session_date``) stay
+non-business in ``ref.calendar_day`` and are stored separately for every listed day (also
+past days of the year: the observed calendars cannot see them). They make the day a *trading
+day* (:meth:`mdhub.core.bizday.CalendarPredicate.is_trading_day`). Future session rows that ISS
+no longer lists are deleted under the same sanity rule.
 
 Entry points: :func:`refresh_calendar` (called by ``cbr_meetings`` in ``calendar`` /
 ``calendar_full`` mode) and :func:`seed_calendar` (initial seeding without a scheduled job).
@@ -60,6 +70,7 @@ __all__ = [
     "CuratedCalendar",
     "CuratedYear",
     "iss_calendar_days",
+    "iss_weekend_sessions",
     "load_curated",
     "refresh_calendar",
     "seed_calendar",
@@ -88,6 +99,10 @@ INCREMENTAL_OVERLAP_DAYS: Final = 14
 PARSER_VERSION: Final = "1"
 KEY: Final = ["calendar", "day", "source"]
 ISS_ENGINES: Final = {"MOEX_STOCK": "stock", "MOEX_FX": "currency", "MOEX_FORTS": "futures"}
+ISS_CALENDAR_MIN_ROWS: Final = 5
+"""An ISS engine calendar answer with fewer rows of its own engine (or none in the current
+year) is treated as incomplete: listed days are written, nothing is deleted."""
+SESSION_KEY: Final = ["calendar", "day", "source"]
 
 # ------------------------------------------------------------------------ curated file
 
@@ -414,16 +429,116 @@ def iss_calendar_days(rows: Iterable[Mapping[str, Any]], own: str) -> dict[date,
     return dict(sorted(flags.items()))
 
 
+def iss_weekend_sessions(rows: Iterable[Mapping[str, Any]], own: str) -> dict[date, date | None]:
+    """Weekend/holiday sessions of engine ``own``: listed day -> ``trade_session_date``
+    (``is_work_day=1``, ``reason='W'``)."""
+    out: dict[date, date | None] = {}
+    for r in rows:
+        if str(r["engine"]) != own or r["is_work_day"] != 1 or r["reason"] != "W":
+            continue
+        d = to_date(r["date"], field="calendar date")
+        if d is None:
+            raise FormatDriftError("ISS calendar: empty date")
+        out[d] = to_date(r["trade_session_date"]) if r["trade_session_date"] else None
+    return dict(sorted(out.items()))
+
+
+def iss_answer_complete(rows: Iterable[Mapping[str, Any]], own: str, today: date) -> bool:
+    """Sanity check before deleting rows the answer does not list: at least
+    :data:`ISS_CALENDAR_MIN_ROWS` rows of engine ``own``, one of them in ``today``'s year."""
+    own_days = [
+        d
+        for r in rows
+        if str(r["engine"]) == own and (d := to_date(r["date"], field="calendar date")) is not None
+    ]
+    return len(own_days) >= ISS_CALENDAR_MIN_ROWS and any(d.year == today.year for d in own_days)
+
+
+def write_weekend_sessions(
+    conn: psycopg.Connection[Any],
+    calendar: str,
+    sessions: Mapping[date, date | None],
+    *,
+    known_at: datetime,
+    run_id: int | None,
+    capture_id: int | None,
+    drop_after: date | None,
+    source: str = ISS_SOURCE,
+) -> UpsertResult:
+    """Write ``ref.weekend_session`` rows of ``(calendar, source)`` (new or changed only); with
+    ``drop_after``, delete rows after that day the answer no longer lists (image to
+    ``ops.row_history``)."""
+    total = UpsertResult()
+    if drop_after is not None:
+        with conn.cursor(row_factory=tuple_row) as cur:
+            cur.execute(
+                """
+                WITH gone AS (
+                    DELETE FROM ref.weekend_session s
+                    WHERE s.calendar = %(cal)s AND s.source = %(src)s AND s.day > %(after)s
+                      AND NOT (s.day = ANY(%(keep)s::date[]))
+                    RETURNING s.*
+                )
+                INSERT INTO ops.row_history (table_name, row_key, old_row, replaced_by_run)
+                SELECT 'ref.weekend_session',
+                       jsonb_build_object('calendar', g.calendar, 'day', g.day,
+                                          'source', g.source),
+                       to_jsonb(g) || jsonb_build_object('_deleted', true), %(run)s
+                FROM gone g
+                """,
+                {
+                    "cal": calendar,
+                    "src": source,
+                    "after": drop_after,
+                    "keep": sorted(sessions),
+                    "run": run_id,
+                },
+            )
+            if cur.rowcount > 0:
+                log.warning(
+                    "calendar %s: removed %d weekend session(s) no longer listed",
+                    calendar,
+                    cur.rowcount,
+                )
+                total += UpsertResult(updated=cur.rowcount)
+    if not sessions:
+        return total
+    with conn.cursor(row_factory=tuple_row) as cur:
+        existing: dict[date, date | None] = dict(
+            cur.execute(
+                """SELECT day, trade_session_date FROM ref.weekend_session
+                   WHERE calendar = %s AND source = %s AND day BETWEEN %s AND %s""",
+                (calendar, source, min(sessions), max(sessions)),
+            ).fetchall()
+        )
+    rows = [
+        {
+            "calendar": calendar,
+            "day": d,
+            "source": source,
+            "trade_session_date": session,
+            "known_at": known_at,
+            "note": "MOEX ISS calendar reason W (weekend/holiday session)",
+            "capture_id": capture_id,
+            "run_id": run_id,
+        }
+        for d, session in sessions.items()
+        if d not in existing or existing[d] != session
+    ]
+    total += upsert_rows(conn, "ref.weekend_session", rows, SESSION_KEY, run_id=run_id)
+    return total + UpsertResult(unchanged=len(sessions) - len(rows))
+
+
 def _fetch_iss_calendars(
     ctx: JobContext, http: HttpClient, conn: psycopg.Connection[Any]
-) -> tuple[list[dict[str, Any]], int]:
+) -> tuple[list[dict[str, Any]], dict[str, int]]:
     rows: list[dict[str, Any]] = []
-    cap = 0
+    caps: dict[str, int] = {}
     for engine in ("stock", "currency", "futures"):
         res = http.get_json(
             f"{ISS_BASE_URL}/engines/{engine}/calendar.json", params={"iss.meta": "off"}
         )
-        cap = record_capture(
+        caps[engine] = record_capture(
             conn, ctx.run.id, "moex_iss", "engine_calendar", None, res.response, PARSER_VERSION
         )
         rows.extend(
@@ -433,7 +548,7 @@ def _fetch_iss_calendars(
                 required=["engine", "date", "is_work_day", "trade_session_date", "reason"],
             )
         )
-    return rows, cap
+    return rows, caps
 
 
 # --------------------------------------------------------------------------- refresh
@@ -510,7 +625,7 @@ def refresh_calendar(
         step("observed_cbr_ruonia", ruonia)
 
         def iss_calendar(conn: psycopg.Connection[Any]) -> UpsertResult:
-            rows, cap = _fetch_iss_calendars(ctx, http, conn)
+            rows, caps = _fetch_iss_calendars(ctx, http, conn)
             total = UpsertResult()
             known = utc_now()
             for cal, engine in ISS_ENGINES.items():
@@ -520,10 +635,29 @@ def refresh_calendar(
                     for d, v in iss_calendar_days(rows, engine).items()
                     if last is None or d > last
                 }
-                # Repair: rows of earlier versions that ISS no longer lists (synthesized
-                # whole years) are removed - they would outrank the curated file.
-                total += _drop_unlisted(
-                    conn, cal, ISS_SOURCE, set(days), after=last, run_id=ctx.run.id
+                complete = iss_answer_complete(rows, engine, today)
+                if complete:
+                    # Repair: rows of earlier versions that ISS no longer lists (synthesized
+                    # whole years) are removed - they would outrank the curated file.
+                    total += _drop_unlisted(
+                        conn, cal, ISS_SOURCE, set(days), after=last, run_id=ctx.run.id
+                    )
+                else:
+                    msg = (
+                        f"calendar {cal}: ISS engines/{engine}/calendar.json answer looks "
+                        f"incomplete (< {ISS_CALENDAR_MIN_ROWS} rows of the engine or none in "
+                        f"{today.year}); stored ISS rows kept"
+                    )
+                    ctx.logger.warning(msg)
+                    failures.append(msg)
+                total += write_weekend_sessions(
+                    conn,
+                    cal,
+                    iss_weekend_sessions(rows, engine),
+                    known_at=known,
+                    run_id=ctx.run.id,
+                    capture_id=caps.get(engine),
+                    drop_after=today if complete else None,
                 )
                 total += write_calendar_days(
                     conn,
@@ -532,7 +666,7 @@ def refresh_calendar(
                     days,
                     known_at=known,
                     run_id=ctx.run.id,
-                    capture_id=cap,
+                    capture_id=caps.get(engine),
                     note=f"MOEX ISS engines/{engine}+currency calendar.json",
                 )
             return total
@@ -572,7 +706,7 @@ def seed_calendar(
 ) -> dict[str, Any]:
     """Initial full seeding outside the scheduler (one ``ops.job_run`` named
     ``calendar_seed``). Load RUONIA history first (``cbr_daily``) for RU_PRODUCTION."""
-    with job_run(db, "calendar_seed", {"since": since}, settings=settings) as run:
+    with job_run(db, "calendar_seed", {"since": since}, settings=settings, trigger="cli") as run:
         ctx = JobContext(
             settings=settings,
             db=db,

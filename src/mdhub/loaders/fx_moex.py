@@ -18,6 +18,7 @@ not as a partial run (``prelim`` runs only log it).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from datetime import date, timedelta
 from typing import Any, Final
@@ -251,19 +252,35 @@ def only_changed(
     rows: list[dict[str, Any]],
     series_cols: Sequence[str],
     value_cols: Sequence[str],
+    *,
+    logger: logging.Logger | None = None,
 ) -> tuple[list[dict[str, Any]], int]:
     """Drop rows whose values equal the last stored row of their series.
+
+    A changed row whose ``ts`` is *earlier* than the last stored ``ts`` of its series (the
+    quote dating rule picked a wrong session day, or the source went back in time) is still
+    stored but logged as a warning on ``logger`` - quote times must never silently regress.
 
     :returns: (rows to store, number skipped as unchanged).
     """
     keys = sorted({tuple(str(r[c]) for c in series_cols) for r in rows})
     last = latest_rows(conn, table, series_cols, keys, value_cols)
     keep: list[dict[str, Any]] = []
+    older: list[str] = []
     for r in rows:
         prev = last.get(tuple(str(r[c]) for c in series_cols))
         if prev is not None and all(prev[c] == r[c] for c in value_cols):
             continue
+        if prev is not None and r.get("ts") is not None and prev["ts"] > r["ts"]:
+            older.append(f"{'/'.join(str(r[c]) for c in series_cols)} {r['ts']} < {prev['ts']}")
         keep.append(r)
+    if older and logger is not None:
+        logger.warning(
+            "%s: %d changed row(s) older than the last stored ts of their series: %s",
+            table,
+            len(older),
+            "; ".join(older[:5]),
+        )
     return keep, len(rows) - len(keep)
 
 
@@ -330,7 +347,7 @@ def fx_moex_intraday(ctx: JobContext) -> None:
             params={"iss.meta": "off", "iss.only": "securities,marketdata,dataversion"},
         )
     rows, latency = parse_fx_marketdata(
-        res.data, is_business_day=lambda d: ctx.is_business_day(d, FX_CALENDAR)
+        res.data, is_trading_day=lambda d: ctx.is_trading_day(d, FX_CALENDAR)
     )
     for r in rows:
         r["source"] = SOURCE
@@ -351,7 +368,12 @@ def fx_moex_intraday(ctx: JobContext) -> None:
             refresh_fx_instruments(conn, res.data, capture_id=cap, run_id=run_id, today=ctx.today())
         )
         changed, unchanged = only_changed(
-            conn, "md.fx_intraday", rows, FX_INTRADAY_SERIES, FX_INTRADAY_VALUE_COLUMNS
+            conn,
+            "md.fx_intraday",
+            rows,
+            FX_INTRADAY_SERIES,
+            FX_INTRADAY_VALUE_COLUMNS,
+            logger=ctx.logger,
         )
         _with_provenance(changed, cap, run_id)
         result = upsert_rows(conn, "md.fx_intraday", changed, FX_INTRADAY_KEY, run_id=run_id)

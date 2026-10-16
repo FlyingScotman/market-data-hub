@@ -107,6 +107,7 @@ def test_scheduled_run_still_skipped_is_recorded_lock_busy_and_caught_up(
             db=db,
             lock_wait_s=0.3,
             lock_poll_s=0.05,
+            trigger="schedule",
         )
     finally:
         holder.close()
@@ -332,7 +333,7 @@ def test_pre_session_quote_dated_on_previous_business_day() -> None:
     def cal(d: date) -> bool:
         return d.weekday() < 5 and d not in holiday
 
-    got = snapshot_ts("23:49:59", systime, is_business_day=cal)
+    got = snapshot_ts("23:49:59", systime, is_trading_day=cal)
     assert got == datetime(2026, 10, 15, 23, 49, 59, tzinfo=MSK)
     tue = datetime(2026, 10, 20, 0, 5, tzinfo=MSK)  # after midnight: previous day
     assert snapshot_ts("23:49:00", tue) == datetime(2026, 10, 19, 23, 49, tzinfo=MSK)

@@ -33,6 +33,12 @@ INTRADAY_ENDPOINT: Final = "intraday:bonds_marketdata"
 """``intraday:`` prefix: removed by raw-capture retention (maintenance); the capture FKs of
 ``md.bond_quote_intraday``/``md.bond_quote_last`` are ``ON DELETE SET NULL`` (0420)."""
 CALENDAR: Final = "MOEX_STOCK"
+BONDS_TRADE_WEEKEND_SESSIONS: Final = False
+"""Whether bond boards take part in the stock engine's weekend sessions (ISS calendar
+``reason='W'`` is engine-wide). Assumed not (the weekend sessions admit selected shares and
+funds); then a quote older than SYSTIME belongs to the previous *business* day. Set to True if
+MOEX admits bonds - the quote dating then follows the engine's trading days
+(:meth:`mdhub.jobs.JobContext.is_trading_day`)."""
 
 
 def changed_rows(
@@ -55,8 +61,9 @@ def bonds_intraday(ctx: JobContext) -> dict[str, Any]:
             params={"iss.meta": "off", "iss.only": "marketdata,marketdata_yields"},
         )
     with ctx.connection() as conn:
+        session_day = ctx.is_trading_day if BONDS_TRADE_WEEKEND_SESSIONS else ctx.is_business_day
         snapshot = parse_bond_marketdata(
-            res.data, is_business_day=lambda d: ctx.is_business_day(d, CALENDAR)
+            res.data, is_trading_day=lambda d: session_day(d, CALENDAR)
         )
         cap = record_capture(
             conn,

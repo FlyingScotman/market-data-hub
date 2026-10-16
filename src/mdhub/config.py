@@ -13,6 +13,8 @@ Environment variables (DESIGN §7 plus a few operational knobs):
 ``MDHUB_HTTP_PROXY``                optional egress proxy URL (may contain credentials)
 ``MDHUB_ISS_RPS``                   MOEX ISS/APIM request rate per host, default 3
 ``MDHUB_RAW_RETENTION_DAYS_INTRADAY`` raw capture retention for intraday data, default 90
+``MDHUB_RAW_RETENTION_DAYS_REREAD`` retention of ``intraday:reread:`` captures, default 7
+``MDHUB_ALGOPACK_FULL_REREAD_MINUTES`` AlgoPack whole-day re-read interval, default 30
 ``MDHUB_API_TOKENS``                comma-separated bearer tokens for the read API
 ``MDHUB_ENABLE_SDFI``               enable the MOEX SDFI curve loader, default false
 ``MDHUB_LOG_LEVEL``                 logging level, default ``INFO`` (extension)
@@ -78,6 +80,20 @@ class Settings(BaseSettings):
         ge=1,
         validation_alias=AliasChoices(
             "MDHUB_RAW_RETENTION_DAYS_INTRADAY", "raw_retention_days_intraday"
+        ),
+    )
+    raw_retention_days_reread: int = Field(
+        default=7,
+        ge=1,
+        validation_alias=AliasChoices(
+            "MDHUB_RAW_RETENTION_DAYS_REREAD", "raw_retention_days_reread"
+        ),
+    )
+    algopack_full_reread_minutes: int = Field(
+        default=30,
+        ge=5,
+        validation_alias=AliasChoices(
+            "MDHUB_ALGOPACK_FULL_REREAD_MINUTES", "algopack_full_reread_minutes"
         ),
     )
     backup_dir: str = Field(

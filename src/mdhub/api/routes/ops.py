@@ -31,7 +31,8 @@ def runs(
         str | None, Query(description="running|succeeded|partial|failed|skipped")
     ] = None,
 ) -> Response:
-    """Newest first. ``error`` is the sanitized error / partial reason."""
+    """Newest first. ``error`` is the sanitized error / partial reason; ``trigger`` who started
+    the run (schedule, catch_up, backfill, cli, api, other; null before migration 0421)."""
     where = Where()
     if job:
         where.add("job = %(job)s", job=job)
@@ -40,7 +41,7 @@ def runs(
     query = (
         sql.SQL(
             "SELECT id, job, status, started_at, finished_at, params, rows_inserted, "
-            "rows_updated, rows_unchanged, error, host FROM ops.job_run"
+            "rows_updated, rows_unchanged, error, host, trigger FROM ops.job_run"
         )
         + where.sql()
         + sql.SQL(" ORDER BY started_at DESC, id DESC")

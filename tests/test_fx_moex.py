@@ -243,9 +243,10 @@ def test_fx_moex_eod_empty_day_records_no_data(
     gaps = conn.execute(
         "SELECT gap_date, status FROM ops.data_gap WHERE dataset = 'fx_eod' ORDER BY 1"
     ).fetchall()
+    # N5: the grace period counts business days - Friday seen on Monday is still open
     assert gaps == [
         {"gap_date": date(2026, 10, 15), "status": "unfillable"},
-        {"gap_date": date(2026, 10, 16), "status": "unfillable"},
+        {"gap_date": date(2026, 10, 16), "status": "open"},
     ]
     conn.commit()
     _mock_eod({0: empty})

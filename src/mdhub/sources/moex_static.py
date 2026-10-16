@@ -42,9 +42,14 @@ Normalization rules (documented here, tested in ``tests/test_bonds_static.py``):
   or of bonds whose coupon type is unknown; ``unknown`` when MOEX publishes nothing
   (amount/rate stored as NULL, also when MOEX sends 0 for a non-zero coupon bond: missing is
   not zero).
-* An *active* bond without MOEX fixed/floating labels is never classified ``fixed`` just
+* An *active* bond without MOEX fixed/floating labels is not classified ``fixed`` just
   because its whole schedule carries values (``coupon_type = unknown``, basis ``schedule``):
-  MOEX forward-fills floating coupons.
+  MOEX forward-fills floating coupons. Exception (:func:`schedule_constant_fixed`, basis
+  ``schedule_constant``; never for structured notes): no benchmark / COUPON_DETAILS and no
+  rate formula from any source, >= 2 paid coupons, one constant rate (``value_prc``) over all
+  paid and future coupons, and a CBR key-rate change between the start of the first and the
+  start of the last paid coupon period - a key-rate floater would have shown different paid
+  rates, so only a genuinely fixed coupon passes (a floater on an unchanged key rate cannot).
 * **Offers** (:func:`normalize_offers`): ``0000-00-00`` -> ``offer_date`` NULL +
   ``date_missing``; type put/call/buyback/unknown from the bond's PUT/CALL/BUYBACK option
   dates, the holder submission window, then ``BOND_SUBTYPE``; status from the MOEX suffix
@@ -90,6 +95,7 @@ __all__ = [
     "BondizationData",
     "BondizationPage",
     "ClassifyInput",
+    "CouponRate",
     "CouponRow",
     "OfferRow",
     "OptionDates",
@@ -116,6 +122,7 @@ __all__ = [
     "parse_description",
     "parse_directory_rows",
     "parse_market",
+    "schedule_constant_fixed",
     "settle_lag",
     "stable_view",
 ]
@@ -1165,6 +1172,59 @@ class ClassifyInput:
     is_matured: bool = False
     coupon_values: tuple[bool, ...] = ()
     """Per coupon of the schedule: does MOEX publish a value (amount or rate > 0)?"""
+    coupon_rates: tuple[CouponRate, ...] = ()
+    """The schedule's periods and published rates (for :func:`schedule_constant_fixed`)."""
+    has_formula: bool = False
+    """A rate formula (``ref.bond_rate_formula``, any source) exists for the bond."""
+    key_rate_changes: tuple[date, ...] = ()
+    """Effective dates of CBR key-rate changes (``md.fixing`` KEY_RATE)."""
+    today: date | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CouponRate:
+    """One coupon period of a schedule: start (``None`` = previous pay date), pay date, rate."""
+
+    start_date: date | None
+    pay_date: date
+    value_prc: Decimal | None
+
+
+def schedule_constant_fixed(
+    rates: Sequence[CouponRate], today: date | None, key_rate_changes: Sequence[date]
+) -> bool:
+    """Evidence that an unlabelled active bond pays a fixed coupon (basis
+    ``schedule_constant``):
+
+    * at least two paid coupons (``pay_date <= today``) and every coupon - paid and future -
+      carries the same positive rate (``value_prc``; amounts may vary with amortization),
+    * a CBR key-rate change lies after the start of the first paid period and on/before the
+      start of the last paid period: the last paid coupon of a key-rate floater (fixed at or
+      before its period start, or averaged over it) would differ from the first one.
+
+    Without key-rate history the rule never passes (the bond stays ``unknown``).
+    """
+    if today is None or len(rates) < 2:
+        return False
+    ordered = sorted(rates, key=lambda r: r.pay_date)
+    values = {r.value_prc for r in ordered}
+    if len(values) != 1:
+        return False
+    (value,) = values
+    if value is None or value <= 0:
+        return False
+    paid = [(i, r) for i, r in enumerate(ordered) if r.pay_date <= today]
+    if len(paid) < 2:
+        return False
+
+    def start_of(i: int, r: CouponRate) -> date | None:
+        return r.start_date or (ordered[i - 1].pay_date if i > 0 else None)
+
+    first_start = start_of(*paid[0])
+    last_start = start_of(*paid[-1])
+    if first_start is None or last_start is None or last_start <= first_start:
+        return False
+    return any(first_start < c <= last_start for c in key_rate_changes)
 
 
 def _ofz_class(inp: ClassifyInput) -> str | None:
@@ -1251,8 +1311,17 @@ def classify_coupon_type(inp: ClassifyInput, bond_class: str) -> tuple[str, str]
             return "unknown", "none"
         if all(inp.coupon_values):
             # A fully valued schedule proves nothing for an active bond: MOEX forward-fills
-            # floating coupons. Only a matured bond (every coupon paid) is "fixed" by schedule.
-            return ("fixed", "schedule") if inp.is_matured else ("unknown", "schedule")
+            # floating coupons. Only a matured bond (every coupon paid) is "fixed" by schedule,
+            # or an active one whose constant rate survived a key-rate change.
+            if inp.is_matured:
+                return "fixed", "schedule"
+            if (
+                bond_class != "structured"
+                and not inp.has_formula
+                and schedule_constant_fixed(inp.coupon_rates, inp.today, inp.key_rate_changes)
+            ):
+                return "fixed", "schedule_constant"
+            return "unknown", "schedule"
         if any(inp.coupon_values):
             return "variable_known", "schedule"
         return "unknown", "none"

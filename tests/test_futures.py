@@ -387,12 +387,14 @@ def _mock_day_poll(extra_ts: list[list[Any]] | None = None) -> dict[str, Any]:
 def test_algopack_poll_reads_whole_day_fx_only_and_dedup(
     apim_settings: Settings, db: Database, conn: Conn, today_is: Callable[[date], None]
 ) -> None:
-    """F7: each poll re-reads today per FX contract (from=till=today), so a bar published late
-    or missed by an earlier poll is filled; re-polled bars are no-ops."""
+    """F7/N4: a re-read poll reads today per FX contract (from=till=today), so a bar published
+    late or missed by an earlier poll is filled; re-polled bars are no-ops. Re-read captures go
+    to the ``intraday:reread:`` prefix (short retention)."""
     today_is(date(2026, 10, 16))
     seed_ref(conn)
     seen = _mock_day_poll()
-    assert run("algopack_fx_futures", {}, apim_settings, db).status == "succeeded"
+    out = run("algopack_fx_futures", {"full": True}, apim_settings, db)
+    assert out.status == "succeeded" and out.result["mode"] == "reread"
     assert {(p["from"], p["till"]) for p in seen["params"]} == {("2026-10-16", "2026-10-16")}
     ts = {r["secid"]: r for r in conn.execute("SELECT * FROM md.algopack_fo_tradestats")}
     assert "ANZ6" not in ts and "RBZ6" not in ts and "CRZ6" in ts
@@ -404,15 +406,15 @@ def test_algopack_poll_reads_whole_day_fx_only_and_dedup(
         r["endpoint"] for r in conn.execute("SELECT DISTINCT endpoint FROM ops.raw_capture")
     }
     assert endpoints == {
-        "intraday:algopack_fo_tradestats",
-        "intraday:algopack_fo_obstats",
-        "intraday:futoi",
+        "intraday:reread:algopack_fo_tradestats",
+        "intraday:reread:algopack_fo_obstats",
+        "intraday:reread:futoi",
     }
     n_ts = count(conn, "SELECT count(*) FROM md.algopack_fo_tradestats")
     n_ob = count(conn, "SELECT count(*) FROM md.algopack_fo_obstats")
     respx.clear()
     _mock_day_poll()
-    run("algopack_fx_futures", {}, apim_settings, db)  # same day polled again
+    run("algopack_fx_futures", {"full": True}, apim_settings, db)  # same day polled again
     assert count(conn, "SELECT count(*) FROM md.algopack_fo_tradestats") == n_ts
     assert count(conn, "SELECT count(*) FROM md.algopack_fo_obstats") == n_ob
     assert count(conn, "SELECT count(*) FROM ops.row_history") == 0
@@ -425,7 +427,7 @@ def test_algopack_poll_reads_whole_day_fx_only_and_dedup(
     late[cols.index("tradetime")] = "10:10:00"
     respx.clear()
     _mock_day_poll(extra_ts=[late])
-    out = run("algopack_fx_futures", {}, apim_settings, db)
+    out = run("algopack_fx_futures", {"full": True}, apim_settings, db)
     assert count(conn, "SELECT count(*) FROM md.algopack_fo_tradestats") == n_ts + 1
     # the interval check sees the holes 10:15 and 10:20 between 10:10 and 10:25
     assert out.status == "partial"

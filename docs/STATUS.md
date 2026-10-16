@@ -14,8 +14,13 @@
 ## In flight
 - Review fixes committed (b878fa6). 0420 applied to seed DB; repair done (calendar seed run 74,
   bonds_static full run 76: 267 current_published coupons, 668 active unlabelled → unknown).
-- Agent building `mdhub report seed` (→ docs/SEED_REPORT.md) + deploy/make_bundle.sh with an
-  end-to-end restore test on throwaway pgservers (must not write to data/pgseed).
+- 74ed84f: `mdhub report seed` + deploy/make_bundle.sh + restore_seed.sh (bundle→restore tested). 451 tests.
+- Second review done (scratchpad/review2/REVIEW2.md: N1 weekend-session quote dating, N2 unlabelled fixed bonds
+  withheld in TDM, N3 health masked by backfill runs, N4 AlgoPack request volume, N5 grace in business days,
+  N6 gap relabel, N7 weekend sessions, N8 empty ISS calendar, N9 capture_id indexes). Fix agent running →
+  migration 0421; then commit, migrate seed, repair runs it lists.
+- Known: Saturday sessions 2024-04-27, 2024-11-02, 2024-12-28, 2025-11-01 missing in bonds/futures/fx EOD
+  (calendar fixed after those backfill chunks) — quality job + backfill_worker must fill them.
 
 ## Seed database (data/pgseed, pgserver PG 16.2, db `mdhub`; gitignored)
 - Migrations applied from frozen copies in data/pgseed_migs (0001…0420).

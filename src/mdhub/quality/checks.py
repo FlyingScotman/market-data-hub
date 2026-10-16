@@ -15,9 +15,13 @@ Everything is driven by :class:`mdhub.datasets.DatasetSpec`:
   own first stored date; without a list, every series seen in the window is checked between
   its first and last date in the window (holes only - a series that ended is not a gap).
   ``intraday`` datasets are scanned over the last :data:`INTRADAY_SCAN_DAYS` days only.
-* **gap bookkeeping** (:func:`sync_gaps`): new gaps are inserted ``open``; gaps that are no
-  longer missing become ``backfilled`` (also ``unfillable`` ones: data that appears later is
-  recognised); still-missing ``unfillable`` gaps are left alone (never re-queued).
+* **gap bookkeeping** (:func:`sync_gaps`): new gaps are inserted ``open``; gaps that the scan
+  no longer reports are re-counted: with at least ``min_rows_per_day`` rows they become
+  ``backfilled`` (also ``unfillable`` ones: data that appears later is recognised), without
+  data they become ``not_expected`` (the calendar no longer expects the day, e.g. a holiday
+  added to ``ref.calendar_day`` - never "backfilled: data present"); still-missing
+  ``unfillable`` gaps are left alone (never re-queued). A ``not_expected`` gap that is expected
+  and missing again is re-opened.
 * **queueing** (:func:`queue_backfill`): open gap days not covered by an open task (or by a
   task that failed in the last :data:`FAILED_TASK_COOLDOWN_DAYS` days) of *any dataset sharing
   the same backfill job* (e.g. the six ``cbr_*`` datasets -> one ``cbr_daily`` task) are
@@ -44,7 +48,7 @@ from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 
 from mdhub.core.bizday import CalendarPredicate
-from mdhub.core.gaps import no_data_status
+from mdhub.core.gaps import db_business_days, no_data_status
 from mdhub.core.timeutil import MSK, add_business_days, date_range, is_weekday, msk_today
 from mdhub.datasets import DatasetSpec, datasets_for_job
 
@@ -573,7 +577,12 @@ class GapSync:
 
 
 def sync_gaps(conn: Conn, spec: DatasetSpec, check: DatasetCheck, *, run_id: int | None) -> GapSync:
-    """Write the scan result to ``ops.data_gap`` (only within the scanned window)."""
+    """Write the scan result to ``ops.data_gap`` (only within the scanned window).
+
+    Gaps the scan no longer reports are closed with an accurate outcome: re-counted rows
+    ``>= min_rows_per_day`` -> ``backfilled`` ("data present"), otherwise ``not_expected``
+    (the scan does not expect the day any more - calendar corrected, series window moved).
+    """
     if not check.scanned:
         return GapSync(0, 0)
     assert check.scan_from is not None
@@ -587,10 +596,10 @@ def sync_gaps(conn: Conn, spec: DatasetSpec, check: DatasetCheck, *, run_id: int
             """,
             (spec.name, check.scan_from, check.scan_to),
         ).fetchall()
-        known = {(_key_text(k), d): str(st) for k, d, st in existing}
+        known = {(_key_text(k), d): (k, str(st)) for k, d, st in existing}
         opened = 0
         for ident, gap in missing.items():
-            status = known.get(ident)
+            status = known.get(ident, (None, None))[1]
             if status in ("open", "unfillable"):
                 continue
             note = f"rows={gap.rows} < min {spec.min_rows_per_day} (quality run {run_id})"
@@ -600,24 +609,46 @@ def sync_gaps(conn: Conn, spec: DatasetSpec, check: DatasetCheck, *, run_id: int
                 VALUES (%s, %s, %s, 'open', %s)
                 ON CONFLICT (dataset, key, gap_date) DO UPDATE
                 SET status = 'open', note = EXCLUDED.note, detected_at = now()
-                WHERE ops.data_gap.status = 'backfilled'
+                WHERE ops.data_gap.status IN ('backfilled', 'not_expected')
                 """,
                 (spec.name, Jsonb(gap.key_dict), gap.day, note),
             )
             opened += cur.rowcount
+        to_close = [
+            (key_text, day, key, status)
+            for (key_text, day), (key, status) in known.items()
+            if status in ("open", "unfillable") and (key_text, day) not in missing
+        ]
         closed = 0
-        for (key_text, day), status in known.items():
-            if status == "backfilled" or (key_text, day) in missing:
-                continue
-            cur.execute(
-                """
-                UPDATE ops.data_gap SET status = 'backfilled',
-                       note = %s
-                WHERE dataset = %s AND key = %s::jsonb AND gap_date = %s
-                """,
-                (f"data present (quality run {run_id}, was {status})", spec.name, key_text, day),
+        if to_close:
+            info = probe_table(conn, spec)
+            lo = min(d for _, d, _, _ in to_close)
+            hi = max(d for _, d, _, _ in to_close)
+            counts = (
+                count_rows(conn, info, lo, hi, by_series=bool(spec.series_column))
+                if info is not None
+                else {}
             )
-            closed += cur.rowcount
+            for key_text, day, key, status in to_close:
+                n = counts.get((gap_series(spec, key), day), 0)
+                if n >= max(spec.min_rows_per_day, 1):
+                    new_status = "backfilled"
+                    note = f"data present (quality run {run_id}, was {status}, rows={n})"
+                else:
+                    new_status = "not_expected"
+                    note = (
+                        f"no longer expected by the gap scan (quality run {run_id}, was "
+                        f"{status}, rows={n}): calendar says non-business day or the series "
+                        "is outside its checked window"
+                    )
+                cur.execute(
+                    """
+                    UPDATE ops.data_gap SET status = %s, note = %s
+                    WHERE dataset = %s AND key = %s::jsonb AND gap_date = %s
+                    """,
+                    (new_status, note, spec.name, key_text, day),
+                )
+                closed += cur.rowcount
     return GapSync(opened, closed)
 
 
@@ -710,8 +741,9 @@ def reconcile_gaps(
     """After a backfill run over ``[date_from, date_to]``: re-count rows for every open gap
     in the range. Filled gaps -> ``backfilled``; still-missing gaps -> ``unfillable`` when
     ``mark_unfillable`` (the run succeeded, so the source has no data for that day, e.g. a
-    holiday missing from the calendar) and the day is older than the no-data grace period
-    (:data:`mdhub.core.gaps.NO_DATA_GRACE_DAYS`), otherwise they stay open with a note.
+    holiday missing from the calendar) and the no-data grace period is over
+    (:data:`mdhub.core.gaps.NO_DATA_GRACE_DAYS` business days of the dataset's calendar),
+    otherwise they stay open with a note.
 
     :returns: ``(backfilled, unfillable)`` counts.
     """
@@ -731,6 +763,8 @@ def reconcile_gaps(
     counts = (
         count_rows(conn, info, date_from, date_to, by_series=by_series) if info is not None else {}
     )
+    first_gap = min(day for _, day in gaps)
+    is_bday = db_business_days(conn, spec.calendar, first_gap, today)
     filled = unfillable = 0
     with conn.cursor(row_factory=tuple_row) as cur:
         for key, day in gaps:
@@ -738,7 +772,7 @@ def reconcile_gaps(
             if n >= spec.min_rows_per_day:
                 status, note = "backfilled", f"loaded by run {run_id} (rows={n})"
                 filled += 1
-            elif mark_unfillable and no_data_status(day, today) == "unfillable":
+            elif mark_unfillable and no_data_status(day, today, is_bday) == "unfillable":
                 status = "unfillable"
                 note = (
                     f"no data from source after successful backfill run {run_id} (rows={n}); "

@@ -6,10 +6,14 @@ rules that passes the rule's day filter, at least ``grace`` before now - and cla
 
 * ``not_registered`` - scheduled but no module registers the job (loader not deployed),
 * ``never_run`` - registered, nothing expected yet and no run recorded,
-* ``missed`` - a fire was expected but no run started since (scheduler down / overlapping);
-  a run recorded as ``skipped`` with ``lock_busy`` (the job lock stayed busy for the whole
-  wait) does not count as started - :attr:`JobHealth.missed_by_lock` is then set and the
-  ``quality`` job re-runs the missed fire (:func:`catch_up_params`),
+* ``missed`` - a fire was expected but no *scheduled* run started since (scheduler down /
+  overlapping). Only runs whose ``ops.job_run.trigger`` is ``schedule`` or ``catch_up`` (or
+  ``NULL``: recorded before migration 0421) count - a backfill task, CLI or API run of the
+  same job does not prove that the fire (e.g. the D-1/D-2 ``final`` revision run) happened.
+  A run recorded as ``skipped`` with ``lock_busy`` (the job lock stayed busy for the whole
+  wait) does not count as started either; when such a skip exists after the expected fire,
+  :attr:`JobHealth.missed_by_lock` is set and the ``quality`` job re-runs the missed fire
+  (:func:`catch_up_params`),
 * ``failing`` - the last ``failing_threshold`` or more runs since the last success failed,
 * ``degraded`` - the last run failed, fewer than ``failing_threshold`` times in a row,
 * ``ok`` - otherwise; ``manual`` - not scheduled (e.g. ad-hoc jobs) and not failing.
@@ -30,6 +34,7 @@ from apscheduler.triggers.cron import CronTrigger
 from psycopg.rows import tuple_row
 
 from mdhub.core.bizday import CalendarPredicate
+from mdhub.core.capture import SCHEDULED_TRIGGERS
 from mdhub.core.timeutil import business_days_back
 from mdhub.jobs import LOCK_BUSY, REGISTRY, JobRegistry
 from mdhub.schedule import KNOWN_JOBS, RULES, Rule, rule_applies
@@ -171,17 +176,26 @@ def _run_stats(conn: psycopg.Connection[Any]) -> dict[str, dict[str, Any]]:
         rows = cur.execute(
             """
             SELECT h.job, h.last_status, h.last_started_at, h.last_success_at,
-                   h.consecutive_failures, h.last_error, real.started_at
+                   h.consecutive_failures, h.last_error, real.started_at, busy.started_at
             FROM ops.v_job_health h
             LEFT JOIN LATERAL (
                 SELECT r.started_at FROM ops.job_run r
                 WHERE r.job = h.job
-                  AND NOT (r.status = 'skipped' AND coalesce(r.error, '') LIKE %s)
+                  AND (r.trigger IS NULL OR r.trigger = ANY(%(sched)s))
+                  AND NOT (r.status = 'skipped' AND coalesce(r.error, '') LIKE %(busy)s)
                 ORDER BY r.started_at DESC, r.id DESC
                 LIMIT 1
             ) real ON true
+            LEFT JOIN LATERAL (
+                SELECT r.started_at FROM ops.job_run r
+                WHERE r.job = h.job
+                  AND (r.trigger IS NULL OR r.trigger = ANY(%(sched)s))
+                  AND r.status = 'skipped' AND coalesce(r.error, '') LIKE %(busy)s
+                ORDER BY r.started_at DESC, r.id DESC
+                LIMIT 1
+            ) busy ON true
             """,
-            (LOCK_BUSY + "%",),
+            {"sched": list(SCHEDULED_TRIGGERS), "busy": LOCK_BUSY + "%"},
         ).fetchall()
     return {
         str(r[0]): {
@@ -191,6 +205,7 @@ def _run_stats(conn: psycopg.Connection[Any]) -> dict[str, dict[str, Any]]:
             "consecutive_failures": int(r[4] or 0),
             "last_error": r[5],
             "last_real_started_at": r[6],
+            "last_lock_skip_at": r[7],
         }
         for r in rows
     }
@@ -221,6 +236,7 @@ def job_health(
         expected, expected_rule = found if found else (None, None)
         last_started: datetime | None = st.get("last_started_at")
         real_started: datetime | None = st.get("last_real_started_at")
+        lock_skip: datetime | None = st.get("last_lock_skip_at")
         missed_by_lock = False
         fails = int(st.get("consecutive_failures", 0))
         last_status: str | None = st.get("last_status")
@@ -232,12 +248,10 @@ def job_health(
             real_started is None or real_started < expected - _START_TOLERANCE
         ):
             status = "not_registered" if not registered else "missed"
+            # a scheduled/catch-up attempt after the fire was skipped because the lock stayed
+            # busy (later backfill/CLI runs of the same job do not hide it)
             missed_by_lock = (
-                registered
-                and last_started is not None
-                and last_started >= expected - _START_TOLERANCE
-                and last_status == "skipped"
-                and (st.get("last_error") or "").startswith(LOCK_BUSY)
+                registered and lock_skip is not None and lock_skip >= expected - _START_TOLERANCE
             )
         elif last_status == "failed":
             status = "degraded"

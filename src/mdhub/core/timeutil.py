@@ -30,6 +30,7 @@ __all__ = [
     "msk_today",
     "next_business_day",
     "previous_business_day",
+    "previous_session_day",
     "to_msk",
     "utc_now",
 ]
@@ -81,6 +82,21 @@ def is_weekday(d: date) -> bool:
 def previous_business_day(d: date, is_business_day: BusinessDayPredicate = is_weekday) -> date:
     """Last business day strictly before ``d``."""
     return add_business_days(d, -1, is_business_day)
+
+
+def previous_session_day(d: date, is_trading_day: BusinessDayPredicate | None = None) -> date:
+    """Last **trading** day strictly before ``d`` - the session a quote older than the
+    snapshot clock belongs to. ``is_trading_day`` must count weekend/holiday sessions of the
+    engine (:meth:`mdhub.core.bizday.CalendarPredicate.is_trading_day`), not only settlement
+    business days: a Monday pre-open snapshot after a Sunday session carries Sunday's last
+    trade. Default Monday-Friday; scans at most 31 days (then ``d - 1``)."""
+    pred = is_trading_day or is_weekday
+    cur = d - timedelta(days=1)
+    for _ in range(31):
+        if pred(cur):
+            return cur
+        cur -= timedelta(days=1)
+    return d - timedelta(days=1)
 
 
 def next_business_day(d: date, is_business_day: BusinessDayPredicate = is_weekday) -> date:

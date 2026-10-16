@@ -40,7 +40,7 @@ Status: ``matured`` if ``maturity_date < today`` (MSK); ``active`` if MOEX lists
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence, Set
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -133,6 +133,7 @@ class Universe:
 @dataclass(frozen=True, slots=True)
 class ScheduleSummary:
     coupon_values: tuple[bool, ...] = ()
+    coupon_rates: tuple[ms.CouponRate, ...] = ()
     has_amortization: bool = False
     maturity_row_date: date | None = None
     face_value: Decimal | None = None
@@ -527,6 +528,9 @@ def _schedule_summary(u: Universe, secid: str) -> ScheduleSummary | None:
         coupon_values=tuple(
             any(v is not None and v != 0 for v in (r.value, r.value_prc)) for _, r in numbered
         ),
+        coupon_rates=tuple(
+            ms.CouponRate(r.start_date, r.pay_date, r.value_prc) for _, r in numbered
+        ),
         has_amortization=any(a.data_source == "amortization" for a in amorts),
         maturity_row_date=max(maturity_rows) if maturity_rows else None,
         face_value=_first(
@@ -557,7 +561,9 @@ def _db_schedule_summaries(
         coupons = cur.execute(
             """
             SELECT secid, array_agg((COALESCE(amount, 0) <> 0 OR COALESCE(value_prc, 0) <> 0)
-                                    ORDER BY coupon_no)
+                                    ORDER BY coupon_no),
+                   array_agg(start_date ORDER BY coupon_no), array_agg(pay_date ORDER BY coupon_no),
+                   array_agg(value_prc ORDER BY coupon_no)
             FROM ref.bond_coupon WHERE NOT is_deleted AND secid = ANY(%s) GROUP BY secid
             """,
             (list(secids),),
@@ -570,12 +576,21 @@ def _db_schedule_summaries(
             """,
             (list(secids),),
         ).fetchall()
-    cv = {str(s): tuple(bool(x) for x in vals) for s, vals in coupons}
+    cv = {str(s): tuple(bool(x) for x in vals) for s, vals, *_ in coupons}
+    cr = {
+        str(s): tuple(
+            ms.CouponRate(st, pay, prc) for st, pay, prc in zip(starts, pays, prcs, strict=True)
+        )
+        for s, _vals, starts, pays, prcs in coupons
+    }
     am = {str(s): (bool(h), m) for s, h, m in amorts}
     for s in set(cv) | set(am):
         has_am, mat = am.get(s, (False, None))
         out[s] = ScheduleSummary(
-            coupon_values=cv.get(s, ()), has_amortization=has_am, maturity_row_date=mat
+            coupon_values=cv.get(s, ()),
+            coupon_rates=cr.get(s, ()),
+            has_amortization=has_am,
+            maturity_row_date=mat,
         )
     return out
 
@@ -617,11 +632,16 @@ def build_bond_row(
     today: date,
     summary: ScheduleSummary | None,
     run_id: int,
+    *,
+    formula_secids: Set[str] = frozenset(),
+    key_rate_changes: tuple[date, ...] = (),
 ) -> tuple[dict[str, Any], BondFacts]:
     """Merge directory / collection / description / market / schedule into a ``ref.bond`` row.
 
     Precedence (per field): collection > per-SECID description > directory > market list
-    (primary board) > bondization (stubs and archived bonds only).
+    (primary board) > bondization (stubs and archived bonds only). ``formula_secids`` (bonds
+    with a rate formula from any source) and ``key_rate_changes`` feed the
+    ``schedule_constant`` rule (:func:`mdhub.sources.moex_static.schedule_constant_fixed`).
     """
     d = u.directory.get(secid)
     c = u.collection.get(secid)
@@ -700,6 +720,10 @@ def build_bond_row(
         has_description=has_description,
         is_matured=is_matured,
         coupon_values=summary.coupon_values if summary else (),
+        coupon_rates=summary.coupon_rates if summary else (),
+        has_formula=secid in formula_secids,
+        key_rate_changes=key_rate_changes,
+        today=today,
     )
     bond_class = ms.classify_bond(inp)
     coupon_type, basis = ms.classify_coupon_type(inp, bond_class)
@@ -858,6 +882,32 @@ def _money_rub(
     if face_unit in (None, "RUB") or when <= today:
         return value
     return None
+
+
+def formula_secids(conn: psycopg.Connection[Any]) -> frozenset[str]:
+    """SECIDs with a (not deleted) rate formula from any source."""
+    with conn.cursor(row_factory=tuple_row) as cur:
+        rows = cur.execute(
+            "SELECT DISTINCT secid FROM ref.bond_rate_formula WHERE NOT is_deleted"
+        ).fetchall()
+    return frozenset(str(r[0]) for r in rows)
+
+
+def key_rate_change_dates(conn: psycopg.Connection[Any]) -> tuple[date, ...]:
+    """Effective dates on which the CBR key rate (``md.fixing`` KEY_RATE, source cbr) changed."""
+    with conn.cursor(row_factory=tuple_row) as cur:
+        rows = cur.execute(
+            """
+            SELECT fixing_date FROM (
+                SELECT fixing_date, value,
+                       lag(value) OVER (ORDER BY fixing_date) AS prev
+                FROM md.fixing WHERE index_code = 'KEY_RATE' AND source = 'cbr'
+            ) k
+            WHERE prev IS NOT NULL AND value IS DISTINCT FROM prev
+            ORDER BY fixing_date
+            """
+        ).fetchall()
+    return tuple(r[0] for r in rows)
 
 
 def fixed_in_advance_secids(conn: psycopg.Connection[Any], secids: Sequence[str]) -> set[str]:
@@ -1160,9 +1210,19 @@ def write_universe(
     # bonds
     bonds: list[dict[str, Any]] = []
     facts: dict[str, BondFacts] = {}
+    with_formula = formula_secids(conn)
+    kr_changes = key_rate_change_dates(conn)
     for secid in sorted(scope):
         summary = _schedule_summary(u, secid) or db_summaries.get(secid)
-        row, f = build_bond_row(secid, u, today, summary, run_id)
+        row, f = build_bond_row(
+            secid,
+            u,
+            today,
+            summary,
+            run_id,
+            formula_secids=with_formula,
+            key_rate_changes=kr_changes,
+        )
         bonds.append(row)
         facts[secid] = f
     _upsert(ctx, conn, "ref.bond", bonds, ["secid"])
