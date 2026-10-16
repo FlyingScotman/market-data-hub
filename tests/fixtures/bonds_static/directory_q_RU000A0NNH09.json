@@ -1,0 +1,38 @@
+{
+ "securities": {
+  "columns": [
+   "secid",
+   "shortname",
+   "regnumber",
+   "name",
+   "isin",
+   "is_traded",
+   "emitent_id",
+   "emitent_title",
+   "emitent_inn",
+   "emitent_okpo",
+   "type",
+   "group",
+   "primary_boardid",
+   "marketprice_boardid"
+  ],
+  "data": [
+   [
+    "RU000A0NNH09",
+    "СберCIB327",
+    "6-327-01793-A",
+    "Сбер CIB-CO-327 (структурные)",
+    "RU000A0NNH09",
+    1,
+    33,
+    "Акционерное общество \"Сбербанк КИБ\"",
+    "7710048970",
+    "11522828",
+    "corporate_bond",
+    "stock_bonds",
+    "EQRP",
+    null
+   ]
+  ]
+ }
+}

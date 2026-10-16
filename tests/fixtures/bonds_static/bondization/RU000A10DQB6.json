@@ -1,0 +1,215 @@
+{
+ "amortizations": {
+  "columns": [
+   "isin",
+   "name",
+   "issuevalue",
+   "amortdate",
+   "facevalue",
+   "initialfacevalue",
+   "faceunit",
+   "valueprc",
+   "value",
+   "value_rub",
+   "data_source",
+   "secid",
+   "primary_boardid"
+  ],
+  "data": [
+   [
+    "RU000A10DQB6",
+    "ОФЗ-ПД 12156120V 28/02/29",
+    12000000000,
+    "2029-02-28",
+    10000,
+    10000,
+    "CNY",
+    100,
+    10000,
+    124991,
+    "maturity",
+    "RU000A10DQB6",
+    "TQOY"
+   ]
+  ]
+ },
+ "amortizations.cursor": {
+  "columns": [
+   "INDEX",
+   "TOTAL",
+   "PAGESIZE"
+  ],
+  "data": [
+   [
+    0,
+    1,
+    1
+   ]
+  ]
+ },
+ "coupons": {
+  "columns": [
+   "isin",
+   "name",
+   "issuevalue",
+   "coupondate",
+   "recorddate",
+   "startdate",
+   "initialfacevalue",
+   "facevalue",
+   "faceunit",
+   "value",
+   "valueprc",
+   "value_rub",
+   "secid",
+   "primary_boardid"
+  ],
+  "data": [
+   [
+    "RU000A10DQB6",
+    "ОФЗ-ПД 12156120V 28/02/29",
+    12000000000,
+    "2026-03-04",
+    "2026-03-03",
+    "2025-12-08",
+    10000,
+    10000,
+    "CNY",
+    141.37,
+    6.0,
+    1586.31,
+    "RU000A10DQB6",
+    "TQOY"
+   ],
+   [
+    "RU000A10DQB6",
+    "ОФЗ-ПД 12156120V 28/02/29",
+    12000000000,
+    "2026-09-02",
+    "2026-09-01",
+    "2026-03-04",
+    10000,
+    10000,
+    "CNY",
+    299.18,
+    6.0,
+    3858.52,
+    "RU000A10DQB6",
+    "TQOY"
+   ],
+   [
+    "RU000A10DQB6",
+    "ОФЗ-ПД 12156120V 28/02/29",
+    12000000000,
+    "2027-03-03",
+    "2027-03-02",
+    "2026-09-02",
+    10000,
+    10000,
+    "CNY",
+    299.18,
+    6.0,
+    3739.48,
+    "RU000A10DQB6",
+    "TQOY"
+   ],
+   [
+    "RU000A10DQB6",
+    "ОФЗ-ПД 12156120V 28/02/29",
+    12000000000,
+    "2027-09-01",
+    "2027-08-31",
+    "2027-03-03",
+    10000,
+    10000,
+    "CNY",
+    299.18,
+    6.0,
+    3739.48,
+    "RU000A10DQB6",
+    "TQOY"
+   ],
+   [
+    "RU000A10DQB6",
+    "ОФЗ-ПД 12156120V 28/02/29",
+    12000000000,
+    "2028-03-01",
+    "2028-02-29",
+    "2027-09-01",
+    10000,
+    10000,
+    "CNY",
+    299.18,
+    6.0,
+    3739.48,
+    "RU000A10DQB6",
+    "TQOY"
+   ],
+   [
+    "RU000A10DQB6",
+    "ОФЗ-ПД 12156120V 28/02/29",
+    12000000000,
+    "2028-08-30",
+    "2028-08-29",
+    "2028-03-01",
+    10000,
+    10000,
+    "CNY",
+    299.18,
+    6.0,
+    3739.48,
+    "RU000A10DQB6",
+    "TQOY"
+   ],
+   [
+    "RU000A10DQB6",
+    "ОФЗ-ПД 12156120V 28/02/29",
+    12000000000,
+    "2029-02-28",
+    "2029-02-27",
+    "2028-08-30",
+    10000,
+    10000,
+    "CNY",
+    299.18,
+    6.0,
+    3739.48,
+    "RU000A10DQB6",
+    "TQOY"
+   ]
+  ]
+ },
+ "coupons.cursor": {
+  "columns": [
+   "INDEX",
+   "TOTAL",
+   "PAGESIZE"
+  ],
+  "data": [
+   [
+    0,
+    7,
+    7
+   ]
+  ]
+ },
+ "offers": {
+  "columns": [
+   "isin",
+   "name",
+   "issuevalue",
+   "offerdate",
+   "offerdatestart",
+   "offerdateend",
+   "facevalue",
+   "faceunit",
+   "price",
+   "value",
+   "agent",
+   "offertype",
+   "secid",
+   "primary_boardid"
+  ],
+  "data": []
+ }
+}
