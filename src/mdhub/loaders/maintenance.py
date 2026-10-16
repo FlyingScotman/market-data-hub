@@ -43,8 +43,10 @@ from psycopg.rows import tuple_row
 
 from mdhub.core.capture import reap_orphaned_runs
 from mdhub.core.redact import sanitize_text
+from mdhub.core.timeutil import utc_now
 from mdhub.db.pool import Database
 from mdhub.jobs import JobContext, JobParamError, job
+from mdhub.snapshot.publish import purge_intraday_snapshots
 
 __all__ = [
     "BACKUP_DIR_ENV",
@@ -313,6 +315,7 @@ def maintenance(
     backup_dir_path: str | None = None,
     retention_days: int | None = None,
     reread_retention_days: int | None = None,
+    snapshot_retention_days: int | None = None,
     vacuum: bool = True,
     vacuum_min_mb: int = 64,
 ) -> dict[str, Any]:
@@ -322,6 +325,8 @@ def maintenance(
     :param backup_dir_path: override ``MDHUB_BACKUP_DIR``.
     :param retention_days: override ``MDHUB_RAW_RETENTION_DAYS_INTRADAY``.
     :param reread_retention_days: override ``MDHUB_RAW_RETENTION_DAYS_REREAD``.
+    :param snapshot_retention_days: override ``MDHUB_SNAPSHOT_RETENTION_DAYS_INTRADAY``
+        (intraday market snapshots; static and EOD snapshots are kept forever).
     :param vacuum: run ``VACUUM (ANALYZE)`` after retention.
     """
     secrets = ctx.settings.secret_values()
@@ -360,6 +365,17 @@ def maintenance(
             )
             result["raw_deleted"] = None
         ctx.logger.info("raw retention: deleted %s intraday capture(s)", result["raw_deleted"])
+        snap_days = snapshot_retention_days or ctx.settings.snapshot_retention_days_intraday
+        with ctx.connection() as conn:
+            result["intraday_snapshots_deleted"] = purge_intraday_snapshots(
+                conn, snap_days, now=utc_now()
+            )
+        result["snapshot_retention_days"] = snap_days
+        ctx.logger.info(
+            "snapshot retention: deleted %d intraday snapshot(s) older than %d days",
+            result["intraday_snapshots_deleted"],
+            snap_days,
+        )
         if vacuum:
             result["vacuumed"] = vacuum_tables(ctx.db, min_mb=vacuum_min_mb)
         return result

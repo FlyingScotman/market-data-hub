@@ -18,6 +18,7 @@ dependencies = [
   "fastapi>=0.115,<1",
   "uvicorn>=0.30,<1",
   "tzdata>=2024.1",
+  "jsonschema>=4.23,<5",
 ]
 
 [project.scripts]
@@ -32,6 +33,7 @@ dev = [
   "ruff>=0.6,<1",
   "mypy>=1.11,<2",
   "pyyaml>=6.0.3",
+  "types-jsonschema>=4.26.0.20261006",
 ]
 
 [build-system]
@@ -44,8 +46,14 @@ path = "src/mdhub/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/mdhub"]
 
+[tool.hatch.build.targets.wheel.force-include]
+# Market Snapshot Contract v1 schemas (owned by the hub, kept at the repository root)
+"schemas" = "mdhub/schemas"
+
 [tool.hatch.build.targets.sdist]
-include = ["/src/mdhub", "/tests", "/docs", "/README.md", "/pyproject.toml", "/uv.lock"]
+include = [
+  "/src/mdhub", "/schemas", "/tests", "/docs", "/README.md", "/pyproject.toml", "/uv.lock",
+]
 
 [tool.ruff]
 line-length = 100

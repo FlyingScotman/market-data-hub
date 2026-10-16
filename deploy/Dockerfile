@@ -52,9 +52,11 @@ COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project
 
-# 2) the project itself (non-editable, so /app/src is not needed at runtime)
+# 2) the project itself (non-editable, so /app/src is not needed at runtime; the wheel
+#    carries the snapshot contract schemas as mdhub/schemas)
 COPY README.md ./
 COPY src ./src
+COPY schemas ./schemas
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-editable
 

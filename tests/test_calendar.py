@@ -164,11 +164,17 @@ def test_iss_partial_year_does_not_override_curated(db: Database, conn: Conn) ->
         "AND day = '2027-02-23'"
     ).fetchone()
     assert eff == {"source": y2027.source}
+    # a versioned change, not a DELETE: the row stays (is_deleted), its image is in history
+    gone = conn.execute(
+        "SELECT is_deleted FROM ref.calendar_day WHERE calendar = 'MOEX_STOCK' "
+        "AND day = '2027-02-23' AND source = 'moex_iss_calendar'"
+    ).fetchone()
+    assert gone == {"is_deleted": True}
     hist = conn.execute(
-        "SELECT old_row ->> 'day' AS day FROM ops.row_history WHERE table_name = "
-        "'ref.calendar_day' AND old_row ? '_deleted'"
+        "SELECT old_row ->> 'day' AS day, old_row ->> 'is_deleted' AS deleted "
+        "FROM ops.row_history WHERE table_name = 'ref.calendar_day'"
     ).fetchall()
-    assert hist == [{"day": "2027-02-23"}]
+    assert hist == [{"day": "2027-02-23", "deleted": "false"}]
 
 
 def test_observed_outranks_newer_curated(db: Database) -> None:

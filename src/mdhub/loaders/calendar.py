@@ -33,8 +33,10 @@ run ``partial``, the calendar is not changed. Known limitation of the observed c
 (RU_PRODUCTION from RUONIA, MOEX from trading history): a day whose source data failed to load
 before a refresh becomes a non-business day. A row is (re)written
 only when ``is_business_day`` changes (``known_at`` = when that became known; the old image
-goes to ``ops.row_history``). Repair on every refresh: ISS-calendar rows that the current ISS
-answer no longer lists are deleted (image kept in ``ops.row_history``), and an observed
+goes to ``ops.row_history``; ``ingested_at`` = when the hub wrote that version). Repair on every
+refresh: ISS-calendar rows that the current ISS answer no longer lists are soft-deleted
+(``is_deleted = true``, a versioned change with the old image in ``ops.row_history``; readers
+skip deleted rows, and a day listed again is re-activated), and an observed
 history that starts after :data:`OBSERVED_START` is extended backwards. The deletion is skipped
 (warning, run ``partial``) when the ISS answer of that engine looks incomplete - fewer than
 :data:`ISS_CALENDAR_MIN_ROWS` rows of the engine or none in the current year - so a transient
@@ -45,7 +47,8 @@ engine trades on a weekend/holiday; trades belong to ``trade_session_date``) sta
 non-business in ``ref.calendar_day`` and are stored separately for every listed day (also
 past days of the year: the observed calendars cannot see them). They make the day a *trading
 day* (:meth:`mdhub.core.bizday.CalendarPredicate.is_trading_day`). Future session rows that ISS
-no longer lists are deleted under the same sanity rule.
+no longer lists are soft-deleted under the same sanity rule. Both tables replay as known at any
+past instant (``ref.calendar_day_known_at``, ``ref.weekend_session_known_at``, migration 0500).
 
 Entry points: :func:`refresh_calendar` (called by ``cbr_meetings`` in ``calendar`` /
 ``calendar_full`` mode) and :func:`seed_calendar` (initial seeding without a scheduled job).
@@ -290,11 +293,13 @@ def write_calendar_days(
         return UpsertResult()
     if calendar not in CALENDARS:
         raise ValueError(f"unknown calendar {calendar!r}")
+    written_at = utc_now()
     with conn.cursor(row_factory=tuple_row) as cur:
         existing: dict[date, bool] = dict(
             cur.execute(
                 """SELECT day, is_business_day FROM ref.calendar_day
-                   WHERE calendar = %s AND source = %s AND day BETWEEN %s AND %s""",
+                   WHERE calendar = %s AND source = %s AND day BETWEEN %s AND %s
+                     AND NOT is_deleted""",
                 (calendar, source, min(days), max(days)),
             ).fetchall()
         )
@@ -304,7 +309,9 @@ def write_calendar_days(
             "day": d,
             "source": source,
             "is_business_day": flag,
+            "is_deleted": False,
             "known_at": known_at,
+            "ingested_at": written_at,
             "version": version,
             "note": note,
             "capture_id": capture_id,
@@ -317,6 +324,14 @@ def write_calendar_days(
     return result + UpsertResult(unchanged=len(days) - len(rows))
 
 
+def _set_history_run(cur: Any, run_id: int | None) -> None:
+    """Transaction-local ``mdhub.run_id`` for ``ops.row_history.replaced_by_run`` (as
+    :func:`mdhub.core.upsert.upsert_rows` does); ``None`` clears it."""
+    cur.execute(
+        "SELECT set_config('mdhub.run_id', %s, true)", ("" if run_id is None else str(run_id),)
+    )
+
+
 def _drop_unlisted(
     conn: psycopg.Connection[Any],
     calendar: str,
@@ -326,28 +341,23 @@ def _drop_unlisted(
     after: date | None,
     run_id: int | None,
 ) -> UpsertResult:
-    """Delete ``(calendar, source)`` rows after ``after`` whose day is not in ``keep``; the
-    deleted row images go to ``ops.row_history`` first (the history trigger covers updates
-    only). Counted as updates."""
+    """Soft-delete ``(calendar, source)`` rows after ``after`` whose day is not in ``keep``
+    (``is_deleted = true``: a versioned change, the history trigger keeps the old image).
+    Counted as updates."""
     with conn.cursor(row_factory=tuple_row) as cur:
+        _set_history_run(cur, run_id)
         cur.execute(
             """
-            WITH gone AS (
-                DELETE FROM ref.calendar_day c
-                WHERE c.calendar = %(cal)s AND c.source = %(src)s
-                  AND (%(after)s::date IS NULL OR c.day > %(after)s::date)
-                  AND NOT (c.day = ANY(%(keep)s::date[]))
-                RETURNING c.*
-            )
-            INSERT INTO ops.row_history (table_name, row_key, old_row, replaced_by_run)
-            SELECT 'ref.calendar_day',
-                   jsonb_build_object('calendar', g.calendar, 'day', g.day, 'source', g.source),
-                   to_jsonb(g) || jsonb_build_object('_deleted', true), %(run)s
-            FROM gone g
+            UPDATE ref.calendar_day c
+            SET is_deleted = true, ingested_at = now(), run_id = %(run)s
+            WHERE c.calendar = %(cal)s AND c.source = %(src)s AND NOT c.is_deleted
+              AND (%(after)s::date IS NULL OR c.day > %(after)s::date)
+              AND NOT (c.day = ANY(%(keep)s::date[]))
             """,
             {"cal": calendar, "src": source, "after": after, "keep": sorted(keep), "run": run_id},
         )
         n = cur.rowcount
+        _set_history_run(cur, None)
     if n:
         log.warning("calendar %s: removed %d %s row(s) no longer listed", calendar, n, source)
     return UpsertResult(updated=max(n, 0))
@@ -357,7 +367,7 @@ def _last_observed(conn: psycopg.Connection[Any], calendar: str) -> date | None:
     with conn.cursor(row_factory=tuple_row) as cur:
         row = cur.execute(
             """SELECT max(day) FROM ref.calendar_day
-               WHERE calendar = %s AND source LIKE 'observed\\_%%'""",
+               WHERE calendar = %s AND source LIKE 'observed\\_%%' AND NOT is_deleted""",
             (calendar,),
         ).fetchone()
     return row[0] if row else None
@@ -373,7 +383,8 @@ def _observed_start(
         return since
     with conn.cursor(row_factory=tuple_row) as cur:
         row = cur.execute(
-            "SELECT min(day), max(day) FROM ref.calendar_day WHERE calendar = %s AND source = %s",
+            "SELECT min(day), max(day) FROM ref.calendar_day "
+            "WHERE calendar = %s AND source = %s AND NOT is_deleted",
             (calendar, source),
         ).fetchone()
     first: date | None = row[0] if row else None
@@ -565,25 +576,19 @@ def write_weekend_sessions(
     source: str = ISS_SOURCE,
 ) -> UpsertResult:
     """Write ``ref.weekend_session`` rows of ``(calendar, source)`` (new or changed only); with
-    ``drop_after``, delete rows after that day the answer no longer lists (image to
-    ``ops.row_history``)."""
+    ``drop_after``, soft-delete rows after that day the answer no longer lists
+    (``is_deleted = true``, old image in ``ops.row_history``)."""
     total = UpsertResult()
+    written_at = utc_now()
     if drop_after is not None:
         with conn.cursor(row_factory=tuple_row) as cur:
+            _set_history_run(cur, run_id)
             cur.execute(
                 """
-                WITH gone AS (
-                    DELETE FROM ref.weekend_session s
-                    WHERE s.calendar = %(cal)s AND s.source = %(src)s AND s.day > %(after)s
-                      AND NOT (s.day = ANY(%(keep)s::date[]))
-                    RETURNING s.*
-                )
-                INSERT INTO ops.row_history (table_name, row_key, old_row, replaced_by_run)
-                SELECT 'ref.weekend_session',
-                       jsonb_build_object('calendar', g.calendar, 'day', g.day,
-                                          'source', g.source),
-                       to_jsonb(g) || jsonb_build_object('_deleted', true), %(run)s
-                FROM gone g
+                UPDATE ref.weekend_session s
+                SET is_deleted = true, ingested_at = now(), run_id = %(run)s
+                WHERE s.calendar = %(cal)s AND s.source = %(src)s AND s.day > %(after)s
+                  AND NOT s.is_deleted AND NOT (s.day = ANY(%(keep)s::date[]))
                 """,
                 {
                     "cal": calendar,
@@ -593,20 +598,23 @@ def write_weekend_sessions(
                     "run": run_id,
                 },
             )
-            if cur.rowcount > 0:
+            n = cur.rowcount
+            _set_history_run(cur, None)
+            if n > 0:
                 log.warning(
                     "calendar %s: removed %d weekend session(s) no longer listed",
                     calendar,
-                    cur.rowcount,
+                    n,
                 )
-                total += UpsertResult(updated=cur.rowcount)
+                total += UpsertResult(updated=n)
     if not sessions:
         return total
     with conn.cursor(row_factory=tuple_row) as cur:
         existing: dict[date, date | None] = dict(
             cur.execute(
                 """SELECT day, trade_session_date FROM ref.weekend_session
-                   WHERE calendar = %s AND source = %s AND day BETWEEN %s AND %s""",
+                   WHERE calendar = %s AND source = %s AND day BETWEEN %s AND %s
+                     AND NOT is_deleted""",
                 (calendar, source, min(sessions), max(sessions)),
             ).fetchall()
         )
@@ -616,7 +624,9 @@ def write_weekend_sessions(
             "day": d,
             "source": source,
             "trade_session_date": session,
+            "is_deleted": False,
             "known_at": known_at,
+            "ingested_at": written_at,
             "note": "MOEX ISS calendar reason W (weekend/holiday session)",
             "capture_id": capture_id,
             "run_id": run_id,

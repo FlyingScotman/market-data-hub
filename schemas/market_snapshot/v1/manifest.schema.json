@@ -1,0 +1,613 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.market-data-hub.invalid/market_snapshot/v1/manifest.schema.json",
+  "title": "Market Snapshot Contract v1: manifest",
+  "description": "The envelope of a snapshot without data. The bundle document is the envelope plus 'data'; GET /v1/snapshots/{id}/manifest returns the envelope plus 'snapshot_id'.",
+  "$defs": {
+    "envelope_properties": {
+      "type": "object",
+      "properties": {
+        "schema_version": {
+          "const": "market_snapshot/1.0"
+        },
+        "kind": {
+          "enum": [
+            "static",
+            "market"
+          ]
+        },
+        "cut_type": {
+          "description": "market: eod_preliminary | eod_final | intraday; static: daily (scheduled) | change (static data changed since the last static snapshot)",
+          "enum": [
+            "eod_preliminary",
+            "eod_final",
+            "intraday",
+            "daily",
+            "change"
+          ]
+        },
+        "business_date": {
+          "$ref": "common.schema.json#/$defs/date"
+        },
+        "cut_ts": {
+          "description": "Nominal UTC instant of the cut",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/utc_instant"
+            }
+          ]
+        },
+        "known_at": {
+          "description": "No record the hub learned after this UTC instant is included",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/utc_instant"
+            }
+          ]
+        },
+        "static_snapshot_id": {
+          "description": "market: the static snapshot this one is consistent with; static: null",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/sha256_or_null"
+            }
+          ]
+        },
+        "supersedes": {
+          "description": "Earlier snapshot of the same cut that this one corrects",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/sha256_or_null"
+            }
+          ]
+        },
+        "producer": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "version"
+          ],
+          "properties": {
+            "name": {
+              "const": "market-data-hub"
+            },
+            "version": {
+              "type": "string"
+            }
+          }
+        },
+        "parameters": {
+          "description": "Builder parameters (universe rule, lookback windows) needed to reproduce the snapshot",
+          "type": "object",
+          "additionalProperties": {
+            "type": [
+              "string",
+              "integer",
+              "boolean",
+              "array"
+            ]
+          }
+        },
+        "calendar": {
+          "description": "One calendar version and fingerprint per snapshot (from ref.calendar_effective as known at known_at; a market snapshot repeats its static snapshot's)",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "version",
+            "fingerprint"
+          ],
+          "properties": {
+            "version": {
+              "description": "Latest change time of the calendar rows (UTC) as known at known_at; null without calendar rows",
+              "allOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/utc_instant_or_null"
+                }
+              ]
+            },
+            "fingerprint": {
+              "description": "sha256 over the (calendar, fingerprint) pairs of all calendars",
+              "allOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/sha256"
+                }
+              ]
+            }
+          }
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "description": "Provenance of one dataset from one hub source: ops.job_run ids of the included rows and the range of their hub ingest times (deterministic under raw-capture retention)",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "dataset",
+              "source",
+              "run_ids",
+              "ingested_from",
+              "ingested_to"
+            ],
+            "properties": {
+              "dataset": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "run_ids": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "uniqueItems": true
+              },
+              "ingested_from": {
+                "$ref": "common.schema.json#/$defs/utc_instant_or_null"
+              },
+              "ingested_to": {
+                "$ref": "common.schema.json#/$defs/utc_instant_or_null"
+              }
+            }
+          }
+        },
+        "datasets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "rows",
+              "sha256",
+              "coverage",
+              "stale",
+              "stale_reasons"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "rows": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "sha256": {
+                "description": "sha256 of the canonical JSON of data.<name>",
+                "allOf": [
+                  {
+                    "$ref": "common.schema.json#/$defs/sha256"
+                  }
+                ]
+              },
+              "coverage": {
+                "description": "Dataset-specific coverage facts (expected/present/missing items, label counts, windows)",
+                "type": "object"
+              },
+              "stale": {
+                "type": "boolean"
+              },
+              "stale_reasons": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "excluded": {
+          "type": "array",
+          "items": {
+            "description": "A source record left out of the snapshot, with the reason (records are never dropped silently)",
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "dataset",
+              "key",
+              "reason"
+            ],
+            "properties": {
+              "dataset": {
+                "type": "string"
+              },
+              "key": {
+                "type": "object",
+                "additionalProperties": {
+                  "$ref": "common.schema.json#/$defs/key_value"
+                }
+              },
+              "reason": {
+                "$ref": "common.schema.json#/$defs/label"
+              }
+            }
+          }
+        }
+      }
+    },
+    "source": {
+      "description": "Provenance of one dataset from one hub source: ops.job_run ids of the included rows and the range of their hub ingest times (deterministic under raw-capture retention)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset",
+        "source",
+        "run_ids",
+        "ingested_from",
+        "ingested_to"
+      ],
+      "properties": {
+        "dataset": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "run_ids": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          },
+          "uniqueItems": true
+        },
+        "ingested_from": {
+          "$ref": "common.schema.json#/$defs/utc_instant_or_null"
+        },
+        "ingested_to": {
+          "$ref": "common.schema.json#/$defs/utc_instant_or_null"
+        }
+      }
+    },
+    "dataset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "rows",
+        "sha256",
+        "coverage",
+        "stale",
+        "stale_reasons"
+      ],
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "rows": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sha256": {
+          "description": "sha256 of the canonical JSON of data.<name>",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/sha256"
+            }
+          ]
+        },
+        "coverage": {
+          "description": "Dataset-specific coverage facts (expected/present/missing items, label counts, windows)",
+          "type": "object"
+        },
+        "stale": {
+          "type": "boolean"
+        },
+        "stale_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "excluded": {
+      "description": "A source record left out of the snapshot, with the reason (records are never dropped silently)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset",
+        "key",
+        "reason"
+      ],
+      "properties": {
+        "dataset": {
+          "type": "string"
+        },
+        "key": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "common.schema.json#/$defs/key_value"
+          }
+        },
+        "reason": {
+          "$ref": "common.schema.json#/$defs/label"
+        }
+      }
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "snapshot_id",
+    "schema_version",
+    "kind",
+    "cut_type",
+    "business_date",
+    "cut_ts",
+    "known_at",
+    "static_snapshot_id",
+    "supersedes",
+    "producer",
+    "parameters",
+    "calendar",
+    "sources",
+    "datasets",
+    "excluded"
+  ],
+  "properties": {
+    "snapshot_id": {
+      "description": "sha256 of the canonical bundle document",
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/sha256"
+        }
+      ]
+    },
+    "schema_version": {
+      "const": "market_snapshot/1.0"
+    },
+    "kind": {
+      "enum": [
+        "static",
+        "market"
+      ]
+    },
+    "cut_type": {
+      "description": "market: eod_preliminary | eod_final | intraday; static: daily (scheduled) | change (static data changed since the last static snapshot)",
+      "enum": [
+        "eod_preliminary",
+        "eod_final",
+        "intraday",
+        "daily",
+        "change"
+      ]
+    },
+    "business_date": {
+      "$ref": "common.schema.json#/$defs/date"
+    },
+    "cut_ts": {
+      "description": "Nominal UTC instant of the cut",
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/utc_instant"
+        }
+      ]
+    },
+    "known_at": {
+      "description": "No record the hub learned after this UTC instant is included",
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/utc_instant"
+        }
+      ]
+    },
+    "static_snapshot_id": {
+      "description": "market: the static snapshot this one is consistent with; static: null",
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/sha256_or_null"
+        }
+      ]
+    },
+    "supersedes": {
+      "description": "Earlier snapshot of the same cut that this one corrects",
+      "allOf": [
+        {
+          "$ref": "common.schema.json#/$defs/sha256_or_null"
+        }
+      ]
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "const": "market-data-hub"
+        },
+        "version": {
+          "type": "string"
+        }
+      }
+    },
+    "parameters": {
+      "description": "Builder parameters (universe rule, lookback windows) needed to reproduce the snapshot",
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "string",
+          "integer",
+          "boolean",
+          "array"
+        ]
+      }
+    },
+    "calendar": {
+      "description": "One calendar version and fingerprint per snapshot (from ref.calendar_effective as known at known_at; a market snapshot repeats its static snapshot's)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version",
+        "fingerprint"
+      ],
+      "properties": {
+        "version": {
+          "description": "Latest change time of the calendar rows (UTC) as known at known_at; null without calendar rows",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/utc_instant_or_null"
+            }
+          ]
+        },
+        "fingerprint": {
+          "description": "sha256 over the (calendar, fingerprint) pairs of all calendars",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/sha256"
+            }
+          ]
+        }
+      }
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "description": "Provenance of one dataset from one hub source: ops.job_run ids of the included rows and the range of their hub ingest times (deterministic under raw-capture retention)",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dataset",
+          "source",
+          "run_ids",
+          "ingested_from",
+          "ingested_to"
+        ],
+        "properties": {
+          "dataset": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "run_ids": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "uniqueItems": true
+          },
+          "ingested_from": {
+            "$ref": "common.schema.json#/$defs/utc_instant_or_null"
+          },
+          "ingested_to": {
+            "$ref": "common.schema.json#/$defs/utc_instant_or_null"
+          }
+        }
+      }
+    },
+    "datasets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "rows",
+          "sha256",
+          "coverage",
+          "stale",
+          "stale_reasons"
+        ],
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "rows": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "sha256": {
+            "description": "sha256 of the canonical JSON of data.<name>",
+            "allOf": [
+              {
+                "$ref": "common.schema.json#/$defs/sha256"
+              }
+            ]
+          },
+          "coverage": {
+            "description": "Dataset-specific coverage facts (expected/present/missing items, label counts, windows)",
+            "type": "object"
+          },
+          "stale": {
+            "type": "boolean"
+          },
+          "stale_reasons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "excluded": {
+      "type": "array",
+      "items": {
+        "description": "A source record left out of the snapshot, with the reason (records are never dropped silently)",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "dataset",
+          "key",
+          "reason"
+        ],
+        "properties": {
+          "dataset": {
+            "type": "string"
+          },
+          "key": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "common.schema.json#/$defs/key_value"
+            }
+          },
+          "reason": {
+            "$ref": "common.schema.json#/$defs/label"
+          }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "market"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "cut_type": {
+            "enum": [
+              "eod_preliminary",
+              "eod_final",
+              "intraday"
+            ]
+          },
+          "static_snapshot_id": {
+            "$ref": "common.schema.json#/$defs/sha256"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "cut_type": {
+            "enum": [
+              "daily",
+              "change"
+            ]
+          },
+          "static_snapshot_id": {
+            "type": "null"
+          }
+        }
+      }
+    }
+  ]
+}

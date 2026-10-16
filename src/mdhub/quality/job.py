@@ -22,7 +22,7 @@ from mdhub.jobs import REGISTRY, JobContext, JobParamError, job, run_job
 from mdhub.quality.checks import DatasetCheck, queue_backfill, scan_dataset, sync_gaps
 from mdhub.quality.health import JobHealth, catch_up_params, job_health
 from mdhub.quality.report import QualityReport, store_report
-from mdhub.schedule import SCHEDULED_LOCK_WAIT_S
+from mdhub.schedule import SCHEDULED_LOCK_WAIT_S, effective_rules
 
 __all__ = ["catch_up_missed", "quality", "run_quality"]
 
@@ -113,6 +113,7 @@ def run_quality(
                 now=datetime.now(ctx.settings.zone),
                 calendar=ctx.calendar,
                 tz=ctx.settings.zone,
+                rules=effective_rules(ctx.settings),
             )
         for j in report.job_problems:
             ctx.logger.warning(

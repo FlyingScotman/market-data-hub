@@ -34,7 +34,7 @@ from mdhub.jobs import (
     parse_param_pairs,
     run_job,
 )
-from mdhub.schedule import RULES, build_scheduler, check_rules
+from mdhub.schedule import build_scheduler, check_rules, effective_rules
 
 log = logging.getLogger("mdhub.cli")
 
@@ -126,16 +126,17 @@ def migrate_cmd(
 def jobs_list() -> None:
     """List scheduled and registered jobs."""
     report = discover_jobs()
-    names = sorted(set(RULES) | set(REGISTRY.names()))
+    rules = effective_rules(_settings())
+    names = sorted(set(rules) | set(REGISTRY.names()))
     width = max((len(n) for n in names), default=10)
     for name in names:
         registered = name in REGISTRY
         desc = REGISTRY.get(name).description if registered else "(not registered)"
-        crons = ", ".join(r.cron for r in RULES.get(name, ())) or "manual"
+        crons = ", ".join(r.cron for r in rules.get(name, ())) or "manual"
         typer.echo(f"{name:<{width}}  {'yes' if registered else 'no ':<3}  {crons}  - {desc}")
     for module, err in report.failed.items():
         typer.echo(f"import failed: {module}: {err}", err=True)
-    for problem in check_rules(RULES, REGISTRY):
+    for problem in check_rules(rules, REGISTRY):
         typer.echo(f"schedule problem: {problem}", err=True)
 
 
@@ -195,7 +196,8 @@ def scheduler_cmd(
     report = discover_jobs()
     for module, err in report.failed.items():
         log.error("job module %s failed to import: %s", module, err)
-    for problem in check_rules(RULES, REGISTRY):
+    rules = effective_rules(settings)
+    for problem in check_rules(rules, REGISTRY):
         log.warning("schedule problem: %s", problem)
     # Jobs open nested pooled connections (e.g. DbCalendar lookups inside a data transaction):
     # two per worker plus headroom avoids PoolTimeout with all workers busy.
@@ -204,7 +206,9 @@ def scheduler_cmd(
         reap_orphaned_runs(db)
     except Exception:  # never block the scheduler start on housekeeping
         log.exception("could not reap orphaned job runs")
-    scheduler = build_scheduler(settings, db, calendar=DbCalendar(db), max_workers=max_workers)
+    scheduler = build_scheduler(
+        settings, db, calendar=DbCalendar(db), rules=rules, max_workers=max_workers
+    )
 
     def _stop(signum: int, _frame: FrameType | None) -> None:
         log.info("signal %d: shutting down scheduler", signum)

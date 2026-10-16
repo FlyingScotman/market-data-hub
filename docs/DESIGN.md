@@ -16,6 +16,8 @@ Goals
 3. **PostgreSQL 16** store with full history, imported losslessly from the two SQLite snapshots.
 4. **Read API** (FastAPI) + CLI; deployable archive for a fresh VPS (docker compose, plus
    bare-metal systemd variant).
+5. **Published snapshots**: immutable, content-addressed static and market snapshots under the
+   hub-owned Market Snapshot Contract v1 (§11) - the only thing the desk backend reads.
 
 Non-goals (stay in analytics projects): curve bootstrapping, key-rate projection, Z-spreads,
 pricing. The hub stores *inputs* (quotes, fixings, published parameters) and official
@@ -73,9 +75,10 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
 - `ops.backfill_task(id, dataset, params jsonb {date_from, date_to}, status, attempts, last_error, created_at, done_at, not_before, started_at, last_run_id, source)` — one task per (backfill job, range): datasets sharing a job share tasks.
 - `ops.dataset_status` (latest check per dataset), `ops.quality_report` (one report per `quality` run, incl. job health and catch-up); views `ops.v_coverage`, `ops.v_job_health`, `ops.v_open_gaps`, `ops.v_backfill_queue`.
 - `ops.legacy_import` (SQLite import bookkeeping), `ops.schema_migration(version, applied_at, checksum)`
+- `ops.published_snapshot(id = sha256 of the canonical bundle, schema_version, kind, cut_type, business_date, cut_ts, known_at, static_snapshot_id, supersedes, content_sha256, calendar_fingerprint, sources, datasets, excluded, excluded_count, manifest, payload_gz, size_bytes, gzip_bytes, run_id, published_at)` (0510) — immutable published snapshots (§11); not `ref.static_snapshot`.
 
 ### `ref` — static / reference
-- `ref.calendar_day(calendar ∈ {MOEX_STOCK, MOEX_FX, MOEX_FORTS, RU_PRODUCTION, TARGET}, day, source, is_business_day, known_at, version, note)` PK (calendar, day, source) — past days from observed trading / RUONIA observations (from 2019-01-01), the days the official MOEX ISS calendar lists (never a synthesized year), future days from the curated data file; TARGET: a computed rule for all days (`rule_target`). **Precedence by source, not recency**: `ref.calendar_source_rank()` observed > moex_iss_calendar > curated > rule_* > curated_unverified (`known_at` breaks ties; `rule_*` 0422); view `ref.calendar_effective`, `mdhub.core.bizday.DbCalendar`; days without rows: Monday–Friday.
+- `ref.calendar_day(calendar ∈ {MOEX_STOCK, MOEX_FX, MOEX_FORTS, RU_PRODUCTION, TARGET}, day, source, is_business_day, is_deleted, known_at, ingested_at, version, note)` PK (calendar, day, source) — rows are never deleted: a day the ISS calendar stops listing is soft-deleted (`is_deleted`, a versioned change with the old image in `ops.row_history`; readers skip it, a relisted day is re-activated); `ingested_at` = version time (0500) — past days from observed trading / RUONIA observations (from 2019-01-01), the days the official MOEX ISS calendar lists (never a synthesized year), future days from the curated data file; TARGET: a computed rule for all days (`rule_target`). **Precedence by source, not recency**: `ref.calendar_source_rank()` observed > moex_iss_calendar > curated > rule_* > curated_unverified (`known_at` breaks ties; `rule_*` 0422); view `ref.calendar_effective`, `mdhub.core.bizday.DbCalendar`; days without rows: Monday–Friday.
 
   | calendar | past days (observed) | future days | used by |
   |---|---|---|---|
@@ -88,7 +91,7 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
   Observed rows cover every day from the start to the last observed day (no trading / fixing → `false`); curated and ISS rows are written only for later days. TARGET is rule-only: the rule is exact (ECB rate dates 2015-01-02..2026-10-15 match it day for day: the 57 weekdays without rates are exactly the closing days), and deriving it from `md.ecb_fx` would turn a failed ECB load into a holiday. ECB data only **cross-checks** the rule on every calendar refresh: a TARGET business day without ECB rates (inside the ECB data range, past the 1-business-day no-data grace) or ECB rates on a closing day → warning and calendar run `partial`; the calendar is not changed. `ecb_fx` used Monday–Friday before 0422, so every TARGET holiday ended `unfillable`; the quality scan closes those gaps as `not_expected` once the TARGET calendar is seeded.
 
   **Known limitation (observed calendars):** `RU_PRODUCTION` past days come from `observed_cbr_ruonia` (and the MOEX calendars from trading history): if a RUONIA load failed and the day is still empty when the calendar refresh runs, that day becomes a non-business day (a "holiday"), and a gap of a dataset on that calendar is then closed as `not_expected` instead of staying open. Not changed: there is no exact rule for the Russian production calendar (Government transfer decrees).
-- `ref.weekend_session(calendar, day, source, trade_session_date, known_at, note, capture_id, run_id)` PK (calendar, day, source) (0421) — days on which a MOEX engine trades although they are not settlement business days (ISS `engines/{engine}/calendar.json` rows `is_work_day=1, reason='W'`; trades belong to `trade_session_date`). Stored for every listed day of the year (past ones too: the observed calendars cannot see them); future rows ISS no longer lists are deleted. **Trading day of an engine** = business day (`ref.calendar_effective`) or a day listed here (`CalendarPredicate.is_trading_day`); `ref.calendar_day` keeps these days non-business. Trading days date quotes ("previous session") and gate the FORTS polls; business days drive EOD trade dates, `days_back` and gap expectations. Calendar refresh: an ISS engine answer with < 5 rows of its engine or none in the current year is treated as incomplete — listed days are written, nothing is deleted (warning, run `partial`).
+- `ref.weekend_session(calendar, day, source, trade_session_date, is_deleted, known_at, ingested_at, note, capture_id, run_id)` PK (calendar, day, source) (0421; soft deletes 0500) — days on which a MOEX engine trades although they are not settlement business days (ISS `engines/{engine}/calendar.json` rows `is_work_day=1, reason='W'`; trades belong to `trade_session_date`). Stored for every listed day of the year (past ones too: the observed calendars cannot see them); future rows ISS no longer lists are soft-deleted. **Trading day of an engine** = business day (`ref.calendar_effective`) or a day listed here (`CalendarPredicate.is_trading_day`); `ref.calendar_day` keeps these days non-business. Trading days date quotes ("previous session") and gate the FORTS polls; business days drive EOD trade dates, `days_back` and gap expectations. Calendar refresh: an ISS engine answer with < 5 rows of its engine or none in the current year is treated as incomplete — listed days are written, nothing is deleted (warning, run `partial`).
 - `ref.issuer(issuer_id PK (MOEX emitent_id), inn, ogrn, okpo, name, short_name, country, sector, is_sovereign, …, updated_at)`
 - `ref.bond(secid PK, isin, regnumber, issuer_id, name, short_name, bond_type (MOEX label), bond_class (derived enum: ofz_pd, ofz_pk, ofz_in, ofz_ad, sovereign_fx, subfederal, municipal, corporate, exchange_bond, structured, mbs, …), coupon_type ∈ {fixed, floating, indexed_face, zero, variable_known, unknown}, face_value, initial_face_value, face_unit, currency_id (settlement), issue_date, maturity_date (NULL for perpetual), is_perpetual, coupon_frequency, day_count, is_amortizing, is_subordinated, is_structured, qualified_only, high_risk, listing_level, issue_size, primary_board, start_date_moex, status ∈ {active, matured, delisted}, …, source, updated_at, last_seen_run)` — `coupon_type_basis` ∈ {moex_label, benchmark, ofz_series, schedule, schedule_constant, none}: `schedule_constant` (0421) = an active unlabelled bond classified `fixed` because it has no benchmark / COUPON_DETAILS and no rate formula from any source, ≥ 2 paid coupons, one constant `value_prc` over all paid and future coupons, and a CBR key-rate change (`md.fixing` KEY_RATE) after the start of its first and on/before the start of its last paid coupon period (a key-rate floater would show different paid rates); never for structured notes. Seed 2026-10-16: 335 of the 433 active `unknown/schedule` bonds qualify (mostly subfederal/municipal/corporate amortizers).
 - `ref.bond_board(secid, board, is_primary, lot_size, min_step, decimals, settle_code, currency_id, listed, first_seen, last_seen)`
@@ -121,6 +124,7 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
 - `md.zcyc_snapshot(trade_date, trade_time, source_ts, params jsonb (B1..B3,T1,G1..G9), standard_yields jsonb, check_max_error_bp, check_tolerance_bp, is_eod, capture_id)` PK (trade_date, trade_time) — published yields must be reproduced from the params; rejected publications go to `md.zcyc_reject(capture_id PK, trade_date, trade_time, max_error_bp, reason)`.
 - `md.cbr_liquidity(observed_on, …14 metrics (columns 2..15 by position, labels checked against the live header)…, methodology_version, revision_no, capture_id)` (+ revisions via row_history)
 - Read helpers (0410): `md.v_bond_eod` (EOD + yields), `md.v_fx_cbr_latest`, as-known-at functions `md.bond_eod_known_at`, `md.bond_eod_yield_known_at`, `md.fixing_known_at`, `md.v_bond_eod_known_at`.
+- As-known-at readers (0500, generated by `ops.create_known_at_function`): `ref.{issuer,bond,bond_board,bond_coupon,bond_amortization,bond_offer,bond_rate_formula,fx_instrument,cbr_meeting,calendar_day,weekend_session}_known_at(T)`, `ref.bond_rate_formula_resolved_known_at(T)` (+ `benchmark_raw`, `benchmark_source`), `ref.calendar_effective_known_at(T)`, and dated `md.{fx_official,fx_eod,fx_indicative,ecb_fx,index_eod,zcyc_snapshot}_known_at(T, from, to)`. Rule (as 0410): the image of a key at T is the old image of the earliest history row replaced after T, else the current row, if its version time (`ingested_at`; calendars: `ingested_at`, else `known_at` for pre-0500 images) is ≤ T. Pre-0500 calendar hard deletes left `_deleted` images and replay through the same rule.
 
 ### `legacy_md`, `legacy_bc`
 Verbatim copies (all tables, all rows) of `market-data.sqlite3` and `bond_catalog.sqlite3`
@@ -145,6 +149,9 @@ src/mdhub/
                        cbonds_enrich.py, calendar.py — fetch→capture→parse→upsert
   legacy/              import_sqlite.py (verbatim), map_md.py, map_bc.py
   quality/             checks.py (integrity, freshness, gaps), report.py
+  snapshot/            canonical.py (canonical JSON, sha256, gzip), schema.py (contract
+                       validation), build.py, static.py, market.py (builders, as known at),
+                       publish.py (ops.published_snapshot), runner.py (build + publish)
   jobs.py              job registry (@job), JobContext, run_job, loader discovery
   schedule.py          cron rules (APScheduler)
   api/                 app.py (FastAPI read API)
@@ -152,7 +159,8 @@ src/mdhub/
 ```
 
 Migration ownership (to avoid conflicts): `0001-0099` core/ops; `0100-0199` ref (static);
-`0200-0299` md (market); `0300-0399` legacy; `0400+` api/views.
+`0200-0299` md (market); `0300-0399` legacy; `0400-0499` api/views; `0500+` snapshot dispatch
+(as-known-at readers, published snapshots).
 
 ## 6. Update and storage rules (schedule, Europe/Moscow, business days unless noted)
 
@@ -177,7 +185,9 @@ Migration ownership (to avoid conflicts): `0001-0099` core/ops; `0100-0199` ref 
 | `swaps_otc_monitor` | every 15 min 09:00–20:00 (MOEX_STOCK business days; legacy collector polled 10:00–19:45) | OTC Monitor `/api/bond/` (one GET) | datasets `ruonia_ois`, `key_rate_swap`, `cny_ruonia_xccy`, `cny_rusfar_ois` (source `otc_monitor`, `DatasetSpec` `otc_monitor_<dataset>`, frequency `event`). Exact tenor set and sanity bounds `lo ≤ bid ≤ offer ≤ hi` per curve (RUB 0–100; CNY −50–300: negative CNY rates and >200% RUSFARCNY spikes are real 2024 quotes): a failing curve is not stored and the run ends `partial`. Content-hash dedup per (source, dataset) continues the legacy-mapped history (same hash, tenor order and basis rules); one raw capture per fetch, only when a curve changed. Missing token → `skipped`; HTTP 401/403 → `failed` |
 | `quality` | 08:30 and 20:30 | DB | freshness & gap detection → `ops.data_gap` + `ops.backfill_task`; job health (only `schedule`/`catch_up` runs count as a fire that ran); re-runs scheduled fires skipped with `lock_busy` (trigger `catch_up`) |
 | `backfill_worker` | every 10 min (all days) | DB | processes backfill tasks (8-minute budget), yields to waiting scheduled runs |
-| `maintenance` | 02:00 `backup` (pg_dump, keep 14); 03:00 `retention` (all days) | DB | raw retention of `intraday:reread:` captures (7 days, `MDHUB_RAW_RETENTION_DAYS_REREAD`) and other `intraday:` captures (90 days), orphaned `running` job runs (>12 h) → failed, VACUUM ANALYZE |
+| `maintenance` | 02:00 `backup` (pg_dump, keep 14); 03:00 `retention` (all days) | DB | raw retention of `intraday:reread:` captures (7 days, `MDHUB_RAW_RETENTION_DAYS_REREAD`) and other `intraday:` captures (90 days), intraday market snapshots (30 days, `MDHUB_SNAPSHOT_RETENTION_DAYS_INTRADAY`; static and EOD snapshots are kept forever), orphaned `running` job runs (>12 h) → failed, VACUUM ANALYZE |
+| `snapshot_static` | 07:45 `daily` (`MDHUB_SNAPSHOT_STATIC_TIME`) | DB | static snapshot after `bonds_static` 06:30 and `cbonds_enrich` 07:30 (§11); static changes during the day are published by the next market cut (`change`) |
+| `snapshot_market` | 19:45 `eod_preliminary` (D), 08:00 `eod_final` (D-1), every 30 min 10:00–19:00 `intraday` (`MDHUB_SNAPSHOT_*`) | DB | market cuts (§11); EOD rules wait for the lock and are caught up, intraday cuts are polls |
 
 **Lock contention.** Every job holds advisory lock `mdhub.job:<name>`. A scheduled fire waits up to
 15 minutes for it (polling rules — intraday snapshots, AlgoPack, Ratescalcs, OTC Monitor, the backfill worker —
@@ -207,6 +217,10 @@ open counts as a failed attempt (backoff, then `failed` and a 7-day cooldown).
 ## 7. Configuration (env)
 
 `MDHUB_DATABASE_URL` (required), `MDHUB_TZ=Europe/Moscow`, `MDHUB_HTTP_PROXY` (optional),
+snapshot cuts (§11; owner decision DEC04, defaults): `MDHUB_SNAPSHOT_STATIC_TIME=07:45`,
+`MDHUB_SNAPSHOT_EOD_PRELIMINARY_TIME=19:45`, `MDHUB_SNAPSHOT_EOD_FINAL_TIME=08:00`,
+`MDHUB_SNAPSHOT_INTRADAY_MINUTES=30` (divides 60; 0 = off), `MDHUB_SNAPSHOT_INTRADAY_WINDOW=10:00-19:00`,
+`MDHUB_SNAPSHOT_RETENTION_DAYS_INTRADAY=30`,
 `MDHUB_ISS_RPS=3`, `MDHUB_RAW_RETENTION_DAYS_INTRADAY=90`, `MDHUB_RAW_RETENTION_DAYS_REREAD=7`
 (`intraday:reread:` captures), `MDHUB_ALGOPACK_FULL_REREAD_MINUTES=30`, `MDHUB_API_TOKENS` (comma list,
 read API bearer tokens), `MDHUB_ENABLE_SDFI=false`, `MDHUB_BACKUP_DIR=/var/backups/mdhub`
@@ -228,7 +242,8 @@ amortizations, offers, formula resolved + per source, ratings), `/v1/bonds/eod?d
 joined yields; `known_at=`), `/v1/bonds/{secid}/history`, `/v1/fx/official`, `/v1/fx/eod`,
 `/v1/fx/indicative`, `/v1/fx/ecb`, `/v1/futures/eod`, `/v1/futures/contracts`, `/v1/fixings`
 (`known_at=`), `/v1/curves`, `/v1/curves/{dataset}?as_of=`, `/v1/zcyc?date=`, `/v1/indices/eod`,
-`/v1/calendar` (`ref.calendar_effective`: source precedence), `/v1/export/tdm?date=` (zip of TDM
+`/v1/calendar` (`ref.calendar_effective`: source precedence), `/v1/snapshots?kind&cut_type&business_date&latest`,
+`/v1/snapshots/{id}/manifest`, `/v1/snapshots/{id}/bundle` (§11), `/v1/export/tdm?date=` (zip of TDM
 1.3 CSV files + `manifest.json`; the MOEX 19:00 indicative `md_fx` candidate only with
 `fx_candidate=true`; CLI `mdhub export tdm --fx-candidate`).
 
@@ -280,3 +295,78 @@ Unit tests with recorded fixtures (sanitized real responses) per parser; integra
 against a real PostgreSQL 16 (via `pgserver` locally / service in CI); idempotency tests
 (load twice → no new rows, no history); revision tests (changed value → row_history).
 Live smoke tests (`pytest -m live`) hit real endpoints with env credentials.
+
+## 11. Published snapshots (Market Snapshot Contract v1)
+
+The hub's dispatch layer (system ADR-002, doc 02 §3/§6; milestone M1). The desk backend reads
+only immutable snapshots; the TDM CSV export stays until it does.
+
+**Contract.** JSON Schema and golden fixtures in `schemas/market_snapshot/v1/` (see its
+README): envelope/manifest, static objects (Instrument, CouponPeriod, Redemption, Offer,
+FloaterFormula, Issuer, Calendar, IdMap) and market objects (BondQuote EOD/intraday,
+CurveQuoteSet, ZcycParams, Fixing, FxRate, CrossRate, CbrMeeting). Decimals are strings with
+the stored digits, units in field names, instants UTC. The wheel carries the schemas as
+`mdhub/schemas`; every bundle is validated before it is stored (fail closed).
+
+**Identity and storage.** `ops.published_snapshot` (0510). id = sha256 of the canonical bundle
+(sorted keys, no whitespace, UTF-8, decimals as strings); `payload_gz` = deterministic gzip of
+those bytes. Rows are immutable (trigger: no UPDATE; DELETE only for intraday market rows,
+by retention). A cut is (`kind`, `cut_type`, `business_date`, `cut_ts`): rebuilding it with the
+same data content (`content_sha256`) publishes nothing (`unchanged`); different content
+publishes a correction whose `supersedes` names the current snapshot of the cut (at most one
+successor per snapshot; the old one stays readable).
+
+**As known at.** Builders read every table through the as-known-at readers (§4, 0500) at
+`known_at`, inside one `REPEATABLE READ` transaction; insert-only tables (`md.curve_snapshot`,
+`md.bond_quote_intraday`) filter on `ingested_at`. Rebuilding a cut with the same `known_at`
+reproduces it byte for byte, except for rows whose writing transaction was still open at
+`known_at` (they carry an earlier `ingested_at`: long `bonds_static` transactions). Revisions of
+`md.zcyc_snapshot.is_eod` and same-`ts` revisions of intraday quotes are not versioned.
+
+**Static snapshot.** Universe: bonds `active` as known, plus `matured` with maturity within 31
+days before the business date (`delisted` are out of scope). Inside it nothing is excluded:
+`coupon_type='unknown'`, perpetuals, missing day counts and partial formulas carry labels;
+floater benchmarks are verbatim with the formula status. Calendars come from
+`ref.calendar_effective` only (never `ref.weekend_session`): per calendar the covered range,
+holidays, working weekends, `provisional_from` (first `curated_unverified` day), version (latest
+row change) and fingerprint; one calendar version + fingerprint per snapshot. Seed scale
+(2026-10-16): 4,224 instruments, 104k coupons, 26k redemptions; 42 MB canonical, 2.2 MB gzip;
+first publication ~25 s (schema validation dominates).
+
+**Market snapshot.** Every market build first builds the static data as known at the same
+instant; `ensure_static` reuses the static snapshot with that content (any `known_at` ≤ the
+cut's) or publishes it (`cut_type = change`). The market snapshot names it in
+`static_snapshot_id` and quotes only its instruments (`excluded`: `not_in_static_snapshot`).
+EOD cuts: bond EOD + yields of D, curve sets fetched on D (latest per source/dataset, labels
+`mid_only`, `source_clock_not_on_business_date`), the EOD ZCYC publication, fixings of
+[D-400, D+7] (RUSFAR family from `md.index_eod`), CBR official FX in force on [D, D+7], MOEX FX
+EOD (RUB outrights; swaps, non-RUB pairs, metals excluded with reasons), indicative 14:00/19:00,
+ECB of [D-7, D], CBR meetings. Intraday cuts: latest intraday bond quotes of D, curves, latest
+ZCYC, fixings of [D-7, D+7], FX; ~10 KB gzip. Coverage (expected/missing curve series, latest
+fixing dates, universe without quote) and stale reasons are per dataset in the manifest; no
+forward fill.
+
+**Schedule (DEC04 open: defaults, configurable, §7).**
+
+| Cut | Default (MSK) | Business date | Why |
+|---|---|---|---|
+| static `daily` | 07:45 | today | after `bonds_static` 06:30 (~14 min) and `cbonds_enrich` 07:30 |
+| market `eod_preliminary` | 19:45 | D = today | after bonds EOD 19:20, FORTS 19:25, indices 19:30, ZCYC EOD 19:05, CBR/ECB 18:30 |
+| market `eod_final` | 08:00 | D-1 (previous MOEX_STOCK business day) | after the final loads 07:10–07:25 |
+| market `intraday` | every 30 min 10:00–19:00 | today | the bonds intraday / ZCYC poll window |
+
+Rules are built from the settings by `mdhub.schedule.snapshot_rules`
+(`effective_rules(settings)` is what the scheduler and job health use). `cut_ts` = the nominal
+cut (rule parameter `cut`; intraday: the fire minute); `known_at` = the run's start (replay:
+`-p known_at=...`). Manual: `mdhub run snapshot_market -p mode=eod_final -p day=2026-10-15`.
+
+**Retention.** Static and EOD snapshots are kept forever (daily static ≈ 2.2 MB gzip). Intraday
+market snapshots are deleted after `MDHUB_SNAPSHOT_RETENTION_DAYS_INTRADAY` (30) days by
+`maintenance mode=retention` (by `cut_ts`; corrections of a cut share its age).
+
+**Endpoints (bearer token).** `GET /v1/snapshots?kind&cut_type&business_date&latest` (newest
+first; `latest=true`: only the newest matching snapshot that nothing supersedes; `rows` per
+dataset, `superseded_by`), `GET /v1/snapshots/{id}/manifest` (`data` = manifest incl.
+`snapshot_id`; `meta`: `published_at`, `superseded_by`, sizes), `GET /v1/snapshots/{id}/bundle`
+(`application/gzip`, `ETag: "<id>"`, `If-None-Match` → 304, immutable caching; verify
+`sha256(gunzip(body)) == id`).

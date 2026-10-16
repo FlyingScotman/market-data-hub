@@ -1,0 +1,981 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.market-data-hub.invalid/market_snapshot/v1/market.schema.json",
+  "title": "Market Snapshot Contract v1: market snapshot bundle",
+  "description": "The canonical bundle document: envelope (manifest.schema.json) plus data. snapshot_id = sha256 of its canonical JSON.",
+  "$defs": {
+    "bond_quote": {
+      "description": "BondQuote, end of day (md.bond_eod + md.bond_eod_yield); prices in % of face; timing = the snapshot cut",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "secid",
+        "board",
+        "trade_date",
+        "open_pct",
+        "low_pct",
+        "high_pct",
+        "close_pct",
+        "legal_close_pct",
+        "waprice_pct",
+        "market_price2_pct",
+        "market_price3_pct",
+        "admitted_quote_pct",
+        "accrued_per_bond",
+        "face_value",
+        "face_unit",
+        "currency_id",
+        "volume_bonds",
+        "value_ccy",
+        "num_trades",
+        "trading_session",
+        "source_analytics"
+      ],
+      "properties": {
+        "secid": {
+          "$ref": "common.schema.json#/$defs/secid"
+        },
+        "board": {
+          "type": "string"
+        },
+        "trade_date": {
+          "$ref": "common.schema.json#/$defs/date"
+        },
+        "open_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "low_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "high_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "close_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "legal_close_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "waprice_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "market_price2_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "market_price3_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "admitted_quote_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "accrued_per_bond": {
+          "description": "ACCINT per bond in currency_id",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "face_value": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "face_unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "currency_id": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "volume_bonds": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "value_ccy": {
+          "description": "Turnover in currency_id",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "num_trades": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "trading_session": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_analytics": {
+          "description": "MOEX-published analytics, labelled as source analytics (not hub calculations)",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "yield_close_pct",
+            "yield_at_waprice_pct",
+            "yield_to_offer_pct",
+            "effective_yield_pct",
+            "effective_yield_waprice_pct",
+            "yield_date",
+            "yield_date_type",
+            "duration_days",
+            "zspread_bp",
+            "gspread_bp"
+          ],
+          "properties": {
+            "yield_close_pct": {
+              "description": "MOEX YIELDCLOSE: yield of the last trade to maturity",
+              "allOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/decimal_or_null"
+                }
+              ]
+            },
+            "yield_at_waprice_pct": {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            },
+            "yield_to_offer_pct": {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            },
+            "effective_yield_pct": {
+              "description": "MOEX EFFECTIVEYIELD to yield_date",
+              "allOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/decimal_or_null"
+                }
+              ]
+            },
+            "effective_yield_waprice_pct": {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            },
+            "yield_date": {
+              "$ref": "common.schema.json#/$defs/date_or_null"
+            },
+            "yield_date_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "duration_days": {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            },
+            "zspread_bp": {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            },
+            "gspread_bp": {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          }
+        }
+      }
+    },
+    "bond_quote_intraday": {
+      "description": "BondQuote, intraday: latest stored state per (secid, board) on the business date as known at known_at",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "secid",
+        "board",
+        "ts",
+        "source_ts",
+        "latency",
+        "bid_pct",
+        "offer_pct",
+        "last_pct",
+        "waprice_pct",
+        "market_price_pct",
+        "close_price_pct",
+        "num_trades",
+        "vol_today",
+        "val_today",
+        "trading_status",
+        "trading_session",
+        "source_analytics"
+      ],
+      "properties": {
+        "secid": {
+          "$ref": "common.schema.json#/$defs/secid"
+        },
+        "board": {
+          "type": "string"
+        },
+        "ts": {
+          "description": "Quote time (MOEX UPDATETIME)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/utc_instant"
+            }
+          ]
+        },
+        "source_ts": {
+          "description": "Snapshot time (MOEX SYSTIME)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/utc_instant"
+            }
+          ]
+        },
+        "latency": {
+          "enum": [
+            "realtime",
+            "delayed"
+          ]
+        },
+        "bid_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "offer_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "last_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "waprice_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "market_price_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "close_price_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "num_trades": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "vol_today": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "val_today": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "trading_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "trading_session": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source_analytics": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "yield_pct",
+            "yield_at_waprice_pct",
+            "yield_to_offer_pct",
+            "effective_yield_pct",
+            "yield_date",
+            "yield_date_type",
+            "duration_days",
+            "zspread_bp",
+            "gspread_bp"
+          ],
+          "properties": {
+            "yield_pct": {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            },
+            "yield_at_waprice_pct": {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            },
+            "yield_to_offer_pct": {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            },
+            "effective_yield_pct": {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            },
+            "yield_date": {
+              "$ref": "common.schema.json#/$defs/date_or_null"
+            },
+            "yield_date_type": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "duration_days": {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            },
+            "zspread_bp": {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            },
+            "gspread_bp": {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          }
+        }
+      }
+    },
+    "curve_quote_set": {
+      "description": "CurveQuoteSet: the latest snapshot per (source, dataset) fetched on the business date at or before known_at",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "quote_set_id",
+        "dataset",
+        "source",
+        "quote_basis",
+        "fetched_at",
+        "source_ts",
+        "snapshot_date",
+        "market_closed",
+        "label",
+        "content_sha256",
+        "labels",
+        "quotes"
+      ],
+      "properties": {
+        "quote_set_id": {
+          "description": "md.curve_snapshot.id",
+          "type": "integer"
+        },
+        "dataset": {
+          "description": "Hub quote-set code (ruonia_ois, key_rate_swap, ...); conventions live in the consumer's curve-spec registry",
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "quote_basis": {
+          "enum": [
+            "bid_ask_mid",
+            "mid_only"
+          ]
+        },
+        "fetched_at": {
+          "$ref": "common.schema.json#/$defs/utc_instant"
+        },
+        "source_ts": {
+          "$ref": "common.schema.json#/$defs/utc_instant_or_null"
+        },
+        "snapshot_date": {
+          "$ref": "common.schema.json#/$defs/date"
+        },
+        "market_closed": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "content_sha256": {
+          "$ref": "common.schema.json#/$defs/sha256"
+        },
+        "labels": {
+          "$ref": "common.schema.json#/$defs/labels"
+        },
+        "quotes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "tenor",
+              "position",
+              "tenor_months",
+              "tenor_days",
+              "pillar_date",
+              "bid_pct",
+              "mid_pct",
+              "ask_pct",
+              "extra"
+            ],
+            "properties": {
+              "tenor": {
+                "description": "Tenor code verbatim",
+                "type": "string"
+              },
+              "position": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "tenor_months": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "tenor_days": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "pillar_date": {
+                "$ref": "common.schema.json#/$defs/date_or_null"
+              },
+              "bid_pct": {
+                "$ref": "common.schema.json#/$defs/decimal_or_null"
+              },
+              "mid_pct": {
+                "$ref": "common.schema.json#/$defs/decimal_or_null"
+              },
+              "ask_pct": {
+                "$ref": "common.schema.json#/$defs/decimal_or_null"
+              },
+              "extra": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "additionalProperties": {
+                  "type": [
+                    "string",
+                    "boolean",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "zcyc_params": {
+      "description": "ZcycParams (md.zcyc_snapshot); the hub verified the standard yields against the params",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "trade_date",
+        "trade_time",
+        "source_ts",
+        "is_eod",
+        "params",
+        "standard_yields",
+        "check_max_error_bp",
+        "check_tolerance_bp"
+      ],
+      "properties": {
+        "trade_date": {
+          "$ref": "common.schema.json#/$defs/date"
+        },
+        "trade_time": {
+          "type": "string",
+          "pattern": "^[0-9]{2}:[0-9]{2}:[0-9]{2}$"
+        },
+        "source_ts": {
+          "$ref": "common.schema.json#/$defs/utc_instant"
+        },
+        "is_eod": {
+          "type": "boolean"
+        },
+        "params": {
+          "description": "MOEX KBD parameters verbatim (G in bp)",
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "B1",
+            "B2",
+            "B3",
+            "T1",
+            "G1",
+            "G2",
+            "G3",
+            "G4",
+            "G5",
+            "G6",
+            "G7",
+            "G8",
+            "G9"
+          ],
+          "properties": {
+            "B1": {
+              "$ref": "common.schema.json#/$defs/decimal"
+            },
+            "B2": {
+              "$ref": "common.schema.json#/$defs/decimal"
+            },
+            "B3": {
+              "$ref": "common.schema.json#/$defs/decimal"
+            },
+            "T1": {
+              "$ref": "common.schema.json#/$defs/decimal"
+            },
+            "G1": {
+              "$ref": "common.schema.json#/$defs/decimal"
+            },
+            "G2": {
+              "$ref": "common.schema.json#/$defs/decimal"
+            },
+            "G3": {
+              "$ref": "common.schema.json#/$defs/decimal"
+            },
+            "G4": {
+              "$ref": "common.schema.json#/$defs/decimal"
+            },
+            "G5": {
+              "$ref": "common.schema.json#/$defs/decimal"
+            },
+            "G6": {
+              "$ref": "common.schema.json#/$defs/decimal"
+            },
+            "G7": {
+              "$ref": "common.schema.json#/$defs/decimal"
+            },
+            "G8": {
+              "$ref": "common.schema.json#/$defs/decimal"
+            },
+            "G9": {
+              "$ref": "common.schema.json#/$defs/decimal"
+            }
+          }
+        },
+        "standard_yields": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "tenor_years",
+              "yield_pct"
+            ],
+            "properties": {
+              "tenor_years": {
+                "$ref": "common.schema.json#/$defs/decimal"
+              },
+              "yield_pct": {
+                "description": "Effective annual %",
+                "allOf": [
+                  {
+                    "$ref": "common.schema.json#/$defs/decimal"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "check_max_error_bp": {
+          "$ref": "common.schema.json#/$defs/decimal"
+        },
+        "check_tolerance_bp": {
+          "$ref": "common.schema.json#/$defs/decimal"
+        }
+      }
+    },
+    "fixing": {
+      "description": "Fixing; RUSFAR family from md.index_eod (origin md.index_eod)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "index_code",
+        "source",
+        "fixing_date",
+        "effective_date",
+        "published_on",
+        "published_at",
+        "value",
+        "unit",
+        "origin",
+        "labels"
+      ],
+      "properties": {
+        "index_code": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "fixing_date": {
+          "description": "Observation / value date",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date"
+            }
+          ]
+        },
+        "effective_date": {
+          "$ref": "common.schema.json#/$defs/date_or_null"
+        },
+        "published_on": {
+          "$ref": "common.schema.json#/$defs/date_or_null"
+        },
+        "published_at": {
+          "$ref": "common.schema.json#/$defs/utc_instant_or_null"
+        },
+        "value": {
+          "description": "% p.a. (unit pct) or index level (unit index)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal"
+            }
+          ]
+        },
+        "unit": {
+          "enum": [
+            "pct",
+            "index"
+          ]
+        },
+        "origin": {
+          "enum": [
+            "md.fixing",
+            "md.index_eod"
+          ]
+        },
+        "labels": {
+          "$ref": "common.schema.json#/$defs/labels"
+        }
+      }
+    },
+    "fx_rate": {
+      "description": "FxRate: RUB rates only (RUB per 1 unit of ccy); the desk FX mark is a consumer override",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "ccy",
+        "rate_rub_per_unit",
+        "effective_date",
+        "set_date",
+        "nominal",
+        "trade_date",
+        "trade_time",
+        "secid",
+        "board",
+        "tenor",
+        "quote_units",
+        "close",
+        "waprice",
+        "close_rub_per_unit",
+        "waprice_rub_per_unit",
+        "num_trades",
+        "labels"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "cbr_official",
+            "moex_eod",
+            "moex_indicative_14",
+            "moex_indicative_19"
+          ]
+        },
+        "ccy": {
+          "$ref": "common.schema.json#/$defs/ccy"
+        },
+        "rate_rub_per_unit": {
+          "description": "RUB per 1 unit (cbr_official, indicative)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "effective_date": {
+          "description": "cbr_official: calendar day the rate is in force",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date_or_null"
+            }
+          ]
+        },
+        "set_date": {
+          "description": "cbr_official: day CBR set the rate",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date_or_null"
+            }
+          ]
+        },
+        "nominal": {
+          "description": "cbr_official: units of the published Value",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "trade_date": {
+          "description": "moex_eod / indicative: trade date",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date_or_null"
+            }
+          ]
+        },
+        "trade_time": {
+          "description": "indicative: MSK time as published",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "secid": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "board": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tenor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "quote_units": {
+          "description": "moex_eod: units of ccy the MOEX price refers to (FACEVALUE)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "close": {
+          "description": "moex_eod: CLOSE as published (RUB per quote_units)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "waprice": {
+          "description": "moex_eod: WAPRICE as published (RUB per quote_units)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "close_rub_per_unit": {
+          "description": "moex_eod: close / quote_units (exact)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "waprice_rub_per_unit": {
+          "description": "moex_eod: waprice / quote_units (exact)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "num_trades": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "labels": {
+          "$ref": "common.schema.json#/$defs/labels"
+        }
+      }
+    },
+    "cross_rate": {
+      "description": "CrossRate (non-RUB, ECB reference rates); never mixed into RUB FX",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "base_ccy",
+        "ccy",
+        "rate_per_base",
+        "rate_date"
+      ],
+      "properties": {
+        "kind": {
+          "const": "ecb"
+        },
+        "base_ccy": {
+          "const": "EUR"
+        },
+        "ccy": {
+          "$ref": "common.schema.json#/$defs/ccy"
+        },
+        "rate_per_base": {
+          "description": "Units of ccy per 1 EUR",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal"
+            }
+          ]
+        },
+        "rate_date": {
+          "$ref": "common.schema.json#/$defs/date"
+        }
+      }
+    },
+    "cbr_meeting": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "meeting_date",
+        "effective_date",
+        "is_estimated",
+        "is_extraordinary",
+        "decision",
+        "decision_rate_pct",
+        "prev_rate_pct"
+      ],
+      "properties": {
+        "meeting_date": {
+          "$ref": "common.schema.json#/$defs/date"
+        },
+        "effective_date": {
+          "$ref": "common.schema.json#/$defs/date"
+        },
+        "is_estimated": {
+          "type": "boolean"
+        },
+        "is_extraordinary": {
+          "type": "boolean"
+        },
+        "decision": {
+          "enum": [
+            "hike",
+            "cut",
+            "hold",
+            null
+          ]
+        },
+        "decision_rate_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "prev_rate_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        }
+      }
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "cut_type",
+    "business_date",
+    "cut_ts",
+    "known_at",
+    "static_snapshot_id",
+    "supersedes",
+    "producer",
+    "parameters",
+    "calendar",
+    "sources",
+    "datasets",
+    "excluded",
+    "data"
+  ],
+  "allOf": [
+    {
+      "$ref": "manifest.schema.json#/$defs/envelope_properties"
+    }
+  ],
+  "properties": {
+    "schema_version": true,
+    "kind": {
+      "const": "market"
+    },
+    "cut_type": {
+      "enum": [
+        "eod_preliminary",
+        "eod_final",
+        "intraday"
+      ]
+    },
+    "business_date": true,
+    "cut_ts": true,
+    "known_at": true,
+    "static_snapshot_id": {
+      "$ref": "common.schema.json#/$defs/sha256"
+    },
+    "supersedes": true,
+    "producer": true,
+    "parameters": true,
+    "calendar": true,
+    "sources": true,
+    "datasets": true,
+    "excluded": true,
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "bond_quotes",
+        "bond_quotes_intraday",
+        "curve_quote_sets",
+        "zcyc_params",
+        "fixings",
+        "fx_rates",
+        "cross_rates",
+        "cbr_meetings"
+      ],
+      "properties": {
+        "bond_quotes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bond_quote"
+          }
+        },
+        "bond_quotes_intraday": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/bond_quote_intraday"
+          }
+        },
+        "curve_quote_sets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/curve_quote_set"
+          }
+        },
+        "zcyc_params": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/zcyc_params"
+          }
+        },
+        "fixings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fixing"
+          }
+        },
+        "fx_rates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fx_rate"
+          }
+        },
+        "cross_rates": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/cross_rate"
+          }
+        },
+        "cbr_meetings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/cbr_meeting"
+          }
+        }
+      }
+    }
+  }
+}
