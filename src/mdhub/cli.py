@@ -19,7 +19,7 @@ from typing import Annotated, Any
 import typer
 from psycopg.rows import tuple_row
 
-from mdhub import __version__, job_requests
+from mdhub import __version__, credentials, job_requests
 from mdhub.config import ConfigError, Settings
 from mdhub.core.bizday import DbCalendar
 from mdhub.core.capture import reap_orphaned_runs
@@ -80,6 +80,17 @@ def _database(settings: Settings, *, pool_size: int | None = None) -> Database:
     try:
         return Database.from_settings(settings, pool_size=pool_size)
     except ConfigError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+
+
+def _credentials(
+    settings: Settings, db: Database, *, worker: bool
+) -> credentials.CredentialStore | None:
+    try:
+        return credentials.activate(settings, db, worker=worker)
+    except ConfigError as exc:
+        db.close()
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from None
 
@@ -165,6 +176,7 @@ def run_cmd(
             typer.echo(f"import failed: {module}: {err}", err=True)
         raise typer.Exit(2)
     db = _database(settings)
+    _credentials(settings, db, worker=False)
     try:
         outcome = run_job(
             job_name,
@@ -196,7 +208,9 @@ def scheduler_cmd(
 
     Also writes the worker heartbeat (``ops.worker_heartbeat``, every 30 s) with the jobs
     running in this process, and runs the job requests of the admin console
-    (``ops.job_request``, :mod:`mdhub.job_requests`)."""
+    (``ops.job_request``, :mod:`mdhub.job_requests`). With ``MDHUB_SECRETS_PRIVATE_KEY`` it
+    publishes its public key and uses the source credentials set in the console
+    (:mod:`mdhub.credentials`)."""
     settings = _settings()
     report = discover_jobs()
     for module, err in report.failed.items():
@@ -210,6 +224,7 @@ def scheduler_cmd(
         reap_orphaned_runs(db)
     except Exception:  # never block the scheduler start on housekeeping
         log.exception("could not reap orphaned job runs")
+    store = _credentials(settings, db, worker=True)
     scheduler = build_scheduler(settings, db, calendar=DbCalendar(db), max_workers=max_workers)
 
     def _stop(signum: int, _frame: FrameType | None) -> None:
@@ -233,6 +248,8 @@ def scheduler_cmd(
             scheduler.shutdown(wait=True)
         requests.stop()
         heartbeat.stop()
+        if store is not None:
+            store.stop()
         db.close()
 
 

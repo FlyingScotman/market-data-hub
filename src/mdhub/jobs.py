@@ -45,6 +45,7 @@ from typing import Any, Final, TypeVar
 
 from psycopg.rows import tuple_row
 
+from mdhub import credentials
 from mdhub.config import Settings
 from mdhub.core.bizday import DEFAULT_CALENDAR, CalendarPredicate, weekday_calendar
 from mdhub.core.capture import JobRun, job_run
@@ -519,6 +520,10 @@ def run_job(
     :param trigger: origin recorded in ``ops.job_run.trigger`` (``schedule``, ``catch_up``,
         ``backfill``, ``cli``, ``api``, ``other``); job health counts only ``schedule`` and
         ``catch_up`` runs as a scheduled fire that ran.
+
+    The job gets ``settings`` with the source credentials of the console store decrypted over
+    them (:func:`mdhub.credentials.resolve`; unchanged in processes without the store).
+
     :returns: outcome with the run id and final status.
     :raises UnknownJobError: job not registered.
     :raises JobParamError: invalid parameters (nothing recorded).
@@ -526,6 +531,7 @@ def run_job(
     """
     spec = registry.get(name)
     coerced = coerce_params(spec.fn, params or {})
+    settings = credentials.resolve(settings)
     logger = logging.getLogger(f"mdhub.job.{name}")
 
     lock_cm: AbstractContextManager[str | None] = (

@@ -149,6 +149,9 @@ Only `/health/*` and `/v1/*` are proxied; the API requires a bearer token from
   Manual: `docker compose run --rm --no-deps worker mdhub ops backup`.
 - Copy backups off the server (e.g. nightly `rsync`/`restic` of `deploy/backups/` to another
   host or object storage). A backup on the same disk is not a backup.
+- Back up `deploy/.env` separately (it holds `MDHUB_SECRETS_PRIVATE_KEY`, §13), e.g. in the
+  owner's password manager, never next to the database backups. Database backups contain the
+  source credentials only as ciphertext; they open only with that key.
 - Restore test (do it once): `./restore_seed.sh backups/mdhub-mdhub-<stamp>.dump` on a spare
   VPS (no `.sha256` next to backups: integrity is not pre-checked), then `mdhub ops coverage`.
 - Retention: `maintenance mode=retention` at 03:00 deletes intraday raw captures
@@ -414,3 +417,53 @@ Local try-out (no TLS): `MDHUB_ADMIN_DOMAIN=localhost MDHUB_ADMIN_ORIGIN=http://
 MDHUB_ADMIN_ALLOW_CIDRS=127.0.0.1/32 uvicorn mdhub.admin.app:app --port 8081`, then open
 `http://localhost:8081` (Chromium-based browsers and Firefox treat localhost as secure, so the
 `__Host-` cookie and passkeys work).
+
+## 13. Source credentials store
+
+Source credentials (`MOEX_API_KEY`, `MOEX_PASSPORT_*`, `RATESCALC_*`, `CBONDS_*`,
+`OTC_MONITOR_TOKEN`, `MDHUB_HTTP_PROXY`) can be set, replaced and removed on the console page
+**Credentials** (admin role and step-up) instead of `.env` (ADMIN_DESIGN §9). The console seals
+each value to the worker's public key and stores only the ciphertext in
+`admin.source_credential`: neither the console nor a database backup can read a value. The
+worker decrypts at the start of each job run; a console value wins over `.env`, and a change is
+used from the next run (NOTIFY plus a 60 s poll, no restart). Nothing is ever shown back.
+
+Set up once:
+
+```bash
+docker compose run --rm --no-deps worker mdhub secrets init-key   # prints MDHUB_SECRETS_PRIVATE_KEY=...
+```
+
+Put the printed line into `deploy/.env` and `docker compose up -d worker`. Compose passes the
+key to the worker only (it is blanked for `migrate` and `api`; `admin` gets no `.env` at all).
+On start the worker publishes its public key; the Credentials page then accepts values.
+
+Move from `.env` to the store:
+
+```bash
+docker compose exec worker mdhub secrets import-env   # seals every credential set in .env
+docker compose exec worker mdhub secrets list         # names and state, never values
+```
+
+Then empty those lines in `.env` and `docker compose up -d worker api` (the API does not use
+them). `list` and the page show per name: not set, console, .env fallback, or both (console
+wins).
+
+- **Back up the key.** Keep a copy of `deploy/.env` (or at least the
+  `MDHUB_SECRETS_PRIVATE_KEY` line) outside the server, separate from the database backups.
+  If the key is lost, run `init-key` again and enter the credentials again; data and history
+  are unaffected. Rows sealed to an old key show "re-enter" and are never used.
+- **Rotate the key:** `docker compose exec worker mdhub secrets rotate-key` re-encrypts every
+  stored value and prints the new key line. Replace it in `.env` and restart the worker right
+  away (until then jobs fall back to `.env` values).
+- **Check** on the page queues a `source_probe` of that source for the worker; the result
+  appears in the "Last check" column.
+- Bundles never contain credentials: the code is `git archive`, `.env` is a forbidden path, and
+  the seed dump of `make_bundle.sh` excludes the data of every `admin.*` table (the bundle is
+  refused if its dump has any; check an existing dump with
+  `deploy/make_bundle.sh --check-dump FILE`).
+- Bare metal (systemd): give the key to the worker only. Write the line into
+  `/etc/mdhub/worker.env` (`root:root`, mode `0600`) and add it with `systemctl edit
+  mdhub-worker`: `[Service]` `EnvironmentFile=/etc/mdhub/worker.env`. Not into
+  `/etc/mdhub/mdhub.env` (the API reads that file too), and not as `Environment=` in a
+  drop-in (drop-in files are world-readable).

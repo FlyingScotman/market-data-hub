@@ -5,6 +5,7 @@
 #   deploy/make_bundle.sh --database-url URL [--out-dir DIR] [--date YYYYMMDD] [--allow-dirty]
 #   MDHUB_BUNDLE_DATABASE_URL=URL deploy/make_bundle.sh      # or MDHUB_DATABASE_URL
 #   deploy/make_bundle.sh --code-only [--version X.Y.Z] [--out-dir DIR] [--allow-dirty]
+#   deploy/make_bundle.sh --check-dump FILE     # refuse a dump holding admin.* table data
 #
 # --code-only (ADMIN_DESIGN §6.1) writes DIR/market-data-hub-<version>.tar.gz and
 # DIR/market-data-hub-<version>.SHA256SUMS (a copy of mdhub/SHA256SUMS: the file to sign,
@@ -17,7 +18,10 @@
 # .sha256. The archive has one top-level directory mdhub/:
 #   mdhub/...                   git archive of HEAD (refused if the work tree is dirty unless
 #                               --allow-dirty; uncommitted changes are never in the archive)
-#   mdhub/db/mdhub.dump         pg_dump -Fc --no-owner --no-acl (pg_dump 16) of the database
+#   mdhub/db/mdhub.dump         pg_dump -Fc --no-owner --no-acl (pg_dump 16) of the database,
+#                               without the data of any admin.* table (users, sessions, tokens,
+#                               sealed source credentials; ADMIN_DESIGN §9): the bundle is
+#                               refused if the dump's table of contents has any
 #   mdhub/db/mdhub.dump.sha256  "<sha256>  mdhub.dump"
 #   mdhub/SEED_REPORT.md        `mdhub report seed` of the same snapshot as the dump
 #   mdhub/MANIFEST.txt          git commit, migrations in the dump, pg_dump version, sizes
@@ -41,6 +45,7 @@ stamp="$(date -u +%Y%m%d)"
 allow_dirty=0
 code_only=0
 version=""
+check_file=""
 VERSION_RE='^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$'
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -49,11 +54,51 @@ while [[ $# -gt 0 ]]; do
         --date) [[ $# -ge 2 ]] || die "--date needs a value"; stamp="$2"; shift 2 ;;
         --version) [[ $# -ge 2 ]] || die "--version needs a value"; version="$2"; shift 2 ;;
         --code-only) code_only=1; shift ;;
+        --check-dump) [[ $# -ge 2 ]] || die "--check-dump needs a file"; check_file="$2"; shift 2 ;;
         --allow-dirty) allow_dirty=1; shift ;;
-        -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,33p' "$0"; exit 0 ;;
         *) die "unknown argument: $1 (see --help)" ;;
     esac
 done
+# ------------------------------------------------------------------------------ tools
+pg_major() { "$1" --version | sed -E 's/.* ([0-9]+)(\.[0-9]+)*.*/\1/'; }
+find_pg_tools() { # sets PG_BIN, PSQL, PG_DUMP, PG_RESTORE (version 16)
+    if [[ -z "${PG_BIN:-}" ]]; then
+        if command -v pg_dump >/dev/null && [[ "$(pg_major "$(command -v pg_dump)")" == 16 ]]; then
+            PG_BIN="$(dirname "$(command -v pg_dump)")"
+        else
+            for d in "$ROOT"/.venv/lib/python3*/site-packages/pgserver/pginstall/bin; do
+                if [[ -x "$d/pg_dump" ]]; then PG_BIN="$d"; break; fi
+            done
+        fi
+    fi
+    [[ -n "${PG_BIN:-}" && -x "$PG_BIN/pg_dump" && -x "$PG_BIN/psql" && -x "$PG_BIN/pg_restore" ]] \
+        || die "pg_dump/psql/pg_restore 16 not found (set PG_BIN)"
+    [[ "$(pg_major "$PG_BIN/pg_dump")" == 16 ]] \
+        || die "need pg_dump 16 (the VPS restores with pg_restore 16), found: $("$PG_BIN/pg_dump" --version)"
+    PSQL="$PG_BIN/psql"
+    PG_DUMP="$PG_BIN/pg_dump"
+    PG_RESTORE="$PG_BIN/pg_restore"
+}
+
+check_dump() { # $1 = custom-format dump; fails if its TOC has data for an admin.* table
+    local toc admin_data
+    toc="$("$PG_RESTORE" -l "$1")" || die "pg_restore -l failed on $1"
+    admin_data="$(printf '%s\n' "$toc" | grep -E '^[0-9]+; [0-9]+ [0-9]+ TABLE DATA admin ' || true)"
+    if [[ -n "$admin_data" ]]; then
+        echo "$admin_data" >&2
+        return 1
+    fi
+}
+
+if [[ -n "$check_file" ]]; then
+    [[ -f "$check_file" ]] || die "no such dump: $check_file"
+    find_pg_tools
+    check_dump "$check_file" || die "the dump holds data of admin.* tables (above)"
+    echo "ok: no admin.* table data in $check_file"
+    exit 0
+fi
+
 if [[ "$code_only" == 1 ]]; then
     [[ -z "$version" || "$version" =~ $VERSION_RE ]] \
         || die "--version: expected X.Y.Z or X.Y.Z{a|b|rc}N, got $version"
@@ -179,22 +224,7 @@ if [[ "$code_only" == 1 ]]; then
 fi
 
 # ------------------------------------------------------------------------------ tools
-pg_major() { "$1" --version | sed -E 's/.* ([0-9]+)(\.[0-9]+)*.*/\1/'; }
-if [[ -z "${PG_BIN:-}" ]]; then
-    if command -v pg_dump >/dev/null && [[ "$(pg_major "$(command -v pg_dump)")" == 16 ]]; then
-        PG_BIN="$(dirname "$(command -v pg_dump)")"
-    else
-        for d in "$ROOT"/.venv/lib/python3*/site-packages/pgserver/pginstall/bin; do
-            if [[ -x "$d/pg_dump" ]]; then PG_BIN="$d"; break; fi
-        done
-    fi
-fi
-[[ -n "${PG_BIN:-}" && -x "$PG_BIN/pg_dump" && -x "$PG_BIN/psql" ]] \
-    || die "pg_dump/psql 16 not found (set PG_BIN)"
-[[ "$(pg_major "$PG_BIN/pg_dump")" == 16 ]] \
-    || die "need pg_dump 16 (the VPS restores with pg_restore 16), found: $("$PG_BIN/pg_dump" --version)"
-PSQL="$PG_BIN/psql"
-PG_DUMP="$PG_BIN/pg_dump"
+find_pg_tools
 
 server_major="$("$PSQL" -X -q -A -t -v ON_ERROR_STOP=1 -d "$url" -c "SELECT current_setting('server_version_num')::int / 10000")" \
     || die "cannot connect to the database"
@@ -231,7 +261,9 @@ q() { # query inside the exported snapshot; tab-separated, unaligned
 }
 
 log "pg_dump (snapshot $snap)"
-"$PG_DUMP" -Fc --no-owner --no-acl --snapshot="$snap" -f "$stage/db/mdhub.dump" -d "$url"
+"$PG_DUMP" -Fc --no-owner --no-acl --exclude-table-data='admin.*' --snapshot="$snap" \
+    -f "$stage/db/mdhub.dump" -d "$url"
+check_dump "$stage/db/mdhub.dump" || die "the seed dump holds data of admin.* tables (above)"
 (cd "$stage/db" && $SHA256 mdhub.dump >mdhub.dump.sha256)
 
 log "seed report"
@@ -288,7 +320,7 @@ dump_sha="$(sha_of "$stage/db/mdhub.dump")"
     echo "source_database:  ${db_name} on ${db_host} as ${db_user}"
     echo "server_version:   PostgreSQL ${server_version}"
     echo "database_size:    ${db_size} bytes (pg_database_size)"
-    echo "pg_dump:          $("$PG_DUMP" --version) (-Fc --no-owner --no-acl)"
+    echo "pg_dump:          $("$PG_DUMP" --version) (-Fc --no-owner --no-acl --exclude-table-data='admin.*')"
     echo "snapshot:         ${snap} (dump, SEED_REPORT.md and this manifest)"
     echo "dump:             db/mdhub.dump ${dump_bytes} bytes sha256 ${dump_sha}"
     echo "seed_report:      SEED_REPORT.md $(size_of "$stage/SEED_REPORT.md") bytes"

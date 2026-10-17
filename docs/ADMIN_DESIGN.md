@@ -271,6 +271,22 @@ absent, so `Sec-Fetch-Site: same-origin` must then be present; the overview's TL
 the sources' certificates (the console's own certificate is Caddy's). Login flows are tested
 end to end with a software authenticator (`tests/admin_helpers.py`), not Playwright.
 
+**Phase E status (2026-10-17):** implemented. Migration `0700_admin_source_credential`
+(`admin.secret_key_public`, `admin.source_credential` with a CHECK on the registry names and a
+statement trigger `NOTIFY mdhub_credentials`); code in `mdhub.credentials` (registry, sealed
+boxes, worker store), `mdhub.admin.credentials` (page **Credentials**) and `mdhub secrets …`
+(init-key, import-env, rotate-key, list); new env `MDHUB_SECRETS_PRIVATE_KEY` (compose: worker
+only, blanked for `migrate`/`api`); `make_bundle.sh --exclude-table-data='admin.*'` plus a TOC
+check (`--check-dump FILE`). Deviations: the worker learns which names are set in `.env` and
+publishes them (names only) as `secret_key_public.env_names`, since the console cannot see the
+worker's `.env`; the latest `published_at` is the key the console seals to; resolution happens
+in `run_job` (and `calendar seed`), so every job and nested run gets the resolved copy; a
+decrypted value is redacted process-wide (`mdhub.core.redact.register_secrets`); "Check" needs
+the admin role but no step-up; `verify_result` ∈ {ok, rejected, unreachable} is written by
+`source_probe` for the stored names of a probed source (none for `MDHUB_HTTP_PROXY`, which spans
+every source; MOEX Passport has no probe); `rotate-key` re-seals in one transaction and prints
+the new key, and until the worker restarts with it, jobs fall back to `.env`.
+
 ## 8. Open points
 
 - The admin host name and the initial allow-list: the owner's office or home IPs. A dynamic home IP needs either a wider

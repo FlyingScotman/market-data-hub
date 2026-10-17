@@ -42,6 +42,7 @@ from mdhub.core.http import HttpClient, HttpError
 from mdhub.core.iss import APIM_BASE_URL, ISS_BASE_URL
 from mdhub.core.redact import redact_url, sanitize_text
 from mdhub.core.timeutil import MSK
+from mdhub.credentials import REGISTRY as CREDENTIALS
 from mdhub.jobs import JobContext, JobParamError, job
 from mdhub.sources import cbonds, cbr, ecb, otc_monitor, ratescalcs, rosstat
 from mdhub.sources.moex_apim import apim_headers
@@ -275,6 +276,20 @@ def source_probe(
                     r.error,
                 )
                 for r in results
+            ],
+        )
+        # The console's "last check" of each credential row of a probed source that has some.
+        # shortcut: MDHUB_HTTP_PROXY gets no verdict (it spans every source).
+        cur.executemany(
+            "UPDATE admin.source_credential SET verified_at = now(), verify_result = %s "
+            "WHERE name = ANY(%s)",
+            [
+                (
+                    "rejected" if r.auth == "rejected" else "ok" if r.ok else "unreachable",
+                    [c.name for c in CREDENTIALS.values() if c.source == r.source],
+                )
+                for r in results
+                if r.auth in ("ok", "rejected")
             ],
         )
     failing = [r.source for r in results if not r.ok]

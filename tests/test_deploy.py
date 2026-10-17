@@ -174,6 +174,23 @@ def test_admin_service_gets_no_source_credentials() -> None:
     }
 
 
+def test_secrets_private_key_reaches_the_worker_only() -> None:
+    """MDHUB_SECRETS_PRIVATE_KEY opens the console's source credentials (ADMIN_DESIGN §9):
+    blanked for every service that reads .env except the worker; admin has no .env at all."""
+    yaml = pytest.importorskip("yaml")
+    services = yaml.safe_load(_compose_text())["services"]
+    key = "MDHUB_SECRETS_PRIVATE_KEY"
+    assert services["worker"]["environment"][key] == "${MDHUB_SECRETS_PRIVATE_KEY:-}"
+    assert "MDHUB_DATABASE_URL" in services["worker"]["environment"]  # merged, not replaced
+    for name, svc in services.items():
+        if name == "worker":
+            continue
+        if "env_file" in svc:
+            assert svc["environment"][key] == "", name
+        else:
+            assert key not in svc.get("environment", {}), name
+
+
 def test_dockerfile() -> None:
     text = (DEPLOY / "Dockerfile").read_text()
     assert "python:3.12-slim" in text
@@ -431,6 +448,17 @@ def test_make_bundle_and_restore_roundtrip(db_url: str, empty_db_url: str, tmp_p
             "INSERT INTO ref.bond (secid, bond_class, coupon_type, coupon_type_basis, status) "
             "VALUES ('B1', 'corporate', 'fixed', 'moex_label', 'active')"
         )
+        # admin.* data must never reach a seed dump (ADMIN_DESIGN §9)
+        c.execute(
+            "INSERT INTO admin.api_token (name, token_sha256, prefix, scopes) "
+            "VALUES ('seed-test', %s, 'mdh_abcd', '{read}')",
+            (b"\x01" * 32,),
+        )
+        c.execute(
+            "INSERT INTO admin.source_credential (name, ciphertext, key_id) "
+            "VALUES ('MOEX_API_KEY', %s, '0123456789abcdef')",
+            (b"\x01" * 80,),
+        )
     env = {
         **os.environ,
         "PG_BIN": str(PSQL.parent),
@@ -481,6 +509,29 @@ def test_make_bundle_and_restore_roundtrip(db_url: str, empty_db_url: str, tmp_p
     assert "| fixing | 1 |" in report
     sums = (root / "SHA256SUMS").read_text().splitlines()
     assert any(line.endswith("  db/mdhub.dump") for line in sums)
+    toc = subprocess.run(
+        [str(PSQL.parent / "pg_restore"), "-l", str(root / "db" / "mdhub.dump")],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "TABLE DATA md fixing" in toc and "TABLE admin source_credential" in toc
+    assert not re.search(r"TABLE DATA admin ", toc)
+
+    def check_dump(path: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(DEPLOY / "make_bundle.sh"), "--check-dump", str(path)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    assert check_dump(root / "db" / "mdhub.dump").returncode == 0
+    full = tmp_path / "full.dump"
+    subprocess.run([str(PSQL.parent / "pg_dump"), "-Fc", "-f", str(full), "-d", db_url], check=True)
+    refused = check_dump(full)
+    assert refused.returncode != 0 and "TABLE DATA admin source_credential" in refused.stderr
 
     restore = subprocess.run(
         [
