@@ -17,6 +17,9 @@ Environment variables (DESIGN §7 plus a few operational knobs):
 ``MDHUB_ALGOPACK_FULL_REREAD_MINUTES`` AlgoPack whole-day re-read interval, default 30
 ``MDHUB_ALGOPACK_RETENTION_DAYS``   AlgoPack rolling window in calendar days, default 90
 ``MDHUB_API_TOKENS``                comma-separated bearer tokens for the read API
+                                    (``token`` -> name ``env:N``, or ``name=token``)
+``MDHUB_OPS_LOG_RETENTION_DAYS``    retention of ``ops.api_request`` / ``source_probe`` /
+                                    ``worker_heartbeat`` rows, default 90
 ``MDHUB_ENABLE_SDFI``               enable the MOEX SDFI curve loader, default false
 ``MDHUB_LOG_LEVEL``                 logging level, default ``INFO`` (extension)
 ``MDHUB_HTTP_TIMEOUT``              HTTP timeout in seconds, default 30 (extension)
@@ -32,6 +35,7 @@ Environment variables (DESIGN §7 plus a few operational knobs):
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -39,6 +43,10 @@ from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = ["ConfigError", "Settings", "get_settings"]
+
+_NAMED_TOKEN_RE = re.compile(r"^([a-z0-9][a-z0-9._-]{0,63})=([^=].*)$")
+"""``name=token`` entry of ``MDHUB_API_TOKENS``. The token part must not start with ``=``, so
+a padded base64 token (``abc==``) is never split."""
 
 
 class ConfigError(RuntimeError):
@@ -112,6 +120,13 @@ class Settings(BaseSettings):
     api_tokens: SecretStr | None = Field(
         default=None, validation_alias=AliasChoices("MDHUB_API_TOKENS", "api_tokens")
     )
+    ops_log_retention_days: int = Field(
+        default=90,
+        ge=1,
+        validation_alias=AliasChoices("MDHUB_OPS_LOG_RETENTION_DAYS", "ops_log_retention_days"),
+    )
+    """Days of ``ops.api_request``, ``ops.source_probe`` and ``ops.worker_heartbeat`` kept by
+    ``maintenance mode=retention`` (ADMIN_DESIGN §3.2)."""
     enable_sdfi: bool = Field(
         default=False, validation_alias=AliasChoices("MDHUB_ENABLE_SDFI", "enable_sdfi")
     )
@@ -191,11 +206,24 @@ class Settings(BaseSettings):
         """Egress proxy URL (secret: may contain credentials) or ``None``."""
         return self.http_proxy.get_secret_value() if self.http_proxy else None
 
-    def api_token_list(self) -> list[str]:
-        """Read-API bearer tokens parsed from the comma-separated ``MDHUB_API_TOKENS``."""
+    def api_token_entries(self) -> list[tuple[str, str]]:
+        """``(name, token)`` per entry of the comma-separated ``MDHUB_API_TOKENS``.
+
+        An entry is either a bare token, named ``env:N`` after its 1-based position, or
+        ``name=token`` with a lower-case name (``[a-z0-9][a-z0-9._-]*``, at most 64 characters).
+        """
         if self.api_tokens is None:
             return []
-        return [t.strip() for t in self.api_tokens.get_secret_value().split(",") if t.strip()]
+        entries = [t.strip() for t in self.api_tokens.get_secret_value().split(",")]
+        out: list[tuple[str, str]] = []
+        for i, entry in enumerate((e for e in entries if e), start=1):
+            m = _NAMED_TOKEN_RE.match(entry)
+            out.append((m.group(1), m.group(2)) if m else (f"env:{i}", entry))
+        return out
+
+    def api_token_list(self) -> list[str]:
+        """Read-API bearer token values of ``MDHUB_API_TOKENS`` (names stripped)."""
+        return [token for _, token in self.api_token_entries()]
 
     def secret_values(self) -> list[str]:
         """All configured secret values, for redaction of logs and error texts.

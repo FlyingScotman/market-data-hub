@@ -16,9 +16,12 @@
     (:func:`purge_algopack_window`, ``MDHUB_ALGOPACK_RETENTION_DAYS``, default 90 calendar
     days): rows of ``md.algopack_fo_tradestats`` / ``md.algopack_futoi`` with a ``trade_date``
     before the window start, their ``ops.row_history`` images, and AlgoPack raw captures
-    (incl. backfill ``*_history`` captures) fetched before the window start (00:00 MSK). Then
-    runs ``VACUUM (ANALYZE)`` (autocommit, outside a transaction) on ``ops.raw_capture`` and
-    every table in ``ops``/``ref``/``md`` larger than ``vacuum_min_mb``. Other EOD/static raw
+    (incl. backfill ``*_history`` captures) fetched before the window start (00:00 MSK); then
+    deletes observability rows older than ``MDHUB_OPS_LOG_RETENTION_DAYS`` (default 90,
+    :data:`OPS_LOG_TABLES`: ``ops.api_request``, ``ops.source_probe``,
+    ``ops.worker_heartbeat``). Then runs ``VACUUM (ANALYZE)`` (autocommit, outside a
+    transaction) on ``ops.raw_capture`` and every table in ``ops``/``ref``/``md`` larger than
+    ``vacuum_min_mb``. Other EOD/static raw
     is kept forever.
 
     Row history: ``ops.track_changes()`` is an ``AFTER UPDATE`` trigger, so the retention
@@ -75,6 +78,7 @@ __all__ = [
     "maintenance",
     "purge_algopack_window",
     "purge_intraday_raw",
+    "purge_ops_logs",
     "purge_raw_endpoints",
     "purge_raw_requested_before",
     "purge_rows_before",
@@ -97,6 +101,12 @@ BACKUP_SUFFIX: Final = ".dump"
 PG_DUMP_TIMEOUT_S: Final = 4 * 3600
 DELETE_BATCH: Final = 5000
 VACUUM_SCHEMAS: Final = ("ops", "ref", "md")
+OPS_LOG_TABLES: Final = (
+    ("ops.api_request", "ts"),
+    ("ops.source_probe", "ts"),
+    ("ops.worker_heartbeat", "beat_at"),
+)
+"""Observability tables (ADMIN_DESIGN §3.2) and their timestamp column for retention."""
 
 
 def is_intraday_endpoint(endpoint: str) -> bool:
@@ -407,6 +417,31 @@ def purge_raw_requested_before(
     return _purge_raw(db, match, [source, list(endpoints), _TILL_DATE, before], batch)
 
 
+def purge_ops_logs(
+    db: Database, retention_days: int, *, batch: int = DELETE_BATCH
+) -> dict[str, int]:
+    """Delete rows of :data:`OPS_LOG_TABLES` older than ``retention_days`` (each batch
+    committed separately, by the indexed timestamp column); returns rows deleted per table."""
+    if retention_days < 1:
+        raise JobParamError("ops log retention must be >= 1 day")
+    out: dict[str, int] = {}
+    for table, column in OPS_LOG_TABLES:
+        schema, name = table.split(".", 1)
+        query = sql.SQL(
+            "DELETE FROM {t} WHERE ctid = ANY(ARRAY("
+            "SELECT ctid FROM {t} WHERE {c} < now() - make_interval(days => %s) LIMIT %s))"
+        ).format(t=sql.Identifier(schema, name), c=sql.Identifier(column))
+        total = 0
+        while True:
+            with db.connection() as conn:
+                n = conn.execute(query, (retention_days, batch)).rowcount
+            total += n
+            if n < batch:
+                break
+        out[table] = total
+    return out
+
+
 def vacuum_tables(db: Database, *, min_mb: int = 64) -> list[str]:
     """``VACUUM (ANALYZE)`` ``ops.raw_capture`` and large tables of ops/ref/md (autocommit)."""
     with db.connect(autocommit=True) as conn:
@@ -441,6 +476,7 @@ def maintenance(
     retention_days: int | None = None,
     reread_retention_days: int | None = None,
     algopack_retention_days: int | None = None,
+    ops_log_retention_days: int | None = None,
     vacuum: bool = True,
     vacuum_min_mb: int = 64,
 ) -> dict[str, Any]:
@@ -452,6 +488,8 @@ def maintenance(
     :param reread_retention_days: override ``MDHUB_RAW_RETENTION_DAYS_REREAD``.
     :param algopack_retention_days: override ``MDHUB_ALGOPACK_RETENTION_DAYS`` (AlgoPack
         rolling window, calendar days).
+    :param ops_log_retention_days: override ``MDHUB_OPS_LOG_RETENTION_DAYS`` (api requests,
+        source probes, heartbeats).
     :param vacuum: run ``VACUUM (ANALYZE)`` after retention.
     """
     secrets = ctx.settings.secret_values()
@@ -473,11 +511,13 @@ def maintenance(
         days = retention_days or ctx.settings.raw_retention_days_intraday
         reread_days = min(days, reread_retention_days or ctx.settings.raw_retention_days_reread)
         algopack_days = algopack_retention_days or ctx.settings.algopack_retention_days
+        ops_days = ops_log_retention_days or ctx.settings.ops_log_retention_days
         result: dict[str, Any] = {
             "mode": mode,
             "retention_days": days,
             "reread_retention_days": reread_days,
             "algopack_retention_days": algopack_days,
+            "ops_log_retention_days": ops_days,
         }
         result["orphaned_runs_reaped"] = reap_orphaned_runs(ctx.db)
         try:
@@ -492,6 +532,7 @@ def maintenance(
                 "be declared ON DELETE SET NULL for intraday tables"
             )
             result["raw_deleted"] = None
+        result["ops_logs_deleted"] = purge_ops_logs(ctx.db, ops_days)
         ctx.logger.info(
             "raw retention: deleted %s intraday capture(s); algopack window %s",
             result["raw_deleted"],

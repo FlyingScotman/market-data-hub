@@ -1,8 +1,10 @@
-# Build context = repository root; only pyproject.toml, uv.lock, README.md and src/ are used.
+# Build context = repository root; only pyproject.toml, uv.lock, README.md,
+# .git_archival.txt (version of a git-archive bundle) and src/ are used.
 **
 !pyproject.toml
 !uv.lock
 !README.md
+!.git_archival.txt
 !src/
 src/**/__pycache__
 src/**/*.pyc

@@ -10,7 +10,7 @@ import typer
 from psycopg.conninfo import conninfo_to_dict
 from typer.testing import CliRunner
 
-from mdhub import cli
+from mdhub import __version__, cli
 from mdhub.db.migrate import discover_migrations
 from mdhub.jobs import REGISTRY, JobContext
 
@@ -25,7 +25,8 @@ def _no_log_config(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_version() -> None:
     result = runner.invoke(cli.app, ["--version"])
-    assert result.exit_code == 0 and result.output.strip() == "0.1.0"
+    assert result.exit_code == 0 and result.output.strip() == __version__
+    assert __version__ != "0.1.0"  # from git tags (hatch-vcs), not hard-coded
 
 
 def test_migrate_twice(empty_db_url: str, monkeypatch: pytest.MonkeyPatch) -> None:

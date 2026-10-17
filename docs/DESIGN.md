@@ -74,6 +74,11 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
 - `ops.backfill_task(id, dataset, params jsonb {date_from, date_to}, status, attempts, last_error, created_at, done_at, not_before, started_at, last_run_id, source)` — one task per (backfill job, range): datasets sharing a job share tasks.
 - `ops.dataset_status` (latest check per dataset), `ops.quality_report` (one report per `quality` run, incl. job health and catch-up); views `ops.v_coverage`, `ops.v_job_health`, `ops.v_open_gaps`, `ops.v_backfill_queue`.
 - `ops.legacy_import` (SQLite import bookkeeping), `ops.schema_migration(version, applied_at, checksum)`
+- Observability (0610, [ADMIN_DESIGN](ADMIN_DESIGN.md) §3.2): `ops.api_request(ts, token_id, token_name, client_ip, method, path, query, status, duration_ms, response_bytes, request_id, user_agent)` — one row per read-API request except `/health/*`, written in batches by the API (every second or 200 rows, off the request path); `path` is the route template (`/v1/bonds/{secid}`, `<unmatched>`), `query` has credential-like values replaced by `***`, tokens are never stored. `ops.worker_heartbeat(instance_id, process, host, pid, version, started_at, beat_at, stopped_at, running_jobs jsonb)` — upserted every 30 s by `mdhub scheduler`; a stale `beat_at` without `stopped_at` = the process died. `ops.source_probe(run_id, source, endpoint, ts, ok, http_status, latency_ms, auth ∈ {ok, rejected, not_configured, n/a}, tls_expires_at, error)` — job `source_probe` (§6). `ops.job_source(job, source)` maps loader jobs to their sources; view `ops.v_source_status` = per source the last probe, the last ok probe and the last `succeeded`/`partial` run of a job reading it. All three tables: retention `MDHUB_OPS_LOG_RETENTION_DAYS` (90) in `maintenance mode=retention`.
+
+### `admin` — secrets and identities (0600+)
+- `admin.api_token(id, name, token_sha256 bytea unique, prefix, scopes text[] ⊆ {read, snapshots, export}, created_by, created_at, expires_at, revoked_at, last_used_at, last_used_ip)` — named read-API tokens (§8); names unique among live tokens. Users, sessions and the audit log of the admin console follow in phase B ([ADMIN_DESIGN](ADMIN_DESIGN.md) §3.1).
+- **Never readable by the read-only consumer role.** `deploy/sql/grant_readonly.sql` skips the schema; because the owner's global default privileges (`readonly_defaults.sql`) also reach objects created in `admin`, every admin migration ends with `CALL admin.restrict_access()` (revokes everything in `admin` from `PUBLIC` and all roles but the owner), and `mdhub migrate`, `grant_readonly.sql` and `readonly_defaults.sql` call it again (seed restores). `tests/test_deploy.py::test_readonly_role_cannot_read_admin` enforces it.
 
 ### `ref` — static / reference
 - `ref.calendar_day(calendar ∈ {MOEX_STOCK, MOEX_FX, MOEX_FORTS, RU_PRODUCTION, TARGET}, day, source, is_business_day, known_at, version, note)` PK (calendar, day, source) — past days from observed trading / RUONIA observations (from 2019-01-01), the days the official MOEX ISS calendar lists (never a synthesized year), future days from the curated data file; TARGET: a computed rule for all days (`rule_target`). **Precedence by source, not recency**: `ref.calendar_source_rank()` observed > moex_iss_calendar > curated > rule_* > curated_unverified (`known_at` breaks ties; `rule_*` 0422); view `ref.calendar_effective`, `mdhub.core.bizday.DbCalendar`; days without rows: Monday–Friday.
@@ -145,15 +150,19 @@ src/mdhub/
                        futures.py, indices.py, zcyc.py, cbr.py, ecb.py, swaps.py,
                        cbonds_enrich.py, calendar.py — fetch→capture→parse→upsert
   legacy/              import_sqlite.py (verbatim), map_md.py, map_bc.py
-  quality/             checks.py (integrity, freshness, gaps), report.py
-  jobs.py              job registry (@job), JobContext, run_job, loader discovery
+  quality/             checks.py (integrity, freshness, gaps), report.py,
+                       source_probe.py (job source_probe)
+  core/heartbeat.py    worker heartbeat (ops.worker_heartbeat)
+  jobs.py              job registry (@job), JobContext, run_job, running_jobs, loader discovery
   schedule.py          cron rules (APScheduler)
-  api/                 app.py (FastAPI read API)
+  api/                 app.py (FastAPI read API), auth.py (tokens, scopes),
+                       requestlog.py (ops.api_request batch writer)
   cli.py               `mdhub` (typer); cli_ext/ auto-registered sub-command groups
 ```
 
 Migration ownership (to avoid conflicts): `0001-0099` core/ops; `0100-0199` ref (static);
-`0200-0299` md (market); `0300-0399` legacy; `0400+` api/views.
+`0200-0299` md (market); `0300-0399` legacy; `0400-0499` api/views; `0500-0599` snapshot layer;
+`0600-0699` admin console and observability (ADMIN_DESIGN §3).
 
 ## 6. Update and storage rules (schedule, Europe/Moscow, business days unless noted)
 
@@ -179,10 +188,11 @@ Migration ownership (to avoid conflicts): `0001-0099` core/ops; `0100-0199` ref 
 | `swaps_otc_monitor` | every 15 min 09:00–20:00 (MOEX_STOCK business days; legacy collector polled 10:00–19:45) | OTC Monitor `/api/bond/` (one GET) | datasets `ruonia_ois`, `key_rate_swap`, `cny_ruonia_xccy`, `cny_rusfar_ois` (source `otc_monitor`, `DatasetSpec` `otc_monitor_<dataset>`, frequency `event`). Exact tenor set and sanity bounds `lo ≤ bid ≤ offer ≤ hi` per curve (RUB 0–100; CNY −50–300: negative CNY rates and >200% RUSFARCNY spikes are real 2024 quotes): a failing curve is not stored and the run ends `partial`. Content-hash dedup per (source, dataset) continues the legacy-mapped history (same hash, tenor order and basis rules); one raw capture per fetch, only when a curve changed. Missing token → `skipped`; HTTP 401/403 → `failed` |
 | `quality` | 08:30 and 20:30 | DB | freshness & gap detection → `ops.data_gap` + `ops.backfill_task`; job health (only `schedule`/`catch_up` runs count as a fire that ran); re-runs scheduled fires skipped with `lock_busy` (trigger `catch_up`) |
 | `backfill_worker` | every 10 min (all days) | DB | processes backfill tasks (8-minute budget), yields to waiting scheduled runs |
-| `maintenance` | 02:00 `backup` (pg_dump, keep 14); 03:00 `retention` (all days) | DB | raw retention of `intraday:reread:` captures (7 days, `MDHUB_RAW_RETENTION_DAYS_REREAD`) and other `intraday:` captures (90 days); AlgoPack rolling window (`MDHUB_ALGOPACK_RETENTION_DAYS`, 90 calendar days): tradestats/FUTOI rows with `trade_date` before the window start (one date per committed delete), their `ops.row_history` images, AlgoPack raw captures (all `algopack_fx_futures` endpoints, incl. `*_history`) fetched before 00:00 MSK of the window start, plus backfill `*_history` captures whose requested range (`till=`) ends before the window start whenever they were fetched; orphaned `running` job runs (>12 h) → failed, VACUUM ANALYZE |
+| `source_probe` | every 5 min (all days) | every source | one lightweight request per source → `ops.source_probe` (reachability, HTTP status, latency, credentials ok / rejected / not configured, TLS certificate expiry, sanitized error); no retries, 15 s timeout, no raw capture. Ratescalcs only Mon–Fri 08:50–23:00 MSK (service hours); Cbonds at most hourly (one `get_emissions` query, `limit=1`: a rejected login must not hit the provider every 5 min). `-p sources=cbr,ecb`, `-p force=true` for manual runs |
+| `maintenance` | 02:00 `backup` (pg_dump, keep 14); 03:00 `retention` (all days) | DB | observability rows (`ops.api_request`, `ops.source_probe`, `ops.worker_heartbeat`) older than `MDHUB_OPS_LOG_RETENTION_DAYS` (90); raw retention of `intraday:reread:` captures (7 days, `MDHUB_RAW_RETENTION_DAYS_REREAD`) and other `intraday:` captures (90 days); AlgoPack rolling window (`MDHUB_ALGOPACK_RETENTION_DAYS`, 90 calendar days): tradestats/FUTOI rows with `trade_date` before the window start (one date per committed delete), their `ops.row_history` images, AlgoPack raw captures (all `algopack_fx_futures` endpoints, incl. `*_history`) fetched before 00:00 MSK of the window start, plus backfill `*_history` captures whose requested range (`till=`) ends before the window start whenever they were fetched; orphaned `running` job runs (>12 h) → failed, VACUUM ANALYZE |
 
 **Lock contention.** Every job holds advisory lock `mdhub.job:<name>`. A scheduled fire waits up to
-15 minutes for it (polling rules — intraday snapshots, AlgoPack, Ratescalcs, OTC Monitor, the backfill worker —
+15 minutes for it (polling rules — intraday snapshots, AlgoPack, Ratescalcs, OTC Monitor, the backfill worker, source probes —
 do not wait). Backfill tasks of heavy datasets are short and yield to a waiting scheduled run. A fire
 that still cannot run is recorded as `skipped` with error `lock_busy: …`; job health reports it as
 `missed` and the next `quality` run re-executes it (`days_back` resolved against the fire date).
@@ -248,7 +258,8 @@ mechanism: `DatasetSpec.rolling_window_setting` names the `Settings` field holdi
 `MDHUB_ISS_RPS=3`, `MDHUB_RAW_RETENTION_DAYS_INTRADAY=90`, `MDHUB_RAW_RETENTION_DAYS_REREAD=7`
 (`intraday:reread:` captures), `MDHUB_ALGOPACK_FULL_REREAD_MINUTES=30`,
 `MDHUB_ALGOPACK_RETENTION_DAYS=90` (AlgoPack rolling window, calendar days, §6), `MDHUB_API_TOKENS` (comma list,
-read API bearer tokens), `MDHUB_ENABLE_SDFI=false`, `MDHUB_BACKUP_DIR=/var/backups/mdhub`
+read API bearer tokens: `token` → name `env:N`, or `name=token`; §8), `MDHUB_OPS_LOG_RETENTION_DAYS=90`
+(API request log, source probes, heartbeats), `MDHUB_ENABLE_SDFI=false`, `MDHUB_BACKUP_DIR=/var/backups/mdhub`
 (pg_dump target of `maintenance mode=backup` / `mdhub ops backup`), `MDHUB_API_POOL_SIZE=8`
 (read-API connection pool), `MDHUB_LOG_LEVEL=INFO`, `MDHUB_HTTP_TIMEOUT=30`, plus source
 credentials: `MOEX_API_KEY`, `MOEX_PASSPORT_LOGIN`, `MOEX_PASSPORT_PASSWORD`,
@@ -258,8 +269,24 @@ credentials: `MOEX_API_KEY`, `MOEX_PASSPORT_LOGIN`, `MOEX_PASSPORT_PASSWORD`,
 ## 8. Read API (v1, bearer token)
 
 Unauthenticated: `/health/live`, `/health/ready` (DB reachable, migrations applied with matching
-checksums). Everything under `/v1` needs `Authorization: Bearer <token>` (`MDHUB_API_TOKENS`),
-including the OpenAPI document `/v1/openapi.json`.
+checksums; reports the running `version`, from the git tag via hatch-vcs). Everything under `/v1`
+needs `Authorization: Bearer <token>`, including the OpenAPI document `/v1/openapi.json`:
+
+- **Named tokens** (`admin.api_token`, preferred): `mdh_` + base32 of 32 random bytes, created with
+  `mdhub tokens create NAME [--scope read|snapshots|export] [--expires-days N]` (the full token is
+  printed once; only its SHA-256 and the 8-character prefix are stored), listed with
+  `mdhub tokens list`, revoked with `mdhub tokens revoke NAME|ID`. The API looks the SHA-256 up
+  (indexed), compares with `hmac.compare_digest` and caches lookups (also misses) for 30 s:
+  revocation takes effect within 30 s, expiry immediately. A database error during the lookup →
+  503.
+- **`MDHUB_API_TOKENS`** keeps working unchanged (all scopes): entries are `token` (shown as
+  `env:1`, `env:2`, … by position) or `name=token`. Checked first, against every entry.
+- **Scopes:** `read` = all of `/v1`; `snapshots` = `/v1/snapshots*` only (inside replica); `export`
+  = `/v1/export/*` only (TDM CSV); `/v1/openapi.json` accepts any scope. Missing scope → 403.
+- **Request log:** every request except `/health/*` goes to `ops.api_request` (§4) with the token
+  name and id (never the token), client IP (uvicorn `--proxy-headers`), route template, redacted
+  query, status, duration, size, request id and user agent; `admin.api_token.last_used_at/_ip`
+  follow from the same batch writer.
 
 Endpoints: `/v1/coverage`, `/v1/runs`, `/v1/runs/health`, `/v1/gaps` (ordered by dataset, date,
 key), `/v1/bonds` (static, filters), `/v1/bonds/{secid}` (+ issuer, boards, coupons with status,

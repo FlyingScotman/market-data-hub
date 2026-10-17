@@ -1,10 +1,13 @@
 """FastAPI read API of the market data hub (DESIGN §8). Entry point ``mdhub.api.app:app``.
 
 * ``/health/live`` (process up) and ``/health/ready`` (database reachable and all migrations
-  applied with matching checksums) are unauthenticated.
-* Everything under ``/v1`` requires ``Authorization: Bearer <token>`` with a token from
-  ``MDHUB_API_TOKENS`` (see :mod:`mdhub.api.auth`); the OpenAPI document is served at
-  ``/v1/openapi.json`` behind the same check.
+  applied with matching checksums; reports the running ``version``) are unauthenticated.
+* Everything under ``/v1`` requires ``Authorization: Bearer <token>`` with a named token from
+  ``admin.api_token`` or a token from ``MDHUB_API_TOKENS``, with the scope the path needs
+  (see :mod:`mdhub.api.auth`); the OpenAPI document is served at ``/v1/openapi.json`` behind
+  the same check.
+* Every request except ``/health/*`` is recorded in ``ops.api_request`` by a batch writer off
+  the request path (:mod:`mdhub.api.requestlog`).
 * JSON bodies: ``{"data": ..., "meta": {...}}``; dates ISO 8601, timestamps with offset,
   ``numeric`` values as JSON numbers with their exact stored digits
   (:mod:`mdhub.api.jsonutil`). Lists page with ``limit``/``offset``
@@ -22,6 +25,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, Depends, FastAPI, Request
@@ -30,8 +34,16 @@ from fastapi.responses import Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from mdhub import __version__
-from mdhub.api.auth import require_token, token_digests
+from mdhub.api.auth import TokenStore, require_token
 from mdhub.api.common import DecimalJSONResponse, json_response
+from mdhub.api.requestlog import (
+    RequestLogWriter,
+    RequestRecord,
+    client_ip,
+    redact_query,
+    route_template,
+    truncate_user_agent,
+)
 from mdhub.api.routes import bonds, export, market, ops
 from mdhub.config import Settings
 from mdhub.core.redact import SecretRedactingFilter, sanitize_text
@@ -66,6 +78,34 @@ def _error(
     )
 
 
+def _record(
+    writer: RequestLogWriter,
+    request: Request,
+    response: Response,
+    received: datetime,
+    elapsed_ms: float,
+    rid: str,
+) -> None:
+    identity = getattr(request.state, "token", None)
+    length = response.headers.get("content-length")
+    writer.submit(
+        RequestRecord(
+            ts=received,
+            method=request.method,
+            path=route_template(request.scope),
+            status=response.status_code,
+            duration_ms=round(elapsed_ms, 1),
+            token_id=getattr(identity, "token_id", None),
+            token_name=getattr(identity, "name", None),
+            client_ip=client_ip(request.client.host if request.client else None),
+            query=redact_query(request.url.query),
+            response_bytes=int(length) if length and length.isdigit() else None,
+            request_id=rid,
+            user_agent=truncate_user_agent(request.headers.get("user-agent")),
+        )
+    )
+
+
 def _configure_logging(settings: Settings) -> None:
     """Attach the secret-redacting filter to root handlers (uvicorn configures them)."""
     flt = SecretRedactingFilter(settings.secret_values())
@@ -88,7 +128,6 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         cfg = settings or Settings()
         app.state.settings = cfg
-        app.state.token_digests = token_digests(cfg.api_token_list())
         app.state.secrets = cfg.secret_values()
         owned: Database | None = None
         if database is not None:
@@ -100,11 +139,20 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
             app.state.database = None
         if settings is None:
             _configure_logging(cfg)
-        if not app.state.token_digests:
-            log.warning("MDHUB_API_TOKENS is empty: every /v1 request will be rejected")
+        app.state.token_store = TokenStore(cfg.api_token_entries(), app.state.database)
+        if not app.state.token_store.configured:
+            log.warning("no MDHUB_API_TOKENS and no database: every /v1 request will be rejected")
+        writer: RequestLogWriter | None = None
+        if app.state.database is not None:
+            writer = RequestLogWriter(app.state.database)
+            writer.start()
+        app.state.request_log = writer
         try:
             yield
         finally:
+            app.state.request_log = None
+            if writer is not None:
+                writer.stop()
             if owned is not None:
                 owned.close()
 
@@ -117,7 +165,8 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         openapi_url=None,
         default_response_class=DecimalJSONResponse,
     )
-    app.state.token_digests = ()
+    app.state.token_store = None
+    app.state.request_log = None
     app.state.database = None
     app.state.secrets = []
 
@@ -127,6 +176,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     ) -> Response:
         rid = _request_id(request)
         request.state.request_id = rid
+        received = datetime.now(UTC)
         started = time.perf_counter()
         try:
             response = await call_next(request)
@@ -140,14 +190,18 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
             )
             response = _error(request, 500, "internal error")
         response.headers["X-Request-ID"] = rid
+        elapsed_ms = (time.perf_counter() - started) * 1000
         access_log.info(
             "%s %s %s %.1fms [%s]",
             request.method,
             request.url.path,
             response.status_code,
-            (time.perf_counter() - started) * 1000,
+            elapsed_ms,
             rid,
         )
+        writer: RequestLogWriter | None = request.app.state.request_log
+        if writer is not None and not request.url.path.startswith("/health/"):
+            _record(writer, request, response, received, elapsed_ms, rid)
         return response
 
     @app.exception_handler(StarletteHTTPException)
@@ -170,7 +224,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     @app.get("/health/ready", tags=["health"], summary="Database reachable, migrations current")
     def ready(request: Request) -> Response:
         db: Database | None = request.app.state.database
-        body: dict[str, Any] = {"status": "ok", "database": "ok"}
+        body: dict[str, Any] = {"status": "ok", "version": __version__, "database": "ok"}
         if db is None:
             return _error(request, 503, "database not configured")
         try:
