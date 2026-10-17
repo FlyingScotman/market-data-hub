@@ -1,7 +1,7 @@
 """``mdhub`` command-line interface.
 
 Commands: ``migrate``, ``jobs list``, ``run <job> [--param k=v ...]``, ``scheduler``,
-``db-info``. Modules in :mod:`mdhub.cli_ext` exposing ``app: typer.Typer`` are added as
+``updater``, ``db-info``. Modules in :mod:`mdhub.cli_ext` exposing ``app: typer.Typer`` are added as
 sub-command groups automatically (see ``docs/DEVELOPING.md``).
 """
 
@@ -234,6 +234,34 @@ def scheduler_cmd(
         requests.stop()
         heartbeat.stop()
         db.close()
+
+
+@app.command("updater")
+def updater_cmd() -> None:
+    """Run the self-update agent (ADMIN_DESIGN §6) until SIGTERM/SIGINT.
+
+    Executes the install and rollback requests of the admin console (``ops.update_request``)
+    with docker compose; see :mod:`mdhub.updater`. No listening port."""
+    import threading
+
+    from mdhub import updater
+
+    settings = _settings()
+    if settings.database_url is None:
+        typer.echo("MDHUB_DATABASE_URL is not set", err=True)
+        raise typer.Exit(2)
+    stop = threading.Event()
+
+    def _stop(signum: int, _frame: FrameType | None) -> None:
+        # A step in progress is aborted; the next start resumes it from the recorded state.
+        log.info("signal %d: stopping the updater", signum)
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _stop)
+    try:
+        updater.run(settings, stop)
+    except (KeyboardInterrupt, SystemExit):
+        stop.set()
 
 
 @app.command("db-info")

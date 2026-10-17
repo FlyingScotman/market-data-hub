@@ -43,6 +43,7 @@ from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Final, TypeVar
 
+import psycopg
 from psycopg.rows import tuple_row
 
 from mdhub.config import Settings
@@ -54,6 +55,7 @@ from mdhub.core.timeutil import business_days_back, msk_today
 from mdhub.db.pool import Database, DictConnection
 
 __all__ = [
+    "DRAINING",
     "JOB_PACKAGES",
     "LOCK_BUSY",
     "REGISTRY",
@@ -74,6 +76,7 @@ __all__ = [
     "record_skipped_run",
     "run_job",
     "running_jobs",
+    "worker_draining",
 ]
 
 log = logging.getLogger(__name__)
@@ -576,6 +579,22 @@ def record_skipped_run(
         run_id = run.id
         run.mark_skipped(reason)
     return run_id
+
+
+DRAINING: Final = f"{LOCK_BUSY}: worker draining for an update"
+"""``ops.job_run.error`` of a scheduled fire skipped while draining: health reports it as missed
+and the ``quality`` job catches it up once the worker runs again."""
+
+
+def worker_draining(db: Database) -> bool:
+    """``ops.worker_control.drain`` (migration 0640): the updater asks the worker to start no new
+    job. ``False`` when the flag cannot be read (an outage must not stop the loaders)."""
+    try:
+        with db.connection() as conn, conn.cursor(row_factory=tuple_row) as cur:
+            row = cur.execute("SELECT drain FROM ops.worker_control").fetchone()
+    except psycopg.Error:
+        return False
+    return bool(row and row[0])
 
 
 @contextmanager

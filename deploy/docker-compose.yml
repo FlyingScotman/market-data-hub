@@ -1,13 +1,15 @@
 # market-data-hub - single-VPS deployment (DESIGN §9).
 #
 #   cd deploy && cp env.example .env && $EDITOR .env
-#   docker compose up -d --build            # postgres, migrate (one-shot), worker, api, admin
+#   docker compose up -d --build            # postgres, migrate (one-shot), worker, api, admin,
+#                                           # updater
 #   docker compose --profile tls up -d      # + Caddy TLS reverse proxy for the API and console
 #
 # Postgres and the API are published on 127.0.0.1 only; expose the API publicly through
 # Caddy (443). The admin console is not published at all: only Caddy reaches it, over the
 # network admin_edge where Caddy has a fixed address (the only peer whose X-Forwarded-For the
-# console trusts). See README_DEPLOY.md.
+# console trusts). The updater is the only service with the docker socket and the GitHub token
+# (updater.env); self-update needs the release layout of README_DEPLOY §13. See README_DEPLOY.md.
 
 name: mdhub
 
@@ -140,6 +142,9 @@ services:
       MDHUB_ADMIN_SECRET_KEY: ${MDHUB_ADMIN_SECRET_KEY:-}
       MDHUB_LOG_LEVEL: ${MDHUB_LOG_LEVEL:-}
       MDHUB_TZ: ${MDHUB_TZ:-}
+    volumes:
+      # Uploaded release bundles, read by the updater (ADMIN_DESIGN §6.2).
+      - uploads:/var/lib/mdhub/uploads
     networks:
       - default
       - admin_edge
@@ -153,6 +158,38 @@ services:
       timeout: 5s
       retries: 3
       start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  updater:
+    <<: *mdhub-image
+    # mdhub updater (ADMIN_DESIGN §6): executes the console's install / rollback requests with
+    # docker compose. No port. The only service with the docker socket (root-equivalent on the
+    # host, hence user root) and the GitHub token, which lives in updater.env, never in .env.
+    # No .env either: no source credentials, no API tokens.
+    command: ["mdhub", "updater"]
+    user: "0:0"
+    env_file:
+      - path: updater.env
+        required: false
+    environment:
+      MDHUB_DATABASE_URL: postgresql://${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-mdhub}
+      MDHUB_UPDATE_ROOT: ${MDHUB_UPDATE_ROOT:-/opt/mdhub}
+      MDHUB_UPDATE_GITHUB_REPO: ${MDHUB_UPDATE_GITHUB_REPO:-FiveLimaGolf/market-data-hub}
+      MDHUB_HTTP_PROXY: ${MDHUB_HTTP_PROXY:-}
+      MDHUB_BACKUP_DIR: /var/backups/mdhub
+      MDHUB_LOG_LEVEL: ${MDHUB_LOG_LEVEL:-}
+      MDHUB_TZ: ${MDHUB_TZ:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Same path inside and out: the paths compose resolves must be host paths.
+      - ${MDHUB_UPDATE_ROOT:-/opt/mdhub}:${MDHUB_UPDATE_ROOT:-/opt/mdhub}
+      - uploads:/var/lib/mdhub/uploads
+      - ${MDHUB_BACKUP_HOST_DIR:-./backups}:/var/backups/mdhub
+    stop_grace_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -195,5 +232,6 @@ networks:
 
 volumes:
   pgdata:
+  uploads:
   caddy_data:
   caddy_config:

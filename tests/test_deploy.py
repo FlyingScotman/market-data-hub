@@ -25,7 +25,7 @@ from mdhub.loaders.maintenance import BACKUP_DIR_ENV
 
 DEPLOY = Path(__file__).resolve().parents[1] / "deploy"
 PSQL = Path(pgserver.__file__).parent / "pginstall" / "bin" / "psql"
-SERVICES = {"postgres", "migrate", "worker", "api", "admin", "caddy"}
+SERVICES = {"postgres", "migrate", "worker", "api", "admin", "updater", "caddy"}
 
 
 def env_names(path: Path) -> list[str]:
@@ -174,11 +174,45 @@ def test_admin_service_gets_no_source_credentials() -> None:
     }
 
 
+def test_only_the_updater_has_the_docker_socket_and_github_token() -> None:
+    """ADMIN_DESIGN §2/§6: the updater alone gets the docker socket and the GitHub token
+    (updater.env); it reads no .env, so no source credentials or API tokens either."""
+    yaml = pytest.importorskip("yaml")
+    services = yaml.safe_load(_compose_text())["services"]
+    with_socket = sorted(
+        name
+        for name, svc in services.items()
+        if any("docker.sock" in str(v) for v in svc.get("volumes", []))
+    )
+    assert with_socket == ["updater"]
+    updater = services["updater"]
+    assert updater["command"] == ["mdhub", "updater"] and "ports" not in updater
+    assert updater["env_file"] == [{"path": "updater.env", "required": False}]
+    secret_fields = {
+        str(field.validation_alias.choices[0])  # type: ignore[union-attr]
+        for field in Settings.model_fields.values()
+        if field.annotation == (SecretStr | None)
+    }
+    forbidden = (secret_fields - {"MDHUB_DATABASE_URL", "MDHUB_HTTP_PROXY"}) | {"MDHUB_API_TOKENS"}
+    assert "MDHUB_UPDATE_GITHUB_TOKEN" in forbidden  # from updater.env, never from .env
+    assert not forbidden & set(updater["environment"]), forbidden & set(updater["environment"])
+    root = "${MDHUB_UPDATE_ROOT:-/opt/mdhub}"
+    assert f"{root}:{root}" in updater["volumes"]  # host paths = container paths for compose
+    assert "uploads:/var/lib/mdhub/uploads" in updater["volumes"]
+    assert "uploads:/var/lib/mdhub/uploads" in services["admin"]["volumes"]
+    for name, svc in services.items():
+        if name != "updater":
+            assert "updater.env" not in str(svc.get("env_file", "")), name
+            assert "MDHUB_UPDATE_GITHUB_TOKEN" not in str(svc.get("environment", "")), name
+
+
 def test_dockerfile() -> None:
     text = (DEPLOY / "Dockerfile").read_text()
     assert "python:3.12-slim" in text
     assert "uv sync --frozen --no-dev" in text
     assert "postgresql-client-16" in text
+    assert "docker-ce-cli docker-compose-plugin" in text  # for the updater service
+    assert "/var/lib/mdhub/uploads" in text  # upload volume owned by mdhub (console writes)
     assert re.search(r"^USER mdhub$", text, re.M)
     ignore = (DEPLOY / "Dockerfile.dockerignore").read_text()
     assert "!uv.lock" in ignore and "!src/" in ignore
@@ -239,6 +273,13 @@ def test_caddyfile_and_readme() -> None:
     admin_site = caddy.split("{$MDHUB_ADMIN_DOMAIN", 1)[1]
     assert "not remote_ip {$MDHUB_ADMIN_ALLOW_CIDRS" in admin_site
     assert admin_site.index('respond @outside "Forbidden" 403') < admin_site.index("reverse_proxy")
+    # the 200 MB body limit applies to the upload path only
+    assert "@upload path /updates/upload" in admin_site
+    assert "@not_upload not path /updates/upload" in admin_site
+    upload = admin_site.split("request_body @upload", 1)[1].split("}", 1)[0]
+    other = admin_site.split("request_body @not_upload", 1)[1].split("}", 1)[0]
+    assert "max_size 201MB" in upload and "max_size 1MB" in other
+    assert admin_site.count("request_body") == 2
     readme = (DEPLOY / "README_DEPLOY.md").read_text()
     for needle in (
         "docker compose up -d",
@@ -249,6 +290,9 @@ def test_caddyfile_and_readme() -> None:
         "mdhub db-info",
         "coverage",
         "443",
+        "Self-update from the console",
+        "Rehearsal on a throw-away VPS",
+        "updater.env",
     ):
         assert needle in readme
 

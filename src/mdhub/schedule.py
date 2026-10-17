@@ -31,6 +31,10 @@ job re-runs it (rules with ``catch_up``). Polling rules (``_poll``: intraday sna
 AlgoPack, Ratescalcs, OTC Monitor, the backfill worker, source probes) neither wait nor catch
 up - the next fire supersedes a missed one.
 
+Drain (ADMIN_DESIGN §6.3): while ``ops.worker_control.drain`` is set the worker starts no run;
+non-polling fires are recorded as skipped with :data:`mdhub.jobs.DRAINING` (a ``lock_busy``
+reason), so the ``quality`` job catches them up after the update.
+
 The scheduler skips rules whose job is not registered (with a warning), so loaders can be
 added incrementally.
 """
@@ -52,7 +56,15 @@ from apscheduler.triggers.cron import CronTrigger
 from mdhub.config import Settings
 from mdhub.core.bizday import DEFAULT_CALENDAR, CalendarPredicate
 from mdhub.db.pool import Database
-from mdhub.jobs import LOCK_BUSY, REGISTRY, JobRegistry, record_skipped_run, run_job
+from mdhub.jobs import (
+    DRAINING,
+    LOCK_BUSY,
+    REGISTRY,
+    JobRegistry,
+    record_skipped_run,
+    run_job,
+    worker_draining,
+)
 
 __all__ = [
     "KNOWN_JOBS",
@@ -358,6 +370,19 @@ class _RuleRunner:
                 )
             return
         try:
+            # Checked after the lock wait: a fire that waited must not start once draining.
+            if worker_draining(self.db):
+                log.info("%s: worker draining for an update; not starting", self.name)
+                if wait > 0:
+                    record_skipped_run(
+                        self.db,
+                        self.name,
+                        dict(self.rule.params),
+                        DRAINING,
+                        settings=self.settings,
+                        trigger="schedule",
+                    )
+                return
             outcome = run_job(
                 self.name,
                 dict(self.rule.params),

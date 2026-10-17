@@ -266,6 +266,31 @@ absent, so `Sec-Fetch-Site: same-origin` must then be present; the overview's TL
 the sources' certificates (the console's own certificate is Caddy's). Login flows are tested
 end to end with a software authenticator (`tests/admin_helpers.py`), not Playwright.
 
+**Phase D status (2026-10-17):** implemented, not yet rehearsed on a VPS (README_DEPLOY §13 has
+the procedure). Migration `0640_ops_update` (`ops.release`, `ops.release_available`,
+`ops.update_request`, `ops.update_log`, `ops.worker_control`); code in `mdhub.updater`
+(`mdhub updater`), the worker side of the drain flag in `mdhub.schedule` / `mdhub.job_requests`
+(`mdhub.jobs.worker_draining`), the Updates page in `mdhub.admin.pages`; compose service
+`updater`, volume `uploads`, Caddy body limit 201 MB on `/updates/upload` only; new env
+`MDHUB_UPDATE_GITHUB_TOKEN` (in `updater.env`), `MDHUB_UPDATE_GITHUB_REPO`, `MDHUB_UPDATE_ROOT`,
+`MDHUB_UPDATE_UPLOAD_DIR`, `MDHUB_UPDATE_API_URL`. Deviations: states `draining` and `cancelled`
+(queued requests can be withdrawn); release statuses add `superseded`, and `ops.release` keeps
+the release's migrations, the version it replaced and its pre-update dump; GitHub releases are
+listed every 10 minutes into `ops.release_available` and the newest three above the running
+version are downloaded and verified ahead of time, so the console can show their migrations
+without the token (no "check now" button); uploads are verified in the console too (same
+`verify_archive`, same pinned keys) before the confirmation page, and again by the updater from
+its own copy; a rollback to the previous version does not re-verify a signature (its release
+directory and image were verified when it was installed) and, across migrations, restores the
+dump taken before the current version was installed; a restore drops and re-creates the
+database (`pg_restore --create`) and puts back `ops.update_request`, `ops.update_log`,
+`ops.release` and the missing `admin.audit_log` rows from a journal file, so the update's trail
+survives and an interrupted restore is redone; the GitHub token lives in `updater.env` because
+worker, api and migrate read all of `.env`; the updater runs as root (the docker socket is root
+anyway); it replaces itself through a one-off container of the new image; the Updates page is
+admin-only (it was a viewer page in phase B); the host layout is `releases/`, `current`,
+`archives/`, `shared/` under `MDHUB_UPDATE_ROOT`, mounted at the same path in the updater.
+
 ## 8. Open points
 
 - The admin host name and the initial allow-list: the owner's office or home IPs. A dynamic home IP needs either a wider

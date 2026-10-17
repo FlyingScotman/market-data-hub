@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Confirm update{% endblock %}
+{% block content %}
+{% if kind == 'rollback' %}
+<h1>Roll back to {{ version }}</h1>
+<section class="card">
+  <p>Running {{ running }}, installed {{ installed_at|dt }}. The updater backs up the database, switches the services back to {{ version }} and checks them.</p>
+  {% if extra is none %}
+  <p class="warn">The migrations of {{ version }} are not recorded. If the database has migrations {{ version }} does not know, the dump taken before {{ running }} was installed is restored: data loaded since then is lost until backfill reloads it.</p>
+  {% elif extra %}
+  <p class="warn">The database has {{ extra|length }} migration(s) that {{ version }} does not know ({{ extra|join(', ') }}). Rolling back restores the dump taken before {{ running }} was installed{% if backup_path %} (<code>{{ backup_path }}</code>){% endif %}: data loaded since {{ installed_at|dt }} is lost until backfill reloads it.</p>
+  {% else %}
+  <p>No migration has to be undone: the rollback switches the image tag back and takes seconds.</p>
+  {% endif %}
+  <form method="post" action="/updates/rollback" class="actions">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <button type="submit" class="danger">Roll back to {{ version }}</button>
+    <a href="/updates">Cancel</a>
+  </form>
+</section>
+{% else %}
+<h1>Install {{ version }}</h1>
+<section class="card">
+  <p>Running {{ running }}. Source: {{ 'GitHub release' if source == 'github' else 'uploaded file' }}.
+  {% if manifest %}Commit <code>{{ manifest.commit[:12] }}</code>, built {{ manifest.created_at }}, signed by key {{ key_id or '-' }}.{% endif %}
+  {% if release %}Commit <code>{{ (release.git_commit or '')[:12] }}</code>, signed by key {{ release.key_id or '-' }}.{% endif %}</p>
+  <p>The updater verifies the archive again, backs up the database, builds the image, drains the worker (at most 10 minutes), migrates, restarts the services and checks them. A failure rolls back automatically.</p>
+  {% if new_migrations %}
+  <p class="warn">This update brings {{ new_migrations|length }} new migration(s): {{ new_migrations|join(', ') }}. A rollback after they ran (automatic on a failed check, or later from this page) restores the pre-update dump: data loaded after the backup is lost until backfill reloads it.</p>
+  {% else %}
+  <p>No new migrations: a rollback only switches the image tag back.</p>
+  {% endif %}
+  {% if release and release.notes %}<details open><summary>Release notes</summary><pre>{{ release.notes }}</pre></details>{% endif %}
+  <form method="post" action="/updates/install" class="actions">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="source" value="{{ source }}">
+    <input type="hidden" name="version" value="{{ version }}">
+    {% if upload_sha256 %}<input type="hidden" name="upload_sha256" value="{{ upload_sha256 }}">{% endif %}
+    <button type="submit">Install {{ version }}</button>
+    <a href="/updates">Cancel</a>
+  </form>
+</section>
+{% endif %}
+{% endblock %}

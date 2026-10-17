@@ -1,0 +1,6 @@
+<section class="card" id="update-log"{% if req.state not in final %} hx-get="/updates/log/{{ req.id }}" hx-trigger="every 2s" hx-swap="outerHTML"{% endif %}>
+  <h2>Update {{ req.id }}: {{ req.kind }} {{ req.version }} <span class="pill {{ 'ok' if req.state == 'done' else ('bad' if req.state in ('failed', 'rolled_back') else 'warn') }}">{{ req.state }}</span></h2>
+  {% if req.error %}<p class="error">{{ req.error }}</p>{% endif %}
+  <pre>{% for l in lines %}{{ l.ts|dt }} [{{ l.step }}]{% if l.level != 'info' %} {{ l.level|upper }}{% endif %} {{ l.line }}
+{% else %}Waiting for the updater…{% endfor %}</pre>
+</section>
