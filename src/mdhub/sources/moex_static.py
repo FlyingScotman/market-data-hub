@@ -50,6 +50,18 @@ Normalization rules (documented here, tested in ``tests/test_bonds_static.py``):
   paid and future coupons, and a CBR key-rate change between the start of the first and the
   start of the last paid coupon period - a key-rate floater would have shown different paid
   rates, so only a genuinely fixed coupon passes (a floater on an unchanged key rate cannot).
+* **A "fixed" MOEX label is overridden by the schedule** (:func:`unknown_future_coupons`): an
+  *active* bond labelled fixed with known coupons (``COUPON_DETAILS`` ``Фиксированный с
+  известными купонами`` or a fixed-known ``BOND_TYPE``) whose schedule has a future coupon
+  (``pay_date > today``) with neither amount nor rate (``value`` / ``value_prc`` NULL or 0) is
+  ``variable_known``, basis ``schedule``: the issuer sets the coupon period by period, and MOEX
+  accrues the open period at a rate that need not be the one finally paid (e.g. RU000A106JX4
+  accrued at ~17 % p.a., paid 14.45 %). Consumers treat ``fixed`` as known cash flows. The
+  loader records the disagreement in ``ref.static_conflict`` (field ``coupon_type``,
+  ``moex_schedule`` vs ``moex_label``) and resolves it once every future coupon is published
+  or the bond is no longer active. A future coupon with a rate but no amount (fixed-rate
+  MBS/securitization pools: the amount depends on the face outstanding) is known, so such bonds
+  stay ``fixed``. Matured and delisted bonds keep the label.
 * **Offers** (:func:`normalize_offers`): ``0000-00-00`` -> ``offer_date`` NULL +
   ``date_missing``; type put/call/buyback/unknown from the bond's PUT/CALL/BUYBACK option
   dates, the holder submission window, then ``BOND_SUBTYPE``; status from the MOEX suffix
@@ -107,6 +119,7 @@ __all__ = [
     "fetch_description",
     "fetch_directory_one",
     "fetch_market",
+    "fixed_known_label",
     "iter_bondization_pages",
     "iter_collection_pages",
     "iter_directory_pages",
@@ -125,9 +138,10 @@ __all__ = [
     "schedule_constant_fixed",
     "settle_lag",
     "stable_view",
+    "unknown_future_coupons",
 ]
 
-PARSER_VERSION: Final = "1"
+PARSER_VERSION: Final = "2"
 
 DIRECTORY_URL: Final = "/securities.json"
 COLLECTION_URL: Final = "/securitygroups/stock_bonds/collections/stock_bonds_all/securities.json"
@@ -1170,10 +1184,13 @@ class ClassifyInput:
     struct_flag: bool | None = None
     has_description: bool = False
     is_matured: bool = False
+    is_active: bool = False
+    """Not matured and traded (or listed on a market board): ``ref.bond.status = 'active'``."""
     coupon_values: tuple[bool, ...] = ()
     """Per coupon of the schedule: does MOEX publish a value (amount or rate > 0)?"""
     coupon_rates: tuple[CouponRate, ...] = ()
-    """The schedule's periods and published rates (for :func:`schedule_constant_fixed`)."""
+    """The schedule's periods and published rates, aligned with ``coupon_values`` (both in
+    ``coupon_no`` order; for :func:`schedule_constant_fixed` / :func:`unknown_future_coupons`)."""
     has_formula: bool = False
     """A rate formula (``ref.bond_rate_formula``, any source) exists for the bond."""
     key_rate_changes: tuple[date, ...] = ()
@@ -1225,6 +1242,31 @@ def schedule_constant_fixed(
     if first_start is None or last_start is None or last_start <= first_start:
         return False
     return any(first_start < c <= last_start for c in key_rate_changes)
+
+
+def fixed_known_label(inp: ClassifyInput) -> str | None:
+    """The MOEX label saying "fixed with known coupons" (``COUPON_DETAILS``, else
+    ``BOND_TYPE``), verbatim; ``None`` when neither says so."""
+    if inp.coupon_details == DETAILS_FIXED_KNOWN:
+        return inp.coupon_details
+    if inp.bond_type in FIXED_KNOWN_BOND_TYPES:
+        return inp.bond_type
+    return None
+
+
+def unknown_future_coupons(inp: ClassifyInput) -> tuple[int, ...]:
+    """``coupon_no`` of the future coupons (``pay_date > today``) with neither amount nor rate.
+
+    Empty without ``today`` or when ``coupon_values`` and ``coupon_rates`` are not aligned."""
+    if inp.today is None or len(inp.coupon_values) != len(inp.coupon_rates):
+        return ()
+    return tuple(
+        no
+        for no, (has_value, r) in enumerate(
+            zip(inp.coupon_values, inp.coupon_rates, strict=True), start=1
+        )
+        if r.pay_date > inp.today and not has_value
+    )
 
 
 def _ofz_class(inp: ClassifyInput) -> str | None:
@@ -1279,9 +1321,11 @@ def classify_coupon_type(inp: ClassifyInput, bond_class: str) -> tuple[str, str]
 
     Order: floating evidence (MOEX floating label or COUPON_DETAILS benchmark, or any
     COUPON_BENCHMARK other than CPI on an indexed face) -> indexed face (linker) -> fixed with
-    unknown coupons -> discount -> fixed with known coupons -> OFZ series -> published
-    schedule (only when MOEX labels exist or the bond has matured; an unlabelled active bond
-    stays ``unknown`` because MOEX forward-fills floating coupons).
+    unknown coupons -> discount -> fixed with known coupons (``variable_known`` / ``schedule``
+    instead when the bond is active and a future coupon has neither amount nor rate, see
+    :func:`unknown_future_coupons`) -> OFZ series -> published schedule (only when MOEX labels
+    exist or the bond has matured; an unlabelled active bond stays ``unknown`` because MOEX
+    forward-fills floating coupons).
     """
     details = inp.coupon_details
     bench = map_benchmark(inp.coupon_benchmark, details)
@@ -1296,7 +1340,9 @@ def classify_coupon_type(inp: ClassifyInput, bond_class: str) -> tuple[str, str]
         return "variable_known", "moex_label"
     if inp.bond_type == DISCOUNT_BOND_TYPE:
         return "zero", "moex_label"
-    if details == DETAILS_FIXED_KNOWN or inp.bond_type in FIXED_KNOWN_BOND_TYPES:
+    if fixed_known_label(inp) is not None:
+        if inp.is_active and unknown_future_coupons(inp):
+            return "variable_known", "schedule"
         return "fixed", "moex_label"
     if bond_class in OFZ_CLASSES:
         return {

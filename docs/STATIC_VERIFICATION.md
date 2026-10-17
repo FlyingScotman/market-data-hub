@@ -349,6 +349,12 @@ why. Numbers refer to the run above; SECIDs are examples.
 
    *Why*: consumers treat `fixed` as known cash flows. Here the yield check had to skip 78 bonds
    (`future_coupon_unknown`), and a pricing engine would silently assume a wrong coupon.
+
+   *Done* (PARSER_VERSION 2): `moex_static.unknown_future_coupons` + `classify_coupon_type`; the
+   loader writes the conflict (`moex_schedule` vs `moex_label`) and resolves it once every future
+   coupon is published or the bond stops being active. Coupons with a rate but no amount stay
+   known, so fixed-rate MBS/securitization pools stay `fixed`. The generated tables above predate
+   the change.
 2. **Paid coupons of foreign-currency bonds are RUB amounts converted back** (3,543 coupons of 470
    FX-face bonds carry more than 2 decimals, e.g. RU000A105A95 #8 = 43.1954342 instead of the
    contractual 43.13; RU000A1064Y6 16.8632599 vs 16.88). MOEX `bondization.value` of a paid coupon is
