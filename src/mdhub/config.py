@@ -42,6 +42,12 @@ Environment variables (DESIGN §7 plus a few operational knobs):
 ``MDHUB_UPDATE_API_URL``            read API as the updater reaches it, default ``http://api:8080``
 ``MDHUB_SECRETS_PRIVATE_KEY``       worker only: X25519 private key opening the source
                                     credentials set in the console (``mdhub secrets init-key``)
+``MDHUB_HOSTMON_MOUNTS``            host mounts sampled by ``mdhub hostmon`` (comma or space
+                                    separated host paths), default ``/``
+``MDHUB_HOSTMON_*``                 Machine page thresholds (ADMIN_DESIGN §10), see the
+                                    ``hostmon_*`` fields
+``MDHUB_NTP_SERVER``                SNTP server for the clock offset, default ``pool.ntp.org``;
+                                    ``off`` = no clock check
 ``MOEX_API_KEY``                    MOEX APIM bearer token
 ``MOEX_PASSPORT_LOGIN`` / ``_PASSWORD`` MOEX Passport credentials
 ``RATESCALC_USERNAME`` / ``_PASSWORD``  Ratescalcs basic auth
@@ -73,6 +79,11 @@ class ConfigError(RuntimeError):
 def _env(name: str) -> Any:
     # Accept both the env name and the python field name (for tests / programmatic use).
     return Field(default=None, validation_alias=AliasChoices(name, name.lower()))
+
+
+def _threshold(name: str, default: float) -> Any:
+    env = f"MDHUB_HOSTMON_{name}"
+    return Field(default=default, gt=0, validation_alias=AliasChoices(env, env.lower()[6:]))
 
 
 class Settings(BaseSettings):
@@ -160,6 +171,24 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MDHUB_API_POOL_SIZE", "api_pool_size"),
     )
 
+    hostmon_mounts: str = Field(
+        default="/", validation_alias=AliasChoices("MDHUB_HOSTMON_MOUNTS", "hostmon_mounts")
+    )
+    ntp_server: str | None = Field(
+        default="pool.ntp.org", validation_alias=AliasChoices("MDHUB_NTP_SERVER", "ntp_server")
+    )
+    # Machine page thresholds (ADMIN_DESIGN §10); the states are in mdhub.hostmon.status.
+    hostmon_disk_warn_pct: float = _threshold("DISK_WARN_PCT", 80)
+    hostmon_disk_crit_pct: float = _threshold("DISK_CRIT_PCT", 90)
+    hostmon_disk_full_days: float = _threshold("DISK_FULL_DAYS", 14)
+    hostmon_mem_available_min_pct: float = _threshold("MEM_AVAILABLE_MIN_PCT", 10)
+    hostmon_swap_max_pct: float = _threshold("SWAP_MAX_PCT", 50)
+    hostmon_steal_max_pct: float = _threshold("STEAL_MAX_PCT", 10)
+    hostmon_load_per_core_max: float = _threshold("LOAD_PER_CORE_MAX", 2)
+    hostmon_clock_offset_max_s: float = _threshold("CLOCK_OFFSET_MAX_S", 1)
+    hostmon_pg_connections_max_pct: float = _threshold("PG_CONNECTIONS_MAX_PCT", 80)
+    hostmon_pg_xact_max_minutes: float = _threshold("PG_XACT_MAX_MINUTES", 30)
+
     admin_domain: str | None = _env("MDHUB_ADMIN_DOMAIN")
     admin_origin: str | None = _env("MDHUB_ADMIN_ORIGIN")
     admin_allow_cidrs: str | None = _env("MDHUB_ADMIN_ALLOW_CIDRS")
@@ -234,6 +263,14 @@ class Settings(BaseSettings):
     @classmethod
     def _blank_is_none(cls, value: Any) -> Any:
         if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("ntp_server", mode="before")
+    @classmethod
+    def _ntp_off(cls, value: Any) -> Any:
+        # An empty env value is ignored (env_ignore_empty), so "off" disables the clock check.
+        if isinstance(value, str) and value.strip().lower() in {"", "off", "none"}:
             return None
         return value
 

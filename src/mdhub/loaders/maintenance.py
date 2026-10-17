@@ -19,10 +19,10 @@
     (incl. backfill ``*_history`` captures) fetched before the window start (00:00 MSK); then
     deletes observability rows older than ``MDHUB_OPS_LOG_RETENTION_DAYS`` (default 90,
     :data:`OPS_LOG_TABLES`: ``ops.api_request``, ``ops.source_probe``,
-    ``ops.worker_heartbeat``). Then runs ``VACUUM (ANALYZE)`` (autocommit, outside a
-    transaction) on ``ops.raw_capture`` and every table in ``ops``/``ref``/``md`` larger than
-    ``vacuum_min_mb``. Other EOD/static raw
-    is kept forever.
+    ``ops.worker_heartbeat``) and machine metrics (:data:`HOST_METRIC_RETENTION`: raw 7 days
+    after rolling them up, the 5-minute rollup 90 days). Then runs ``VACUUM (ANALYZE)``
+    (autocommit, outside a transaction) on ``ops.raw_capture`` and every table in
+    ``ops``/``ref``/``md`` larger than ``vacuum_min_mb``. Other EOD/static raw is kept forever.
 
     Row history: ``ops.track_changes()`` is an ``AFTER UPDATE`` trigger, so the retention
     ``DELETE`` writes no ``ops.row_history`` rows (no churn); history images of rows before the
@@ -77,6 +77,7 @@ __all__ = [
     "is_intraday_endpoint",
     "maintenance",
     "purge_algopack_window",
+    "purge_host_metrics",
     "purge_intraday_raw",
     "purge_ops_logs",
     "purge_raw_endpoints",
@@ -107,6 +108,8 @@ OPS_LOG_TABLES: Final = (
     ("ops.worker_heartbeat", "beat_at"),
 )
 """Observability tables (ADMIN_DESIGN §3.2) and their timestamp column for retention."""
+HOST_METRIC_RETENTION: Final = (("ops.host_metric", "ts", 7), ("ops.host_metric_5m", "bucket", 90))
+"""Machine metrics (ADMIN_DESIGN §10): raw samples 7 days, 5-minute rollup 90 days."""
 
 
 def is_intraday_endpoint(endpoint: str) -> bool:
@@ -417,6 +420,24 @@ def purge_raw_requested_before(
     return _purge_raw(db, match, [source, list(endpoints), _TILL_DATE, before], batch)
 
 
+def _purge_older(
+    db: Database, table: str, column: str, days: int, batch: int = DELETE_BATCH
+) -> int:
+    """Delete rows of ``table`` with ``column`` older than ``days`` (each batch committed)."""
+    schema, name = table.split(".", 1)
+    query = sql.SQL(
+        "DELETE FROM {t} WHERE ctid = ANY(ARRAY("
+        "SELECT ctid FROM {t} WHERE {c} < now() - make_interval(days => %s) LIMIT %s))"
+    ).format(t=sql.Identifier(schema, name), c=sql.Identifier(column))
+    total = 0
+    while True:
+        with db.connection() as conn:
+            n = conn.execute(query, (days, batch)).rowcount
+        total += n
+        if n < batch:
+            return total
+
+
 def purge_ops_logs(
     db: Database, retention_days: int, *, batch: int = DELETE_BATCH
 ) -> dict[str, int]:
@@ -424,22 +445,20 @@ def purge_ops_logs(
     committed separately, by the indexed timestamp column); returns rows deleted per table."""
     if retention_days < 1:
         raise JobParamError("ops log retention must be >= 1 day")
-    out: dict[str, int] = {}
-    for table, column in OPS_LOG_TABLES:
-        schema, name = table.split(".", 1)
-        query = sql.SQL(
-            "DELETE FROM {t} WHERE ctid = ANY(ARRAY("
-            "SELECT ctid FROM {t} WHERE {c} < now() - make_interval(days => %s) LIMIT %s))"
-        ).format(t=sql.Identifier(schema, name), c=sql.Identifier(column))
-        total = 0
-        while True:
-            with db.connection() as conn:
-                n = conn.execute(query, (retention_days, batch)).rowcount
-            total += n
-            if n < batch:
-                break
-        out[table] = total
-    return out
+    return {
+        table: _purge_older(db, table, column, retention_days, batch)
+        for table, column in OPS_LOG_TABLES
+    }
+
+
+def purge_host_metrics(db: Database, *, batch: int = DELETE_BATCH) -> dict[str, int]:
+    """Roll up what is not rolled up yet, then apply :data:`HOST_METRIC_RETENTION`."""
+    with db.connection() as conn:
+        conn.execute("SELECT ops.host_metric_rollup()")
+    return {
+        table: _purge_older(db, table, column, days, batch)
+        for table, column, days in HOST_METRIC_RETENTION
+    }
 
 
 def vacuum_tables(db: Database, *, min_mb: int = 64) -> list[str]:
@@ -533,6 +552,7 @@ def maintenance(
             )
             result["raw_deleted"] = None
         result["ops_logs_deleted"] = purge_ops_logs(ctx.db, ops_days)
+        result["host_metrics_deleted"] = purge_host_metrics(ctx.db)
         ctx.logger.info(
             "raw retention: deleted %s intraday capture(s); algopack window %s",
             result["raw_deleted"],

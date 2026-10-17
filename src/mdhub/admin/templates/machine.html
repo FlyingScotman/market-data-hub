@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Machine{% endblock %}
+{% block content %}
+<h1>Machine</h1>
+<p class="row tight">
+  History:
+  {% for key, text in [("24h", "24 hours"), ("7d", "7 days")] %}
+  <a href="/machine?range={{ key }}"{% if range == key %} aria-current="page"{% endif %}>{{ text }}</a>
+  {% endfor %}
+  <span class="small">Updated {{ m.now|dt }} UTC. History from the 5-minute rollup.</span>
+</p>
+{% for area, state, rows in areas %}
+<section class="card">
+  <h2>{{ area }} <span class="pill {{ state }}">{{ state }}</span></h2>
+  <table>
+    <thead><tr><th>Check</th><th>Value</th><th>State</th><th>{{ '24 h' if range == '24h' else '7 d' }}</th><th>Detail</th></tr></thead>
+    <tbody>
+    {% for c, spark in rows %}
+    <tr>
+      <td>{{ c.label }}</td>
+      <td class="num">{{ c.value|metric(c.unit) }}</td>
+      <td><span class="pill {{ c.state }}">{{ c.state }}</span></td>
+      <td>{{ spark if spark else '' }}</td>
+      <td class="small">{{ c.note }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5">No data{% if area == 'PostgreSQL' %} (the worker samples every minute){% else %} (is the hostmon service running?){% endif %}.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endfor %}
+<section class="card">
+  <h2>Containers <span class="pill {{ m.area_state('Containers') }}">{{ m.area_state('Containers') }}</span></h2>
+  {% if not m.containers_reporting %}
+  <p class="warn">Updater not reporting: container status comes from the updater, the only process with the docker socket{% if m.containers %} (last report {{ (m.containers|map(attribute='updated_at')|max)|ago(m.now) }}){% endif %}.</p>
+  {% endif %}
+  {% if m.containers %}
+  <table>
+    <thead><tr><th>Container</th><th>State</th><th>Health</th><th>Restarts</th><th>Up since</th><th>Image</th><th>CPU</th><th>Memory</th></tr></thead>
+    <tbody>
+    {% for c in m.containers %}
+    <tr>
+      <td>{{ c.name }}</td>
+      <td><span class="pill {{ m.container_states[c.name] }}">{{ c.state }}</span></td>
+      <td>{{ c.health or '-' }}</td><td class="num">{{ c.restart_count }}</td>
+      <td>{{ c.started_at|ago(m.now) if c.started_at else '-' }}</td><td><code>{{ c.image or '-' }}</code></td>
+      <td class="num">{{ c.cpu_pct|metric('pct') }}</td>
+      <td class="num">{{ c.mem_bytes|metric('bytes') }}{% if c.mem_limit_bytes %} / {{ c.mem_limit_bytes|metric('bytes') }}{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</section>
+<section class="card">
+  <h2>Charts ({{ '24 hours' if range == '24h' else '7 days' }})</h2>
+  <div class="charts">
+  {% for c, svg in charts %}
+    <figure><figcaption>{{ c.area }}: {{ c.label }}</figcaption>{{ svg }}</figure>
+  {% else %}
+    <p>No history yet.</p>
+  {% endfor %}
+  </div>
+  <p class="small">Line: 5-minute average; light line: peak; dashed: threshold.</p>
+</section>
+{% endblock %}

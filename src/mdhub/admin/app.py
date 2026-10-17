@@ -29,7 +29,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse,
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from mdhub import __version__
-from mdhub.admin import auth, credentials, pages
+from mdhub.admin import auth, credentials, machine, pages
 from mdhub.admin.web import (
     AdminConfig,
     Asset,
@@ -215,6 +215,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     app.include_router(auth.router)
     app.include_router(pages.router)
     app.include_router(credentials.router)
+    app.include_router(machine.router)
     return app
 
 

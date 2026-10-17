@@ -23,6 +23,7 @@ dependencies = [
   "argon2-cffi>=23.1,<26",
   "webauthn>=2.2,<3",
   "python-multipart>=0.0.9",
+  "psutil>=6,<8",
 ]
 
 [project.scripts]
@@ -95,7 +96,7 @@ mypy_path = "src"
 packages = ["mdhub"]
 
 [[tool.mypy.overrides]]
-module = ["apscheduler.*", "pgserver.*"]
+module = ["apscheduler.*", "pgserver.*", "psutil.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

@@ -2,7 +2,7 @@
 #
 #   cd deploy && cp env.example .env && $EDITOR .env
 #   docker compose up -d --build            # postgres, migrate (one-shot), worker, api, admin,
-#                                           # updater
+#                                           # updater, hostmon
 #   docker compose --profile tls up -d      # + Caddy TLS reverse proxy for the API and console
 #
 # Postgres and the API are published on 127.0.0.1 only; expose the API publicly through
@@ -40,6 +40,22 @@ x-mdhub: &mdhub
     MDHUB_DATABASE_URL: postgresql://${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-mdhub}
     MDHUB_BACKUP_DIR: /var/backups/mdhub
     MDHUB_SECRETS_PRIVATE_KEY: ""
+
+# Machine page settings (ADMIN_DESIGN §10): hostmon samples, the console classifies.
+# Empty values fall back to the defaults of mdhub.config.Settings.
+x-hostmon-env: &hostmon-env
+  MDHUB_HOSTMON_MOUNTS: ${MDHUB_HOSTMON_MOUNTS:-}
+  MDHUB_NTP_SERVER: ${MDHUB_NTP_SERVER:-}
+  MDHUB_HOSTMON_DISK_WARN_PCT: ${MDHUB_HOSTMON_DISK_WARN_PCT:-}
+  MDHUB_HOSTMON_DISK_CRIT_PCT: ${MDHUB_HOSTMON_DISK_CRIT_PCT:-}
+  MDHUB_HOSTMON_DISK_FULL_DAYS: ${MDHUB_HOSTMON_DISK_FULL_DAYS:-}
+  MDHUB_HOSTMON_MEM_AVAILABLE_MIN_PCT: ${MDHUB_HOSTMON_MEM_AVAILABLE_MIN_PCT:-}
+  MDHUB_HOSTMON_SWAP_MAX_PCT: ${MDHUB_HOSTMON_SWAP_MAX_PCT:-}
+  MDHUB_HOSTMON_STEAL_MAX_PCT: ${MDHUB_HOSTMON_STEAL_MAX_PCT:-}
+  MDHUB_HOSTMON_LOAD_PER_CORE_MAX: ${MDHUB_HOSTMON_LOAD_PER_CORE_MAX:-}
+  MDHUB_HOSTMON_CLOCK_OFFSET_MAX_S: ${MDHUB_HOSTMON_CLOCK_OFFSET_MAX_S:-}
+  MDHUB_HOSTMON_PG_CONNECTIONS_MAX_PCT: ${MDHUB_HOSTMON_PG_CONNECTIONS_MAX_PCT:-}
+  MDHUB_HOSTMON_PG_XACT_MAX_MINUTES: ${MDHUB_HOSTMON_PG_XACT_MAX_MINUTES:-}
 
 services:
   postgres:
@@ -140,6 +156,7 @@ services:
       - --no-server-header
       - --workers=1
     environment:
+      <<: *hostmon-env
       MDHUB_DATABASE_URL: postgresql://${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-mdhub}
       MDHUB_ADMIN_DOMAIN: ${MDHUB_ADMIN_DOMAIN:-}
       MDHUB_ADMIN_ORIGIN: ${MDHUB_ADMIN_ORIGIN:-}
@@ -196,6 +213,25 @@ services:
       - uploads:/var/lib/mdhub/uploads
       - ${MDHUB_BACKUP_HOST_DIR:-./backups}:/var/backups/mdhub
     stop_grace_period: 30s
+
+  hostmon:
+    <<: *mdhub-image
+    # Host sampler for the Machine page (ADMIN_DESIGN §10): reads the host through read-only
+    # mounts like node_exporter. No docker socket, no env_file (no credentials), no port.
+    # Host network so /proc/net shows the host's interfaces (and the SNTP query leaves from
+    # the host); it reaches PostgreSQL on its published 127.0.0.1 port.
+    command: ["mdhub", "hostmon"]
+    network_mode: host
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      <<: *hostmon-env
+      MDHUB_DATABASE_URL: postgresql://${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@127.0.0.1:${MDHUB_PG_HOST_PORT:-5432}/${POSTGRES_DB:-mdhub}
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro,rslave
     depends_on:
       postgres:
         condition: service_healthy

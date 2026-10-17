@@ -312,6 +312,27 @@ the admin role but no step-up; `verify_result` ∈ {ok, rejected, unreachable} i
 every source; MOEX Passport has no probe); `rotate-key` re-seals in one transaction and prints
 the new key, and until the worker restarts with it, jobs fall back to `.env`.
 
+**Phase F status (2026-10-17):** implemented except the updater side. Migration
+`0750_ops_host_metric` (`ops.host_metric`, `ops.host_metric_5m` with `ops.host_metric_rollup()`,
+`ops.v_host_status`, `ops.container_status`); code in `mdhub.hostmon` (`sampler`: psutil and
+`/host/proc`, `/host/sys`, `/rootfs` with fallback to the local `/proc`; `pgstats`; `status`:
+thresholds and states), `mdhub hostmon [--once]`, the Machine page (`mdhub.admin.machine`,
+inline SVG) and four Overview lights (Machine, Disks, PostgreSQL, Containers); compose service
+`hostmon`; new env `MDHUB_HOSTMON_MOUNTS`, `MDHUB_NTP_SERVER` and the ten `MDHUB_HOSTMON_*`
+thresholds. Deviations: `ops.v_host_status` gives the latest value per series of the last
+10 minutes; the states are computed in `mdhub.hostmon.status`, since the thresholds are settings
+(the `admin` service therefore also gets `MDHUB_HOSTMON_*` and `MDHUB_NTP_SERVER`); the rollup
+runs from hostmon every 5 minutes and from `maintenance` before retention; PostgreSQL metrics
+(`pg.*`) share `ops.host_metric`; WAL is the generation rate from `pg_stat_wal` (the size of
+`pg_wal` needs `pg_ls_waldir`, which is not `pg_stat_*`); query texts are not stored; hostmon
+runs with `network_mode: host` (so `/proc/net` is the host's) and reaches PostgreSQL on its
+published 127.0.0.1 port; the SNTP query runs every 5 minutes, not every 30 s. For phase D:
+the updater upserts one `ops.container_status` row per container every 30 s (`state` as docker
+reports it, `restart_count`, `started_at`, `image` with tag, `cpu_pct`, `mem_bytes`,
+`mem_limit_bytes`, `updated_at = now()`); rows older than 2 minutes show "updater not
+reporting"; a container restarted in the last hour (`restart_count > 0` and `started_at` within
+the hour) is a warning.
+
 ## 8. Open points
 
 - The admin host name and the initial allow-list: the owner's office or home IPs. A dynamic home IP needs either a wider

@@ -77,3 +77,17 @@ form.inline { display: inline; }
 .secret { display: block; padding: 10px; background: var(--bg); border: 1px dashed var(--line); border-radius: 6px; word-break: break-all; white-space: pre-wrap; cursor: copy; }
 .secret.copied { border-color: var(--ok); }
 details { margin: 12px 0; }
+.light.crit { border-left-color: var(--bad); }
+.pill.crit { background: var(--bad-bg); color: var(--bad); }
+.row.tight a[aria-current="page"] { font-weight: 700; text-decoration: none; color: var(--fg); }
+svg.spark, svg.chart { display: block; overflow: visible; }
+svg .avg { fill: none; stroke: var(--accent); stroke-width: 1.5; }
+svg circle.avg { fill: var(--accent); }
+svg .peak { fill: none; stroke: var(--muted); stroke-opacity: .45; stroke-width: 1; }
+svg circle.peak { fill: var(--muted); }
+svg .limit { stroke: var(--warn); stroke-dasharray: 4 3; }
+svg text { fill: var(--muted); font-size: 10px; }
+svg.chart { width: 100%; max-width: 560px; height: auto; border-bottom: 1px solid var(--line); }
+.charts { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+.charts figure { margin: 0; }
+.charts figcaption { font-size: 12px; color: var(--muted); margin-bottom: 4px; }

@@ -27,6 +27,8 @@ from mdhub.core.heartbeat import Heartbeat
 from mdhub.core.redact import SecretRedactingFilter
 from mdhub.db.migrate import MigrationError, applied_migrations, discover_migrations, migrate
 from mdhub.db.pool import Database
+from mdhub.hostmon import pgstats
+from mdhub.hostmon.pgstats import PgStatsSampler
 from mdhub.jobs import (
     REGISTRY,
     JobParamError,
@@ -210,7 +212,8 @@ def scheduler_cmd(
     running in this process, and runs the job requests of the admin console
     (``ops.job_request``, :mod:`mdhub.job_requests`). With ``MDHUB_SECRETS_PRIVATE_KEY`` it
     publishes its public key and uses the source credentials set in the console
-    (:mod:`mdhub.credentials`)."""
+    (:mod:`mdhub.credentials`). It also samples the PostgreSQL statistics for the Machine page
+    every minute (:mod:`mdhub.hostmon.pgstats`)."""
     settings = _settings()
     report = discover_jobs()
     for module, err in report.failed.items():
@@ -226,6 +229,9 @@ def scheduler_cmd(
         log.exception("could not reap orphaned job runs")
     store = _credentials(settings, db, worker=True)
     scheduler = build_scheduler(settings, db, calendar=DbCalendar(db), max_workers=max_workers)
+    scheduler.add_job(
+        PgStatsSampler(db).run_once, "interval", seconds=pgstats.INTERVAL_S, id="pgstats"
+    )
 
     def _stop(signum: int, _frame: FrameType | None) -> None:
         log.info("signal %d: shutting down scheduler", signum)
