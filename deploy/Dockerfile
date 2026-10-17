@@ -72,13 +72,16 @@ RUN set -eux; \
     install -d -o mdhub -g mdhub -m 0750 /var/backups/mdhub
 
 COPY --from=build --chown=mdhub:mdhub /app/.venv /app/.venv
+# Pinned release keys (README_DEPLOY §11), root-owned: read-only for the mdhub user.
+COPY deploy/release-keys /app/release-keys
 ENV PATH=/app/.venv/bin:$PATH \
     VIRTUAL_ENV=/app/.venv \
-    MDHUB_BACKUP_DIR=/var/backups/mdhub
+    MDHUB_BACKUP_DIR=/var/backups/mdhub \
+    MDHUB_RELEASE_KEYS_DIR=/app/release-keys
 WORKDIR /app
 USER mdhub
 
-RUN mdhub --version
+RUN mdhub --version && mdhub release keys
 
 EXPOSE 8080
 CMD ["mdhub", "scheduler"]

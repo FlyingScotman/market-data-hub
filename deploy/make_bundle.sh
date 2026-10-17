@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
-# Build the deployable archive: code (git archive HEAD) + seed dump + seed report + manifest.
+# Build the deployable archive: code (git archive HEAD) + seed dump + seed report + manifest,
+# or with --code-only the release bundle: code + MANIFEST.json + SHA256SUMS, no database.
 #
 #   deploy/make_bundle.sh --database-url URL [--out-dir DIR] [--date YYYYMMDD] [--allow-dirty]
 #   MDHUB_BUNDLE_DATABASE_URL=URL deploy/make_bundle.sh      # or MDHUB_DATABASE_URL
+#   deploy/make_bundle.sh --code-only [--version X.Y.Z] [--out-dir DIR] [--allow-dirty]
 #
-# Writes DIR/market-data-hub-<YYYYMMDD>.tar.gz (default DIR: dist/) and its .sha256. The archive
-# has one top-level directory mdhub/:
+# --code-only (ADMIN_DESIGN §6.1) writes DIR/market-data-hub-<version>.tar.gz and
+# DIR/market-data-hub-<version>.SHA256SUMS (a copy of mdhub/SHA256SUMS: the file to sign,
+# minisign -S -> .SHA256SUMS.minisig). The archive holds the git archive of HEAD,
+# mdhub/MANIFEST.json (`mdhub release manifest`: version, commit, migrations with checksums,
+# min_previous_version) and mdhub/SHA256SUMS. The version is --version, else the v* tag on HEAD,
+# else the installed package version (importlib.metadata). Check it: `mdhub release verify`.
+#
+# The full bundle writes DIR/market-data-hub-<YYYYMMDD>.tar.gz (default DIR: dist/) and its
+# .sha256. The archive has one top-level directory mdhub/:
 #   mdhub/...                   git archive of HEAD (refused if the work tree is dirty unless
 #                               --allow-dirty; uncommitted changes are never in the archive)
 #   mdhub/db/mdhub.dump         pg_dump -Fc --no-owner --no-acl (pg_dump 16) of the database
@@ -30,18 +39,29 @@ url="${MDHUB_BUNDLE_DATABASE_URL:-${MDHUB_DATABASE_URL:-}}"
 out_dir="$ROOT/dist"
 stamp="$(date -u +%Y%m%d)"
 allow_dirty=0
+code_only=0
+version=""
+VERSION_RE='^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$'
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --database-url) [[ $# -ge 2 ]] || die "--database-url needs a value"; url="$2"; shift 2 ;;
         --out-dir) [[ $# -ge 2 ]] || die "--out-dir needs a value"; out_dir="$2"; shift 2 ;;
         --date) [[ $# -ge 2 ]] || die "--date needs a value"; stamp="$2"; shift 2 ;;
+        --version) [[ $# -ge 2 ]] || die "--version needs a value"; version="$2"; shift 2 ;;
+        --code-only) code_only=1; shift ;;
         --allow-dirty) allow_dirty=1; shift ;;
-        -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,29p' "$0"; exit 0 ;;
         *) die "unknown argument: $1 (see --help)" ;;
     esac
 done
-[[ -n "$url" ]] || die "no database: pass --database-url or set MDHUB_BUNDLE_DATABASE_URL"
-[[ "$stamp" =~ ^[0-9]{8}$ ]] || die "--date: expected YYYYMMDD, got $stamp"
+if [[ "$code_only" == 1 ]]; then
+    [[ -z "$version" || "$version" =~ $VERSION_RE ]] \
+        || die "--version: expected X.Y.Z or X.Y.Z{a|b|rc}N, got $version"
+else
+    [[ -z "$version" ]] || die "--version applies to --code-only only"
+    [[ -n "$url" ]] || die "no database: pass --database-url or set MDHUB_BUNDLE_DATABASE_URL"
+    [[ "$stamp" =~ ^[0-9]{8}$ ]] || die "--date: expected YYYYMMDD, got $stamp"
+fi
 
 # ------------------------------------------------------------------------------ git state
 git rev-parse --is-inside-work-tree >/dev/null 2>&1 || die "$ROOT is not a git work tree"
@@ -53,6 +73,109 @@ if [[ -n "$dirty" ]]; then
         die "work tree is dirty (commit first, or --allow-dirty to bundle HEAD anyway)"
     fi
     echo "warning: work tree is dirty; the bundle contains HEAD ${commit:0:12} only" >&2
+fi
+
+# ------------------------------------------------------------------------------ common
+if [[ -z "${MDHUB_CMD:-}" ]]; then
+    if [[ -x "$ROOT/.venv/bin/mdhub" ]]; then MDHUB_CMD="$ROOT/.venv/bin/mdhub"; else MDHUB_CMD="uv run --frozen mdhub"; fi
+fi
+if command -v sha256sum >/dev/null; then SHA256="sha256sum"; else SHA256="shasum -a 256"; fi
+sha_of() { $SHA256 "$1" | cut -d' ' -f1; }
+size_of() { wc -c <"$1" | tr -d ' '; }
+
+mkdir -p "$out_dir"
+out_dir="$(cd "$out_dir" && pwd)"
+work="$(mktemp -d "${TMPDIR:-/tmp}/mdhub-bundle.XXXXXX")"
+stage="$work/stage/mdhub"
+holder_pid=""
+cleanup() {
+    if [[ -n "$holder_pid" ]]; then
+        exec 3>&- 2>/dev/null || true
+        kill "$holder_pid" 2>/dev/null || true
+        wait "$holder_pid" 2>/dev/null || true
+    fi
+    rm -rf "${work:?}"
+}
+trap cleanup EXIT
+
+stage_code() {
+    log "git archive ${commit:0:12}"
+    mkdir -p "$stage"
+    git archive --format=tar HEAD | tar -x -C "$stage"
+}
+
+write_sums() { # mdhub/SHA256SUMS: every other file in mdhub/, sorted, sha256sum -c format
+    log "SHA256SUMS"
+    (
+        cd "$stage"
+        find . -type f ! -name SHA256SUMS | sed 's|^\./||' | LC_ALL=C sort | tr '\n' '\0' \
+            | xargs -0 $SHA256 >"$work/SHA256SUMS"
+    )
+    mv "$work/SHA256SUMS" "$stage/SHA256SUMS"
+}
+
+make_archive() { # $1 = output .tar.gz (owner root, no macOS metadata)
+    log "archive $1"
+    local tar_opts
+    if tar --version 2>/dev/null | grep 'GNU tar' >/dev/null; then
+        tar_opts=(--owner=0 --group=0 --numeric-owner)
+    else
+        tar_opts=(--uid 0 --gid 0 --uname root --gname root --no-xattrs --no-mac-metadata)
+    fi
+    COPYFILE_DISABLE=1 tar "${tar_opts[@]}" -C "$work/stage" -czf "$1.partial" mdhub
+    mv "$1.partial" "$1"
+}
+
+FORBIDDEN_RE='(^|/)\.env$|(^|/)\.env\.|^mdhub/data/|(^|/)\.handoff/|(^|/)\.venv/|(^|/)\.git/|(^|/)__pycache__/|\.pyc$|\.sqlite3|^mdhub/dist/|(^|/)\._|\.DS_Store|^mdhub/deploy/backups/|^mdhub/deploy/seed/.+\.dump$|(^|/)\.(pytest|mypy|ruff)_cache/'
+
+check_listing() { # $1 = archive, $2 = extra forbidden regex ('' for none), then required paths
+    local archive="$1" extra="$2" forbidden required
+    shift 2
+    log "verifying the archive listing"
+    listing="$(tar -tzf "$archive")"
+    forbidden="$(printf '%s\n' "$listing" | grep -E "${FORBIDDEN_RE}${extra:+|$extra}" || true)"
+    if [[ -n "$forbidden" ]]; then
+        rm -f "$archive"
+        echo "$forbidden" >&2
+        die "forbidden paths in the archive (removed it)"
+    fi
+    for required in "$@"; do
+        grep -qx "$required" <<<"$listing" || die "missing in the archive: $required"
+    done
+}
+
+# ------------------------------------------------------------------------------ code-only
+if [[ "$code_only" == 1 ]]; then
+    if [[ -z "$version" ]]; then
+        tag="$(git describe --tags --exact-match --match 'v[0-9]*' HEAD 2>/dev/null || true)"
+        [[ -z "$tag" ]] || version="${tag#v}"
+    fi
+    stage_code
+    log "manifest"
+    if [[ -n "$version" ]]; then
+        version="$($MDHUB_CMD release manifest --root "$stage" --commit "$commit" --version "$version")" \
+            || die "mdhub release manifest failed"
+    else
+        version="$($MDHUB_CMD release manifest --root "$stage" --commit "$commit")" \
+            || die "mdhub release manifest failed"
+    fi
+    [[ "$version" =~ $VERSION_RE ]] \
+        || die "not a release version: '$version' (tag HEAD vX.Y.Z or pass --version)"
+    write_sums
+    name="market-data-hub-${version}"
+    out="$out_dir/${name}.tar.gz"
+    rm -f "$out_dir/${name}.SHA256SUMS" "$out_dir/${name}.SHA256SUMS.minisig"
+    make_archive "$out"
+    check_listing "$out" '^mdhub/db/|^mdhub/SEED_REPORT\.md$|^mdhub/MANIFEST\.txt$' \
+        mdhub/MANIFEST.json mdhub/SHA256SUMS mdhub/pyproject.toml mdhub/uv.lock \
+        mdhub/src/mdhub/cli.py mdhub/src/mdhub/db/migrate.py
+    cp "$stage/SHA256SUMS" "$out_dir/${name}.SHA256SUMS"
+
+    echo "bundle:   $out ($(size_of "$out") bytes, $(printf '%s\n' "$listing" | grep -vc '/$') files)"
+    echo "sums:     $out_dir/${name}.SHA256SUMS (sign it with minisign -S, README_DEPLOY §11)"
+    echo "version:  ${version}"
+    echo "commit:   ${commit}$([[ -n "$dirty" ]] && echo ' (work tree dirty, not included)')"
+    exit 0
 fi
 
 # ------------------------------------------------------------------------------ tools
@@ -73,38 +196,14 @@ fi
 PSQL="$PG_BIN/psql"
 PG_DUMP="$PG_BIN/pg_dump"
 
-if [[ -z "${MDHUB_CMD:-}" ]]; then
-    if [[ -x "$ROOT/.venv/bin/mdhub" ]]; then MDHUB_CMD="$ROOT/.venv/bin/mdhub"; else MDHUB_CMD="uv run --frozen mdhub"; fi
-fi
-if command -v sha256sum >/dev/null; then SHA256="sha256sum"; else SHA256="shasum -a 256"; fi
-sha_of() { $SHA256 "$1" | cut -d' ' -f1; }
-size_of() { wc -c <"$1" | tr -d ' '; }
-
 server_major="$("$PSQL" -X -q -A -t -v ON_ERROR_STOP=1 -d "$url" -c "SELECT current_setting('server_version_num')::int / 10000")" \
     || die "cannot connect to the database"
 [[ "$server_major" == 16 ]] || die "source server is PostgreSQL $server_major, expected 16"
 
 # ------------------------------------------------------------------------------ staging
-mkdir -p "$out_dir"
-out_dir="$(cd "$out_dir" && pwd)"
 name="market-data-hub-${stamp}"
 out="$out_dir/${name}.tar.gz"
-work="$(mktemp -d "${TMPDIR:-/tmp}/mdhub-bundle.XXXXXX")"
-stage="$work/stage/mdhub"
-holder_pid=""
-cleanup() {
-    if [[ -n "$holder_pid" ]]; then
-        exec 3>&- 2>/dev/null || true
-        kill "$holder_pid" 2>/dev/null || true
-        wait "$holder_pid" 2>/dev/null || true
-    fi
-    rm -rf "${work:?}"
-}
-trap cleanup EXIT
-
-log "git archive ${commit:0:12}"
-mkdir -p "$stage"
-git archive --format=tar HEAD | tar -x -C "$stage"
+stage_code
 code_files="$(find "$stage" -type f | wc -l | tr -d ' ')"
 code_bytes="$(find "$stage" -type f -exec cat {} + | wc -c | tr -d ' ')"
 mkdir -p "$stage/db"
@@ -202,39 +301,13 @@ dump_sha="$(sha_of "$stage/db/mdhub.dump")"
     echo "restore: see deploy/README_DEPLOY.md (deploy/restore_seed.sh [--database-url URL])"
 } >"$stage/MANIFEST.txt"
 
-log "SHA256SUMS"
-(
-    cd "$stage"
-    find . -type f ! -name SHA256SUMS | sed 's|^\./||' | LC_ALL=C sort | tr '\n' '\0' \
-        | xargs -0 $SHA256 >"$work/SHA256SUMS"
-)
-mv "$work/SHA256SUMS" "$stage/SHA256SUMS"
+write_sums
 
 # ------------------------------------------------------------------------------ archive
-log "archive ${out}"
-if tar --version 2>/dev/null | grep 'GNU tar' >/dev/null; then
-    tar_opts=(--owner=0 --group=0 --numeric-owner)
-else
-    tar_opts=(--uid 0 --gid 0 --uname root --gname root --no-xattrs --no-mac-metadata)
-fi
-COPYFILE_DISABLE=1 tar "${tar_opts[@]}" -C "$work/stage" -czf "$out.partial" mdhub
-mv "$out.partial" "$out"
-
-log "verifying the archive listing"
-listing="$(tar -tzf "$out")"
-forbidden="$(printf '%s\n' "$listing" | grep -E \
-    '(^|/)\.env$|(^|/)\.env\.|^mdhub/data/|(^|/)\.handoff/|(^|/)\.venv/|(^|/)\.git/|(^|/)__pycache__/|\.pyc$|\.sqlite3|^mdhub/dist/|(^|/)\._|\.DS_Store|^mdhub/deploy/backups/|^mdhub/deploy/seed/.+\.dump$|(^|/)\.(pytest|mypy|ruff)_cache/' \
-    || true)"
-if [[ -n "$forbidden" ]]; then
-    rm -f "$out"
-    echo "$forbidden" >&2
-    die "forbidden paths in the archive (removed it)"
-fi
-for required in mdhub/db/mdhub.dump mdhub/db/mdhub.dump.sha256 mdhub/SEED_REPORT.md \
+make_archive "$out"
+check_listing "$out" '' mdhub/db/mdhub.dump mdhub/db/mdhub.dump.sha256 mdhub/SEED_REPORT.md \
     mdhub/MANIFEST.txt mdhub/SHA256SUMS mdhub/pyproject.toml mdhub/uv.lock \
-    mdhub/deploy/restore_seed.sh mdhub/src/mdhub/cli.py; do
-    grep -qx "$required" <<<"$listing" || die "missing in the archive: $required"
-done
+    mdhub/deploy/restore_seed.sh mdhub/src/mdhub/cli.py
 (cd "$out_dir" && $SHA256 "$(basename "$out")" >"$(basename "$out").sha256")
 
 echo "bundle:   $out ($(size_of "$out") bytes, $(printf '%s\n' "$listing" | grep -vc '/$') files)"

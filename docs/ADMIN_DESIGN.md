@@ -174,6 +174,8 @@ tokens are random values, not signed blobs. Rotating the key re-encrypts the sec
   in `deploy/release-keys/`, and a key list allows rotation. GitHub uploads the archive, `SHA256SUMS` and
   `.minisig` to the Release.
 - **Uploaded files** go through exactly the same check. An unsigned archive or a signature from an unknown key is refused.
+  The signature is detached, so an upload is the archive plus its `market-data-hub-X.Y.Z.SHA256SUMS.minisig`.
+  Implemented in Phase C: `mdhub.release.verify_archive` and `mdhub release verify`, documented in README_DEPLOY §11.
   There is no override switch in the UI; the only override is a CLI flag on the server.
 - The version comes from git tags (`hatch-vcs`). It replaces the hard-coded `0.1.0` and shows up in `/health/ready`, the
   console and every heartbeat.
