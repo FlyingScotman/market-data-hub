@@ -368,7 +368,12 @@ install the next release by hand (§8) after checking it with minisign and the n
 The console (ADMIN_DESIGN §4-5) is the `admin` service: `uvicorn mdhub.admin.app:app` on
 port 8081 inside the compose network, reachable only through Caddy on its own host name. It
 shows jobs, data coverage and gaps, sources, API traffic, tokens, users and the audit trail;
-operators can run a job, retry a failed backfill task and mark a gap not expected.
+operators can request a job run, retry a failed backfill task and mark a gap not expected.
+The console holds no source credentials: compose gives it an explicit environment (database
+URL, `MDHUB_ADMIN_*`, log level, time zone) instead of `.env`, and a requested run is a row in
+`ops.job_request` that the worker picks up within about 5 seconds and runs like any other run
+(trigger `admin` in `ops.job_run`). A worker that dies mid-run has its requests requeued once
+by the next worker.
 
 1. DNS: point `admin.example.com` at the VPS.
 2. `.env`: `MDHUB_ADMIN_DOMAIN=admin.example.com`, `MDHUB_ADMIN_ALLOW_CIDRS="203.0.113.7/32"`
@@ -401,7 +406,8 @@ the TOTP secrets and prints the new `MDHUB_ADMIN_SECRET_KEY`; put it into `.env`
 (they are bound to the host name): reset each user afterwards.
 
 Bare metal: run `uvicorn mdhub.admin.app:app --host 127.0.0.1 --port 8081 --no-proxy-headers`
-under systemd with the same environment and `MDHUB_ADMIN_TRUSTED_PROXIES=127.0.0.1`, and add
+under systemd with its own minimal environment file (not `/etc/mdhub/mdhub.env`: no source
+credentials) and `MDHUB_ADMIN_TRUSTED_PROXIES=127.0.0.1`, and add
 the console site of the `Caddyfile` with `MDHUB_ADMIN_UPSTREAM=127.0.0.1:8081`.
 
 Local try-out (no TLS): `MDHUB_ADMIN_DOMAIN=localhost MDHUB_ADMIN_ORIGIN=http://localhost:8081

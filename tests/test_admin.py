@@ -473,27 +473,38 @@ def test_roles_viewer_operator_admin(
     console.get("/jobs")
     r = console.post("/jobs/admin_test_job/run")
     assert r.status_code == 403
+    conn.rollback()
+    assert conn.execute("SELECT count(*) AS n FROM ops.job_request").fetchone() == {"n": 0}
     denied = _audit(conn, "access.denied")
     assert denied and denied[-1]["outcome"] == "denied" and denied[-1]["login"] == "viv"
-    assert "Run now" not in console.get("/jobs").text
+    assert '/run"' not in console.get("/jobs").text  # no run buttons for viewers
 
     op = _fresh_console(db_url)
     _enrolled(op, conn, "otto", "operator")
     assert op.get("/tokens").status_code == 403
     op.get("/jobs")
     r = op.post("/jobs/admin_test_job/run")
-    assert r.status_code == 200 and "The job was started" in r.text
-    for _ in range(50):
-        if fake_job:
-            break
-        time.sleep(0.1)
-    assert fake_job == [{"job": "admin_test_job"}]
+    assert r.status_code == 200 and "The run is queued" in r.text
+    time.sleep(0.3)
+    assert fake_job == []  # the console never runs a job itself
     conn.rollback()
-    run = conn.execute(
-        "SELECT status, trigger FROM ops.job_run WHERE job = 'admin_test_job'"
+    req = conn.execute(
+        "SELECT q.id, q.state, q.requested_login, q.requested_by, u.login FROM ops.job_request q "
+        "JOIN admin.user_account u ON u.id = q.requested_by"
     ).fetchone()
-    assert run is not None and run["trigger"] == "admin"
-    assert _audit(conn, "job.run")[-1]["target"] == "job:admin_test_job"
+    assert req is not None and req["state"] == "queued"
+    assert req["requested_login"] == "otto" == req["login"]
+    assert conn.execute("SELECT count(*) AS n FROM ops.job_run").fetchone() == {"n": 0}
+    audit = _audit(conn, "job.request")[-1]
+    assert audit["target"] == "job:admin_test_job" and audit["details"]["request_id"] == req["id"]
+    assert "Requested runs" in r.text and "Cancel" in r.text
+    assert op.post("/jobs/admin_test_job/run").status_code == 409  # one open request per job
+    assert console.post(f"/jobs/requests/{req['id']}/cancel").status_code == 403  # viewer
+    r = op.post(f"/jobs/requests/{req['id']}/cancel")
+    assert "cancelled" in r.text
+    conn.rollback()
+    assert conn.execute("SELECT state FROM ops.job_request").fetchone() == {"state": "cancelled"}
+    assert op.post(f"/jobs/requests/{req['id']}/cancel").status_code == 404
     assert op.post("/jobs/no_such_job/run").status_code == 404
 
 

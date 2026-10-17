@@ -1,16 +1,16 @@
 """Console pages (ADMIN_DESIGN §4) and the operator / admin actions behind them.
 
 Read pages (Overview, Jobs, Data, Sources, API traffic, Updates) need ``viewer``; operator
-actions (run a job now, retry a failed backfill task, mark a gap ``not_expected``) need
-``operator``; Tokens, Users and Audit need ``admin``, and their changes a step-up. Every action
-is written to ``admin.audit_log``. Results come back as a fixed message key (``?done=``), never
-as text from the URL.
+actions (request a job run, retry a failed backfill task, mark a gap ``not_expected``) need
+``operator``. They only write to the database: a requested run is executed by the worker
+(``ops.job_request``, :mod:`mdhub.job_requests`), so the console holds no source credentials.
+Tokens, Users and Audit need ``admin``, and their changes a step-up. Every action is written
+to ``admin.audit_log``. Results come back as a fixed message key (``?done=``), never as text
+from the URL.
 """
 
 from __future__ import annotations
 
-import logging
-import threading
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated, Any, Final
 
@@ -25,13 +25,12 @@ from mdhub.admin.web import Ctx, Denied, render, require
 from mdhub.api.auth import SCOPES, TokenError, create_token, list_tokens, revoke_token
 from mdhub.core.bizday import DbCalendar
 from mdhub.db.pool import DictConnection
-from mdhub.jobs import REGISTRY, run_job
+from mdhub.jobs import REGISTRY
 from mdhub.quality.health import job_health
 from mdhub.schedule import RULES, Rule, rule_applies
 
 __all__ = ["router"]
 
-log = logging.getLogger("mdhub.admin.pages")
 router = APIRouter()
 
 viewer = require("viewer")
@@ -40,7 +39,8 @@ admin = require("admin")
 admin_step_up = require("admin", step_up=True)
 
 MESSAGES: Final = {
-    "job_started": "The job was started. Its run appears below within a few seconds.",
+    "job_requested": "The run is queued; the worker starts it within a few seconds.",
+    "request_cancelled": "The queued run was cancelled.",
     "task_retried": "The backfill task is queued again; the backfill worker picks it up.",
     "gap_marked": "The gap is marked not expected.",
     "token_revoked": "The token was revoked. The API stops accepting it within 30 seconds.",
@@ -254,6 +254,14 @@ def jobs_page(
             ORDER BY started_at DESC LIMIT 100
             """
         ).fetchall()
+        requests = conn.execute(
+            """
+            SELECT q.id, q.job, q.state, q.requested_login, q.requested_at, q.picked_at,
+                   q.finished_at, q.attempts, q.job_run_id, q.error, r.status AS run_status
+            FROM ops.job_request q LEFT JOIN ops.job_run r ON r.id = q.job_run_id
+            ORDER BY q.requested_at DESC, q.id DESC LIMIT 50
+            """
+        ).fetchall()
         history = conn.execute(
             """
             SELECT id, job, status, trigger, started_at, finished_at, rows_inserted,
@@ -279,6 +287,7 @@ def jobs_page(
         ctx,
         "jobs.html",
         jobs=rows,
+        requests=requests,
         running=running,
         failures=failures,
         history=history,
@@ -291,29 +300,47 @@ def jobs_page(
     )
 
 
-def _run_in_background(ctx: Ctx, name: str) -> None:
-    settings, db = ctx.settings, ctx.db
-
-    def target() -> None:
-        try:
-            outcome = run_job(
-                name, {}, settings=settings, db=db, calendar=DbCalendar(db), trigger="admin"
-            )
-            log.info("console run of %s: %s (run %s)", name, outcome.status, outcome.run_id)
-        except Exception as exc:  # recorded in ops.job_run by run_job
-            log.warning("console run of %s failed: %s", name, type(exc).__name__)
-
-    threading.Thread(target=target, name=f"admin-run-{name}", daemon=True).start()
-
-
 @router.post("/jobs/{name}/run")
 def job_run_now(ctx: Annotated[Ctx, Depends(operator)], name: str) -> Response:
+    """Queue a run for the worker (``ops.job_request``); the console runs no job itself."""
     if name not in REGISTRY:
         raise Denied(404, "Unknown job.")
     with ctx.db.connection() as conn:
-        ctx.audit(conn, "job.run", target=f"job:{name}")
-    _run_in_background(ctx, name)
-    return _done("/jobs", "job_started")
+        try:
+            with conn.transaction():
+                row = conn.execute(
+                    """
+                    INSERT INTO ops.job_request (job, requested_by, requested_login)
+                    VALUES (%s, %s, %s) RETURNING id
+                    """,
+                    (name, ctx.user.id, ctx.user.login),
+                ).fetchone()
+        except psycopg.errors.UniqueViolation:
+            raise Denied(409, "A run of this job is already queued or running.") from None
+        assert row is not None
+        ctx.audit(conn, "job.request", target=f"job:{name}", details={"request_id": row["id"]})
+    return _done("/jobs", "job_requested")
+
+
+@router.post("/jobs/requests/{request_id}/cancel")
+def job_request_cancel(ctx: Annotated[Ctx, Depends(operator)], request_id: int) -> Response:
+    with ctx.db.connection() as conn:
+        row = conn.execute(
+            """
+            UPDATE ops.job_request SET state = 'cancelled', finished_at = now()
+            WHERE id = %s AND state = 'queued' RETURNING job
+            """,
+            (request_id,),
+        ).fetchone()
+        if row is None:
+            raise Denied(404, "No queued request with that id.")
+        ctx.audit(
+            conn,
+            "job.request_cancel",
+            target=f"job:{row['job']}",
+            details={"request_id": request_id},
+        )
+    return _done("/jobs", "request_cancelled")
 
 
 # -------------------------------------------------------------------------------------- data
@@ -509,13 +536,11 @@ def traffic_page(
 def _tokens(ctx: Ctx, status_code: int = 200, **values: Any) -> Response:
     with ctx.db.connection() as conn:
         tokens = list_tokens(conn, include_revoked=True)
-    env_names = [n for n, _ in ctx.settings.api_token_entries()]
     return render(
         ctx,
         "tokens.html",
         status_code=status_code,
         tokens=tokens,
-        env_names=env_names,
         scopes=SCOPES,
         **values,
     )

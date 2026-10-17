@@ -17,7 +17,7 @@ import pgserver
 import psycopg
 import pytest
 from psycopg import sql
-from pydantic import AliasChoices
+from pydantic import AliasChoices, SecretStr
 
 from mdhub.config import Settings
 from mdhub.db.migrate import MigrationError, migrate
@@ -143,6 +143,35 @@ def test_compose_yaml() -> None:
     caddy_ip = services["caddy"]["networks"]["admin_edge"]["ipv4_address"]
     assert admin["environment"]["MDHUB_ADMIN_TRUSTED_PROXIES"] == caddy_ip
     assert "MDHUB_DATABASE_URL" in admin["environment"]
+
+
+def test_admin_service_gets_no_source_credentials() -> None:
+    """The console runs no job (the worker does, ops.job_request): its container must not see
+    source credentials, the egress proxy or the read-API tokens."""
+    yaml = pytest.importorskip("yaml")
+    admin = yaml.safe_load(_compose_text())["services"]["admin"]
+    assert "env_file" not in admin
+    secret_fields = {
+        str(field.validation_alias.choices[0])  # type: ignore[union-attr]
+        for name, field in Settings.model_fields.items()
+        if field.annotation == (SecretStr | None)
+    }
+    forbidden = (secret_fields - {"MDHUB_DATABASE_URL", "MDHUB_ADMIN_SECRET_KEY"}) | {
+        "MDHUB_API_TOKENS",
+        "MDHUB_HTTP_PROXY",
+    }
+    assert {"MOEX_API_KEY", "RATESCALC_PASSWORD", "CBONDS_PASSWORD"} <= forbidden
+    assert not forbidden & set(admin["environment"]), forbidden & set(admin["environment"])
+    assert set(admin["environment"]) <= {
+        "MDHUB_DATABASE_URL",
+        "MDHUB_ADMIN_DOMAIN",
+        "MDHUB_ADMIN_ORIGIN",
+        "MDHUB_ADMIN_ALLOW_CIDRS",
+        "MDHUB_ADMIN_TRUSTED_PROXIES",
+        "MDHUB_ADMIN_SECRET_KEY",
+        "MDHUB_LOG_LEVEL",
+        "MDHUB_TZ",
+    }
 
 
 def test_dockerfile() -> None:

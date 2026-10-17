@@ -48,6 +48,6 @@
     {% endfor %}
     </tbody>
   </table>
-  {% if env_names %}<p class="small">Also accepted from <code>MDHUB_API_TOKENS</code> (all scopes): {{ env_names|join(', ') }}. Replace them with named tokens and remove them from <code>.env</code>.</p>{% endif %}
+  <p class="small">Tokens from <code>MDHUB_API_TOKENS</code> are not visible here (the console does not hold them); list them with <code>mdhub tokens list</code> on the server and replace them with named tokens.</p>
 </section>
 {% endblock %}
