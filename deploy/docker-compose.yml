@@ -1,11 +1,13 @@
 # market-data-hub - single-VPS deployment (DESIGN §9).
 #
 #   cd deploy && cp env.example .env && $EDITOR .env
-#   docker compose up -d --build            # postgres, migrate (one-shot), worker, api
-#   docker compose --profile tls up -d      # + Caddy TLS reverse proxy for the API
+#   docker compose up -d --build            # postgres, migrate (one-shot), worker, api, admin
+#   docker compose --profile tls up -d      # + Caddy TLS reverse proxy for the API and console
 #
 # Postgres and the API are published on 127.0.0.1 only; expose the API publicly through
-# Caddy (443). See README_DEPLOY.md.
+# Caddy (443). The admin console is not published at all: only Caddy reaches it, over the
+# network admin_edge where Caddy has a fixed address (the only peer whose X-Forwarded-For the
+# console trusts). See README_DEPLOY.md.
 
 name: mdhub
 
@@ -110,6 +112,41 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  admin:
+    <<: *mdhub
+    # mdhub.admin.app is the admin console (ADMIN_DESIGN §2): sessions, passkeys, IP allow-list.
+    # The app resolves client IPs itself (--no-proxy-headers), trusting only Caddy's address.
+    command:
+      - uvicorn
+      - mdhub.admin.app:app
+      - --host=0.0.0.0
+      - --port=8081
+      - --no-proxy-headers
+      - --no-server-header
+      - --workers=1
+    environment:
+      MDHUB_DATABASE_URL: postgresql://${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-mdhub}
+      MDHUB_BACKUP_DIR: /var/backups/mdhub
+      MDHUB_ADMIN_TRUSTED_PROXIES: 172.31.253.2
+    networks:
+      - default
+      - admin_edge
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/health/live', timeout=3).status == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
   caddy:
     image: caddy:2
     profiles: ["tls"]
@@ -118,6 +155,14 @@ services:
       MDHUB_API_DOMAIN: ${MDHUB_API_DOMAIN:-}
       ACME_EMAIL: ${ACME_EMAIL:-}
       MDHUB_API_UPSTREAM: api:8080
+      # Empty values fall back to a name and a network nobody has: the console stays closed.
+      MDHUB_ADMIN_DOMAIN: ${MDHUB_ADMIN_DOMAIN:-admin.invalid}
+      MDHUB_ADMIN_ALLOW_CIDRS: ${MDHUB_ADMIN_ALLOW_CIDRS:-192.0.2.1/32}
+      MDHUB_ADMIN_UPSTREAM: admin:8081
+    networks:
+      default:
+      admin_edge:
+        ipv4_address: 172.31.253.2
     ports:
       - "80:80"
       - "443:443"
@@ -127,7 +172,14 @@ services:
       - caddy_config:/config
     depends_on:
       - api
+      - admin
     logging: *logging
+
+networks:
+  admin_edge:
+    ipam:
+      config:
+        - subnet: 172.31.253.0/29
 
 volumes:
   pgdata:

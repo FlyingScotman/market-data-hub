@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Data{% endblock %}
+{% block content %}
+<h1>Data</h1>
+{% set can_act = user.at_least('operator') %}
+<section class="card">
+  <h2>Datasets</h2>
+  <table>
+    <thead><tr><th>Dataset</th><th>First</th><th>Last</th><th>Rows</th><th>Expected latest</th><th>Stale</th><th>Open gaps</th><th>Unfillable</th><th>Not expected</th><th>Tasks</th><th>Problem</th></tr></thead>
+    <tbody>
+    {% for c in coverage %}
+    <tr>
+      <td>{{ c.dataset }}</td><td>{{ c.first_date or '-' }}</td><td>{{ c.last_date or '-' }}</td><td class="num">{{ c.row_count|num }}</td>
+      <td>{{ c.expected_latest or '-' }}</td>
+      <td>{% if c.is_stale %}<span class="pill bad">stale</span>{% else %}<span class="pill ok">ok</span>{% endif %}</td>
+      <td class="num">{{ c.open_gaps }}</td><td class="num">{{ c.unfillable_gaps }}</td><td class="num">{{ c.not_expected_gaps }}</td><td class="num">{{ c.open_tasks }}</td>
+      <td class="small">{{ c.problem or '' }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="11">No dataset status yet (the quality job writes it).</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Backfill queue</h2>
+  <p>Pending {{ counts.get('pending', 0) }}, running {{ counts.get('running', 0) }}, failed {{ counts.get('failed', 0) }}.</p>
+  <table>
+    <thead><tr><th>Task</th><th>Dataset</th><th>From</th><th>To</th><th>Status</th><th>Attempts</th><th>Not before</th><th>Last error</th>{% if can_act %}<th></th>{% endif %}</tr></thead>
+    <tbody>
+    {% for t in queue %}
+    <tr>
+      <td>{{ t.id }}</td><td>{{ t.dataset }}</td><td>{{ t.date_from or '-' }}</td><td>{{ t.date_to or '-' }}</td>
+      <td><span class="pill {{ 'bad' if t.status == 'failed' else 'ok' }}">{{ t.status }}</span></td><td>{{ t.attempts }}</td><td>{{ t.not_before|dt }}</td>
+      <td class="small">{{ (t.last_error or '')[:300] }}</td>
+      {% if can_act %}<td>{% if t.status == 'failed' %}
+        <form method="post" action="/data/tasks/{{ t.id }}/retry">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <button type="submit" class="link">Retry</button>
+        </form>{% endif %}</td>{% endif %}
+    </tr>
+    {% else %}
+    <tr><td colspan="9">The queue is empty.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Open and unfillable gaps</h2>
+  <table>
+    <thead><tr><th>Dataset</th><th>Key</th><th>Date</th><th>Status</th><th>Note</th>{% if can_act %}<th>Mark not expected</th>{% endif %}</tr></thead>
+    <tbody>
+    {% for g in gaps %}
+    <tr>
+      <td>{{ g.dataset }}</td><td class="small">{{ g.key }}</td><td>{{ g.gap_date }}</td><td>{{ g.status }}</td><td class="small">{{ g.note or '' }}</td>
+      {% if can_act %}<td>
+        <form method="post" action="/data/gaps/not-expected" class="row tight">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <input type="hidden" name="dataset" value="{{ g.dataset }}">
+          <input type="hidden" name="key" value="{{ g.key }}">
+          <input type="hidden" name="gap_date" value="{{ g.gap_date }}">
+          <input name="reason" placeholder="reason" minlength="3" maxlength="500" required aria-label="Reason">
+          <button type="submit" class="link">Mark</button>
+        </form></td>{% endif %}
+    </tr>
+    {% else %}
+    <tr><td colspan="6">No open or unfillable gaps.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

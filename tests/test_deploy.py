@@ -25,7 +25,7 @@ from mdhub.loaders.maintenance import BACKUP_DIR_ENV
 
 DEPLOY = Path(__file__).resolve().parents[1] / "deploy"
 PSQL = Path(pgserver.__file__).parent / "pginstall" / "bin" / "psql"
-SERVICES = {"postgres", "migrate", "worker", "api", "caddy"}
+SERVICES = {"postgres", "migrate", "worker", "api", "admin", "caddy"}
 
 
 def env_names(path: Path) -> list[str]:
@@ -137,6 +137,12 @@ def test_compose_yaml() -> None:
     assert services["api"]["command"][:2] == ["uvicorn", "mdhub.api.app:app"]
     assert all(p.startswith("127.0.0.1:") for p in services["api"]["ports"])
     assert services["caddy"]["profiles"] == ["tls"]
+    admin = services["admin"]
+    assert admin["command"][:2] == ["uvicorn", "mdhub.admin.app:app"]
+    assert "--no-proxy-headers" in admin["command"] and "ports" not in admin
+    caddy_ip = services["caddy"]["networks"]["admin_edge"]["ipv4_address"]
+    assert admin["environment"]["MDHUB_ADMIN_TRUSTED_PROXIES"] == caddy_ip
+    assert "MDHUB_DATABASE_URL" in admin["environment"]
 
 
 def test_dockerfile() -> None:
@@ -201,6 +207,9 @@ def test_systemd_units() -> None:
 def test_caddyfile_and_readme() -> None:
     caddy = (DEPLOY / "Caddyfile").read_text()
     assert "{$MDHUB_API_DOMAIN}" in caddy and "reverse_proxy" in caddy
+    admin_site = caddy.split("{$MDHUB_ADMIN_DOMAIN", 1)[1]
+    assert "not remote_ip {$MDHUB_ADMIN_ALLOW_CIDRS" in admin_site
+    assert admin_site.index('respond @outside "Forbidden" 403') < admin_site.index("reverse_proxy")
     readme = (DEPLOY / "README_DEPLOY.md").read_text()
     for needle in (
         "docker compose up -d",
@@ -305,6 +314,17 @@ def test_readonly_role_cannot_read_admin(empty_db_url: str) -> None:
             {"ro": ro},
         ).fetchall()
         assert ("api_token", False) in privileges and not any(p[1] for p in privileges)
+        names = {p[0] for p in privileges}
+        assert {
+            "user_account",
+            "session",
+            "webauthn_credential",
+            "totp_secret",
+            "recovery_code",
+            "enrollment",
+            "login_attempt",
+            "audit_log",
+        } <= names
         usage = conn.execute("SELECT has_schema_privilege(%s, 'admin', 'USAGE')", (ro,)).fetchone()
         assert usage == (False,)
         # The owner's global default privileges do reach admin: a table created there later
@@ -324,6 +344,10 @@ def test_readonly_role_cannot_read_admin(empty_db_url: str) -> None:
         for query in (
             "SELECT count(*) FROM admin.api_token",
             "SELECT name FROM admin.api_token",
+            "SELECT password_hash FROM admin.user_account",
+            "SELECT id_sha256 FROM admin.session",
+            "SELECT secret_enc FROM admin.totp_secret",
+            "SELECT count(*) FROM admin.audit_log",
             "CALL admin.restrict_access()",
         ):
             with pytest.raises(psycopg.errors.InsufficientPrivilege):

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}Updates{% endblock %}
+{% block content %}
+<h1>Updates</h1>
+<section class="card">
+  <p>Running version (console): <strong>{{ version }}</strong></p>
+  <table>
+    <thead><tr><th>Process</th><th>Host</th><th>Version</th><th>Started</th><th>Last beat</th></tr></thead>
+    <tbody>
+    {% for b in beats %}
+    <tr><td>{{ b.process }}</td><td>{{ b.host }}</td><td>{{ b.version }}</td><td>{{ b.started_at|dt }}</td><td>{{ b.beat_at|ago }}</td></tr>
+    {% else %}
+    <tr><td colspan="5">No running process reports a heartbeat.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint">Installing releases and rolling back come with the updater (ADMIN_DESIGN §6, phase D). Until then, update on the server as described in README_DEPLOY.</p>
+</section>
+{% endblock %}

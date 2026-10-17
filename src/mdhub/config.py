@@ -25,6 +25,13 @@ Environment variables (DESIGN §7 plus a few operational knobs):
 ``MDHUB_HTTP_TIMEOUT``              HTTP timeout in seconds, default 30 (extension)
 ``MDHUB_API_POOL_SIZE``             read-API connection pool size, default 8 (extension)
 ``MDHUB_BACKUP_DIR``                pg_dump target directory, default ``/var/backups/mdhub``
+``MDHUB_ADMIN_DOMAIN``              admin console host name (WebAuthn RP ID), e.g.
+                                    ``admin.example.com``; ``localhost`` for local use
+``MDHUB_ADMIN_ORIGIN``              console origin, default ``https://<MDHUB_ADMIN_DOMAIN>``
+``MDHUB_ADMIN_ALLOW_CIDRS``         client networks allowed to reach the console (comma or
+                                    space separated); empty = every request refused
+``MDHUB_ADMIN_TRUSTED_PROXIES``     peers (IPs/CIDRs) whose ``X-Forwarded-For`` is used
+``MDHUB_ADMIN_SECRET_KEY``          32 random bytes (hex or base64) encrypting TOTP secrets
 ``MOEX_API_KEY``                    MOEX APIM bearer token
 ``MOEX_PASSPORT_LOGIN`` / ``_PASSWORD`` MOEX Passport credentials
 ``RATESCALC_USERNAME`` / ``_PASSWORD``  Ratescalcs basic auth
@@ -143,6 +150,12 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MDHUB_API_POOL_SIZE", "api_pool_size"),
     )
 
+    admin_domain: str | None = _env("MDHUB_ADMIN_DOMAIN")
+    admin_origin: str | None = _env("MDHUB_ADMIN_ORIGIN")
+    admin_allow_cidrs: str | None = _env("MDHUB_ADMIN_ALLOW_CIDRS")
+    admin_trusted_proxies: str | None = _env("MDHUB_ADMIN_TRUSTED_PROXIES")
+    admin_secret_key: SecretStr | None = _env("MDHUB_ADMIN_SECRET_KEY")
+
     moex_api_key: SecretStr | None = _env("MOEX_API_KEY")
     moex_passport_login: SecretStr | None = _env("MOEX_PASSPORT_LOGIN")
     moex_passport_password: SecretStr | None = _env("MOEX_PASSPORT_PASSWORD")
@@ -181,6 +194,11 @@ class Settings(BaseSettings):
         "cbonds_login",
         "cbonds_password",
         "otc_monitor_token",
+        "admin_domain",
+        "admin_origin",
+        "admin_allow_cidrs",
+        "admin_trusted_proxies",
+        "admin_secret_key",
         mode="before",
     )
     @classmethod
