@@ -76,6 +76,11 @@
    a79840a "Run now" via ops.job_request run by the worker, migration 0630, no source creds in the admin container)
    merged e81c04b; 670 tests green. Not verified: real platform passkey, Docker/Caddy build. Next: Phase D (updater).
    Leftover: seed-cluster copy mdhub_admin_dev (3.4 GB) from Phase B testing; drop when not needed.
+   Phase D (322f61a updater, worker drain, Updates page; 0640), E (1b397db write-only source credentials
+   sealed to the worker key; 0700) and F (23581cd hostmon, PostgreSQL stats, Machine page; 0750) merged
+   1bd00d8 / cd85ab8 / 1c480ca; 724 tests green. README_DEPLOY: §13 updater, §14 credentials, §15 machine.
+   Not verified anywhere: real Docker/Caddy, the updater rehearsal (README §13), a real passkey.
+   Open: updater does not yet write ops.container_status (Machine page shows "updater not reporting").
 
 ## Open items for owner
 - Cbonds API → HTTP 401 for any login (likely IP allow-list of old server); hub auto-skips.
