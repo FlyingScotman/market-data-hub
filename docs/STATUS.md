@@ -70,7 +70,9 @@
 3. Bond static verification: accrued interest / yield recomputed from ref schedules vs MOEX EOD.
 4. Admin console, observability, self-update: design in docs/ADMIN_DESIGN.md (owner decisions 2026-10-17:
    internet + IP allow-list, roles viewer/operator/admin, passkeys + TOTP, updater v1 = docker compose).
-   Phases A (observability backend) and C (release pipeline) can start in parallel; migrations 0600+.
+   Phase A (acdebdb: named tokens, api_request log, heartbeat, source_probe, version from git; migrations
+   0600/0610) and Phase C (47b8d47: code-only signed bundle, `mdhub release verify`, CI + release workflows,
+   not yet run on GitHub) merged into main 45cb0e5; 636 tests green. Next: Phase B (console + auth), then D (updater).
 
 ## Open items for owner
 - Cbonds API → HTTP 401 for any login (likely IP allow-list of old server); hub auto-skips.
