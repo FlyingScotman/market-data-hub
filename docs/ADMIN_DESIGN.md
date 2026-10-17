@@ -312,7 +312,7 @@ the admin role but no step-up; `verify_result` ∈ {ok, rejected, unreachable} i
 every source; MOEX Passport has no probe); `rotate-key` re-seals in one transaction and prints
 the new key, and until the worker restarts with it, jobs fall back to `.env`.
 
-**Phase F status (2026-10-17):** implemented except the updater side. Migration
+**Phase F status (2026-10-17):** implemented, including the updater side. Migration
 `0750_ops_host_metric` (`ops.host_metric`, `ops.host_metric_5m` with `ops.host_metric_rollup()`,
 `ops.v_host_status`, `ops.container_status`); code in `mdhub.hostmon` (`sampler`: psutil and
 `/host/proc`, `/host/sys`, `/rootfs` with fallback to the local `/proc`; `pgstats`; `status`:
@@ -331,7 +331,11 @@ the updater upserts one `ops.container_status` row per container every 30 s (`st
 reports it, `restart_count`, `started_at`, `image` with tag, `cpu_pct`, `mem_bytes`,
 `mem_limit_bytes`, `updated_at = now()`); rows older than 2 minutes show "updater not
 reporting"; a container restarted in the last hour (`restart_count > 0` and `started_at` within
-the hour) is a warning.
+the hour) is a warning. The updater does this from its own thread (`mdhub.updater.ContainerReporter`:
+`docker ps` of the `mdhub` compose project without one-off `run` containers, `docker inspect`,
+`docker stats --no-stream`), idle or mid-update; `mem_limit_bytes` is the container's own limit
+(NULL without one); rows of containers that no longer exist are deleted; it pauses while a
+restore runs, since an insert during `pg_restore` would break the table's primary key.
 
 ## 8. Open points
 
@@ -400,7 +404,7 @@ after which those lines can be deleted from `.env`. `mdhub secrets rotate-key` r
   (`/proc` → `/host/proc`, `/sys` → `/host/sys`, `/` → `/rootfs`), like node_exporter. It has no docker socket, no
   credentials and no listening port.
 - Container status comes from the updater, the only process with the docker socket (§2). It writes
-  `ops.container_status` every 30 s, so this part waits for phase D.
+  `ops.container_status` every 30 s.
 - The worker samples the PostgreSQL statistics (`pg_stat_*`) every minute.
 - psutil also runs on Windows, so the inside instance can reuse the sampler later.
 
