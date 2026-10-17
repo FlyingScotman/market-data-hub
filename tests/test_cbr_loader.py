@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 import psycopg
@@ -17,6 +17,7 @@ from psycopg.rows import DictRow
 import mdhub.loaders.cbr as loader
 from mdhub.config import Settings
 from mdhub.core.bizday import CalendarPredicate
+from mdhub.core.errors import FormatDriftError
 from mdhub.core.http import HttpClient, RateLimiter
 from mdhub.db.pool import Database
 from mdhub.jobs import JobOutcome, run_job
@@ -430,3 +431,150 @@ def test_refinancing_dataset_is_closed() -> None:
 
     spec = get_dataset("cbr_refinancing_rate")
     assert spec.history_end == date(2015, 12, 31) and spec.backfill_job == "cbr_daily"
+
+
+# ------------------------------------------------- FX ranges: per-currency XML_dynamic
+
+
+class FxWorld:
+    """Synthetic CBR FX history 2025-01-09..2025-03-31 (record dates = weekdays).
+
+    USD always in the daily set; ISK leaves it after 2025-02-14; CNY joins on 2025-01-20 and
+    before that only has a monthly-set rate on 2025-01-09 (XML_dynamic lists it, XML_daily
+    does not); XML_dynamic of KZT also returns records of the related id R01335Z."""
+
+    IDS: ClassVar[dict[str, tuple[str, int]]] = {
+        "R01235": ("USD", 1),
+        "R01350": ("ISK", 100),
+        "R01375": ("CNY", 1),
+        "R01335": ("KZT", 100),
+    }
+
+    def __init__(self) -> None:
+        start = date(2025, 1, 9)
+        self.dates = [
+            start + timedelta(days=i)
+            for i in range(82)
+            if (start + timedelta(days=i)).weekday() < 5
+        ]
+        self.daily_calls: list[date] = []
+        self.tamper: tuple[str, date] | None = None
+
+    def value(self, cbr_id: str, d: date) -> Decimal:
+        base = {"R01235": 90, "R01350": 65, "R01375": 12, "R01335": 18}[cbr_id]
+        return Decimal(base) + Decimal(self.dates.index(d) if d in self.dates else 0) / 100
+
+    def members(self, d: date) -> list[str]:
+        out = ["R01235", "R01335"]
+        if d <= date(2025, 2, 14):
+            out.append("R01350")
+        if d >= date(2025, 1, 20):
+            out.append("R01375")
+        return out
+
+    @staticmethod
+    def _num(v: Decimal) -> str:
+        return f"{v:.4f}".replace(".", ",")
+
+    def xml_daily(self, request: httpx.Request) -> httpx.Response:
+        req = datetime.strptime(request.url.params["date_req"], "%d/%m/%Y").date()
+        rd = max(d for d in self.dates if d <= req)
+        self.daily_calls.append(rd)
+        valutes = "".join(
+            f'<Valute ID="{i}"><CharCode>{self.IDS[i][0]}</CharCode>'
+            f"<Nominal>{self.IDS[i][1]}</Nominal><Value>{self._num(self.value(i, rd))}</Value>"
+            "</Valute>"
+            for i in self.members(rd)
+        )
+        body = f'<ValCurs Date="{rd:%d.%m.%Y}" name="Foreign Currency Market">{valutes}</ValCurs>'
+        return httpx.Response(200, content=body.encode(), headers={"content-type": "text/xml"})
+
+    def xml_dynamic(self, request: httpx.Request) -> httpx.Response:
+        cbr_id = request.url.params["VAL_NM_RQ"]
+        d1 = datetime.strptime(request.url.params["date_req1"], "%d/%m/%Y").date()
+        d2 = datetime.strptime(request.url.params["date_req2"], "%d/%m/%Y").date()
+        nominal = self.IDS[cbr_id][1]
+        records = []
+        for d in self.dates:
+            if not d1 <= d <= d2:
+                continue
+            monthly_cny = cbr_id == "R01375" and d == date(2025, 1, 9)
+            if cbr_id not in self.members(d) and not monthly_cny:
+                continue
+            v = self.value(cbr_id, d) + (1 if self.tamper == (cbr_id, d) else 0)
+            records.append(
+                f'<Record Date="{d:%d.%m.%Y}" Id="{cbr_id}"><Nominal>{nominal}</Nominal>'
+                f"<Value>{self._num(v)}</Value></Record>"
+            )
+            if cbr_id == "R01335":
+                records.append(
+                    f'<Record Date="{d:%d.%m.%Y}" Id="R01335Z"><Nominal>1</Nominal>'
+                    "<Value>1,0000</Value></Record>"
+                )
+        body = f'<ValCurs ID="{cbr_id}">{"".join(records)}</ValCurs>'
+        return httpx.Response(200, content=body.encode(), headers={"content-type": "text/xml"})
+
+
+@pytest.fixture
+def fx_world(monkeypatch: pytest.MonkeyPatch) -> Iterator[FxWorld]:
+    world = FxWorld()
+    monkeypatch.setattr(loader, "PARTS", tuple(p for p in loader.PARTS if p[0] == "fx_official"))
+    with respx.mock(assert_all_called=False) as router:
+        router.get(host=HOST, path=cbr.XML_DAILY_PATH).mock(side_effect=world.xml_daily)
+        router.get(host=HOST, path=cbr.XML_DYNAMIC_PATH).mock(side_effect=world.xml_dynamic)
+        yield world
+
+
+FX_RANGE = {"date_from": "2025-01-10", "date_to": "2025-03-28"}
+
+
+def test_fx_range_per_currency_matches_daily_set(
+    fx_world: FxWorld, settings: Settings, db: Database, conn: Conn
+) -> None:
+    out = _run("cbr_daily", FX_RANGE, settings, db)
+    assert _counts(conn, out.run_id)["status"] == "succeeded"
+    assert len(set(fx_world.daily_calls)) < len(fx_world.dates) // 2  # samples, not every day
+
+    def rows(ccy: str) -> list[DictRow]:
+        return conn.execute(
+            "SELECT * FROM md.fx_official WHERE ccy = %s ORDER BY effective_date", (ccy,)
+        ).fetchall()
+
+    usd = rows("USD")
+    assert usd[0]["effective_date"] == date(2025, 1, 10)
+    assert {r["effective_date"] for r in usd} >= {date(2025, 1, 10), date(2025, 3, 28)}
+    for r in usd:  # every day carries the record in force, values as published
+        assert r["value"] == fx_world.value("R01235", r["record_date"])
+    isk = rows("ISK")  # leaves after Friday 2025-02-14: in force through Sunday 16th only
+    assert isk[-1]["record_date"] == date(2025, 2, 14)
+    assert isk[-1]["effective_date"] == date(2025, 2, 16)
+    assert isk[-1]["nominal"] == 100
+    cny = rows("CNY")  # the monthly-set 2025-01-09 rate is not in the daily set
+    assert cny[0]["effective_date"] == date(2025, 1, 20)
+    kzt = rows("KZT")  # R01335Z records are not mixed in
+    assert {r["cbr_id"] for r in kzt} == {"R01335"} and all(r["nominal"] == 100 for r in kzt)
+
+
+def test_fx_range_value_mismatch_fails_closed(
+    fx_world: FxWorld, settings: Settings, db: Database, conn: Conn
+) -> None:
+    fx_world.tamper = ("R01235", date(2025, 2, 3))  # first record of February: a sample
+    with pytest.raises(FormatDriftError, match=r"XML_dynamic 1/91\.1700 != XML_daily 1/90\.1700"):
+        _run("cbr_daily", FX_RANGE, settings, db)
+    run = conn.execute("SELECT status, error FROM ops.job_run ORDER BY id DESC LIMIT 1").fetchone()
+    assert run is not None and run["status"] == "failed"
+    n = conn.execute("SELECT count(*) AS n FROM md.fx_official").fetchone()
+    assert n is not None and n["n"] == 0
+
+
+def test_expand_fx_stops_currency_at_next_daily_record() -> None:
+    usd1, usd2 = _obs(date(2026, 10, 13)), _obs(date(2026, 10, 15))
+    gone = _obs(date(2026, 10, 13), ccy="LTL", value="19")
+    rows = loader.expand_fx_records(
+        [usd1, usd2, gone],
+        lambda d: d.weekday() < 5,
+        known_at=datetime(2026, 10, 15),
+        run_id=1,
+    )
+    ltl = sorted(r["effective_date"] for r in rows if r["ccy"] == "LTL")
+    assert ltl == [date(2026, 10, 13), date(2026, 10, 14)]  # not carried past the 15.10 record

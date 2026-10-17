@@ -828,15 +828,21 @@ def parse_xml_daily(payload: bytes) -> FxRecord:
     return FxRecord(record_date=record_date, rates=tuple(rates))
 
 
-def parse_xml_dynamic(payload: bytes, ccy: str) -> list[FxRecord]:
+def parse_xml_dynamic(payload: bytes, ccy: str, *, cbr_id: str | None = None) -> list[FxRecord]:
     """``XML_dynamic.asp`` for one currency id -> one single-rate record per date
-    (empty list when the currency has no records in the range)."""
+    (empty list when the currency has no records in the range).
+
+    With ``cbr_id`` only records of exactly that id are kept: CBR also returns related ids
+    (``R01100`` lists ``R01100Z`` records of the same dates)."""
     root = _xml_root(payload, "XML_dynamic")
     if root.tag != "ValCurs":
         raise FormatDriftError("CBR XML_dynamic: root is not ValCurs")
     out: list[FxRecord] = []
     seen: set[date] = set()
     for node in root.findall("Record"):
+        record_id = node.get("Id", "").strip()
+        if cbr_id is not None and record_id != cbr_id:
+            continue
         try:
             d = datetime.strptime(node.get("Date", ""), "%d.%m.%Y").date()
         except ValueError:
@@ -844,8 +850,7 @@ def parse_xml_dynamic(payload: bytes, ccy: str) -> list[FxRecord]:
         if d in seen:
             raise FormatDriftError(f"CBR XML_dynamic {ccy}: duplicate date {d}")
         seen.add(d)
-        cbr_id = node.get("Id", "").strip()
-        out.append(FxRecord(d, (_fx_rate(node, cbr_id, ccy, "XML_dynamic"),)))
+        out.append(FxRecord(d, (_fx_rate(node, record_id, ccy, "XML_dynamic"),)))
     return sorted(out, key=lambda r: r.record_date)
 
 

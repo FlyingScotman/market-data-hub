@@ -22,8 +22,11 @@ Without dates the job re-reads a recent window (fixings 14 days, liquidity 30 da
 latest and the previous CBR record); a series with no stored rows at all is seeded from its
 history start instead. With ``date_from``/``date_to`` (manual runs, ``ops.backfill_task``) the
 range is loaded. FX ranges take the exact record dates of the daily set from the USD history
-(``XML_dynamic``, one request) and then one ``XML_daily`` per record date (~250 requests per
-year at 1 request/second), committed in :data:`FX_CHUNK_DAYS`-day chunks.
+(``XML_dynamic``, one request), then (:func:`_range_observations`) either one ``XML_daily``
+per record date (short ranges) or - when cheaper - the daily-set membership from ``XML_daily``
+samples (first record of each month, both ends, bisected to the exact record where the set
+changes) plus one ``XML_dynamic`` per member currency for the whole range (~150 requests for
+eight years instead of ~2,000). Committed in :data:`FX_CHUNK_DAYS`-day chunks.
 
 ``cbr_meetings(mode="calendar")`` (first business day of the month) refreshes
 ``ref.cbr_meeting`` from ``/dkp/cal_mp/`` and the business-day calendars
@@ -41,10 +44,12 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from bisect import bisect_right
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from itertools import pairwise
 from typing import Any, Final
 
 import httpx
@@ -80,7 +85,9 @@ FIXING_KEY: Final = ["index_code", "fixing_date", "source"]
 FX_KEY: Final = ["effective_date", "ccy"]
 WINDOW_FIXINGS_DAYS: Final = 14
 WINDOW_LIQUIDITY_DAYS: Final = 30
-FX_CHUNK_DAYS: Final = 92
+FX_CHUNK_DAYS: Final = 3660
+"""Commit chunk of explicit FX ranges (the per-currency method reads a chunk in ~1 request per
+month + 1 per currency)."""
 USD_CBR_ID: Final = "R01235"
 LIQUIDITY_CHUNK_DAYS: Final = 366
 POST_MEETING_DAYS: Final = 4
@@ -574,8 +581,11 @@ def expand_fx_records(
 ) -> list[dict[str, Any]]:
     """Turn CBR records into one ``md.fx_official`` row per calendar day in force.
 
-    Per currency, record *i* is in force from its ``record_date`` until the day before record
-    *i+1*; the latest record until the first RU business day on or after its
+    A record is in force from its ``record_date`` until the day before the next CBR record of
+    the daily set (the next observed ``record_date`` of any currency) - a currency missing from
+    that record has no rate from then on (BYB 1998-03-25..1999-04-28, LTL from 2015), it is
+    never carried forward to its own next record; the latest record until the first RU
+    business day on or after its
     ``record_date`` (the next CBR setting day - the rate set that day starts the next
     record), and at least through ``known_through`` (the caller has checked that no later
     record exists up to that day - e.g. CBR did not set rates on the 2020-03-30..04-06
@@ -583,17 +593,17 @@ def expand_fx_records(
     ``set_date`` = ``record_date - 1``. Days before ``lower`` are dropped.
     """
     by_ccy: dict[str, dict[date, tuple[src.FxRate, int]]] = {}
-    latest: date | None = None
     for obs in observations:
         by_ccy.setdefault(obs.rate.ccy, {})[obs.record_date] = (obs.rate, obs.capture_id)
-        latest = obs.record_date if latest is None else max(latest, obs.record_date)
+    record_dates = sorted({rd for recs in by_ccy.values() for rd in recs})
+    latest = record_dates[-1] if record_dates else None
     rows: list[dict[str, Any]] = []
     for ccy, recs in by_ccy.items():
-        dates = sorted(recs)
-        for i, rd in enumerate(dates):
+        for rd in sorted(recs):
             rate, cap = recs[rd]
-            if i + 1 < len(dates):
-                end = dates[i + 1] - timedelta(days=1)
+            i = bisect_right(record_dates, rd)
+            if i < len(record_dates):
+                end = record_dates[i] - timedelta(days=1)
             else:
                 end = rd
                 for _ in range(60):
@@ -636,6 +646,112 @@ def _daily_record(
     return record, cap
 
 
+def _sample_dates(record_dates: Sequence[date]) -> list[date]:
+    """First record date of each calendar month plus the last one (sorted, unique)."""
+    out: list[date] = []
+    for rd in record_dates:
+        if not out or (rd.year, rd.month) != (out[-1].year, out[-1].month):
+            out.append(rd)
+    if record_dates and out[-1] != record_dates[-1]:
+        out.append(record_dates[-1])
+    return out
+
+
+def _range_observations(
+    ctx: JobContext,
+    http: HttpClient,
+    conn: psycopg.Connection[Any],
+    wanted: Sequence[date],
+    upper: date,
+) -> list[FxObservation]:
+    """Daily-set observations for the record dates ``wanted`` (sorted, from USD history).
+
+    ``XML_daily`` is the ground truth for which currencies the daily set holds on a record
+    date (``XML_dynamic`` of one currency also returns rates CBR set monthly while it was not
+    in the daily set). Short ranges read every record date. Longer ones read ``XML_daily`` on
+    :func:`_sample_dates`, bisect between consecutive samples whose currency sets differ until
+    every change sits between adjacent record dates, and take the other dates from one
+    ``XML_dynamic`` per member currency, kept only on dates the currency is a member. Every
+    sampled currency must match its ``XML_dynamic`` record (value, nominal) and every member
+    must have a record on every date it is a member - otherwise :class:`FormatDriftError`.
+    """
+    obs: list[FxObservation] = []
+    samples = _sample_dates(wanted)
+    first, cap = _daily_record(ctx, http, conn, wanted[0])
+    if first.record_date != wanted[0]:
+        raise FormatDriftError(f"CBR XML_daily({wanted[0]}) returned record {first.record_date}")
+    if len(wanted) <= len(samples) + len(first.rates):  # per-date reads are not dearer
+        obs.extend(FxObservation(first.record_date, r, cap) for r in first.rates)
+        for rd in wanted[1:]:
+            rec, cap = _daily_record(ctx, http, conn, rd)
+            if rec.record_date != rd:
+                raise FormatDriftError(f"CBR XML_daily({rd}) returned record {rec.record_date}")
+            obs.extend(FxObservation(rec.record_date, r, cap) for r in rec.rates)
+        return obs
+
+    sampled: dict[date, tuple[src.FxRecord, int]] = {wanted[0]: (first, cap)}
+
+    def read(rd: date) -> set[str]:
+        if rd not in sampled:
+            rec, c = _daily_record(ctx, http, conn, rd)
+            if rec.record_date != rd:
+                raise FormatDriftError(f"CBR XML_daily({rd}) returned record {rec.record_date}")
+            sampled[rd] = (rec, c)
+        return {r.cbr_id for r in sampled[rd][0].rates}
+
+    for rd in samples:
+        read(rd)
+    position = {rd: i for i, rd in enumerate(wanted)}
+    pending = list(pairwise(samples))
+    while pending:
+        a, b = pending.pop()
+        if read(a) == read(b) or position[b] - position[a] < 2:
+            continue
+        mid = wanted[(position[a] + position[b]) // 2]
+        read(mid)
+        pending += [(a, mid), (mid, b)]
+    points = sorted(sampled)
+
+    def members_at(rd: date) -> dict[str, src.FxRate]:
+        governing = points[bisect_right(points, rd) - 1]
+        return {r.cbr_id: r for r in sampled[governing][0].rates}
+
+    ids = sorted({r.cbr_id for rec, _ in sampled.values() for r in rec.rates})
+    for cbr_id in ids:
+        resp = src.fetch_xml_dynamic(http, cbr_id, wanted[0], upper)
+        dyn_cap = record_capture(
+            conn, ctx.run.id, SOURCE, "fx_xml_dynamic", None, resp, src.PARSER_VERSION
+        )
+        by_date = {
+            rec.record_date: rec.rates[0]
+            for rec in src.parse_xml_dynamic(resp.content, cbr_id, cbr_id=cbr_id)
+        }
+        for rd in wanted:
+            member = members_at(rd).get(cbr_id)
+            if member is None:
+                continue
+            dyn = by_date.get(rd)
+            if dyn is None:
+                raise FormatDriftError(f"CBR XML_dynamic {cbr_id}: no record on {rd} (daily set)")
+            if rd in sampled:
+                if (dyn.value, dyn.nominal) != (member.value, member.nominal):
+                    raise FormatDriftError(
+                        f"CBR {member.ccy} {rd}: XML_dynamic {dyn.nominal}/{dyn.value} != "
+                        f"XML_daily {member.nominal}/{member.value}"
+                    )
+                obs.append(FxObservation(rd, member, sampled[rd][1]))
+            else:
+                rate = src.FxRate(
+                    cbr_id=cbr_id,
+                    ccy=member.ccy,
+                    nominal=dyn.nominal,
+                    value=dyn.value,
+                    vunit_rate=dyn.vunit_rate,
+                )
+                obs.append(FxObservation(rd, rate, dyn_cap))
+    return obs
+
+
 def _load_fx(
     ctx: JobContext, http: HttpClient, conn: psycopg.Connection[Any], win: _Window
 ) -> UpsertResult:
@@ -657,19 +773,15 @@ def _load_fx(
         upper = min(d2 + timedelta(days=1), today + timedelta(days=1))
         lower = d1
         known_through = min(upper, today)  # XML_dynamic lists every record up to upper
-        # Exact record dates of the daily set from the USD history (one request), then one
-        # XML_daily per record date. (XML_dynamic per currency is cheaper but also returns
-        # the monthly-set rates of currencies that were not in the daily set at the time.)
+        # Exact record dates of the daily set from the USD history (one request).
         resp = src.fetch_xml_dynamic(http, USD_CBR_ID, d1 - timedelta(days=31), upper)
         record_capture(conn, ctx.run.id, SOURCE, "fx_xml_dynamic", None, resp, src.PARSER_VERSION)
-        record_dates = [r.record_date for r in src.parse_xml_dynamic(resp.content, "USD")]
+        usd = src.parse_xml_dynamic(resp.content, "USD", cbr_id=USD_CBR_ID)
+        record_dates = [r.record_date for r in usd]
         before = [d for d in record_dates if d <= d1]
         wanted = before[-1:] + [d for d in record_dates if d > d1]
-        for rd in wanted:
-            rec, cap = _daily_record(ctx, http, conn, rd)
-            if rec.record_date != rd:
-                raise FormatDriftError(f"CBR XML_daily({rd}) returned record {rec.record_date}")
-            obs.extend(FxObservation(rec.record_date, r, cap) for r in rec.rates)
+        if wanted:
+            obs = _range_observations(ctx, http, conn, wanted, upper)
     rows = expand_fx_records(
         obs,
         lambda d: ctx.is_business_day(d, RU_CALENDAR),
