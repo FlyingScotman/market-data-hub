@@ -31,7 +31,14 @@ from mdhub.config import Settings
 from mdhub.core.bizday import CalendarPredicate
 from mdhub.core.redact import sanitize_text
 from mdhub.db.pool import Database
-from mdhub.jobs import REGISTRY, JobParamError, JobRegistry, UnknownJobError, run_job
+from mdhub.jobs import (
+    REGISTRY,
+    JobParamError,
+    JobRegistry,
+    UnknownJobError,
+    run_job,
+    worker_draining,
+)
 
 __all__ = [
     "MAX_ATTEMPTS",
@@ -236,13 +243,16 @@ class JobRequestPoller:
         )
 
     def poll_once(self) -> list[Future[str]]:
-        """Recover abandoned requests, then claim queued ones up to the free capacity."""
+        """Recover abandoned requests, then claim queued ones up to the free capacity (none
+        while ``ops.worker_control.drain`` is set; running requests finish)."""
         try:
             recover_requests(self.db, self.worker_instance)
         except Exception as exc:
             log.warning("job request recovery failed: %s", type(exc).__name__)
         self._futures = {f for f in self._futures if not f.done()}
         started: list[Future[str]] = []
+        if worker_draining(self.db):  # an update is about to stop the worker
+            return started
         while len(self._futures) < self.max_parallel and not self._stop.is_set():
             try:
                 request = claim_request(self.db, self.worker_instance)

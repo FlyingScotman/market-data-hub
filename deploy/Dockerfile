@@ -1,4 +1,5 @@
-# market-data-hub image: `mdhub` CLI (scheduler, migrate, ops) + read API (uvicorn).
+# market-data-hub image: `mdhub` CLI (scheduler, migrate, ops, updater) + read API and admin
+# console (uvicorn).
 #
 # Build from the repository root (compose does this):
 #   docker build -f deploy/Dockerfile -t mdhub:latest .
@@ -69,7 +70,23 @@ ARG MDHUB_GID=10001
 RUN set -eux; \
     groupadd --system --gid "${MDHUB_GID}" mdhub; \
     useradd --system --uid "${MDHUB_UID}" --gid mdhub --home-dir /app --shell /usr/sbin/nologin mdhub; \
-    install -d -o mdhub -g mdhub -m 0750 /var/backups/mdhub
+    install -d -o mdhub -g mdhub -m 0750 /var/backups/mdhub /var/lib/mdhub/uploads
+
+# Docker CLI + compose plugin for the updater service (ADMIN_DESIGN §6). Only the updater gets
+# the docker socket; without it the CLI can do nothing.
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends gnupg; \
+    install -d -m 0755 /etc/apt/keyrings; \
+    curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg; \
+    . /etc/os-release; \
+    echo "deb [signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian ${VERSION_CODENAME} stable" \
+        > /etc/apt/sources.list.d/docker.list; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin; \
+    apt-get purge -y --auto-remove gnupg; \
+    rm -rf /var/lib/apt/lists/*; \
+    docker compose version
 
 COPY --from=build --chown=mdhub:mdhub /app/.venv /app/.venv
 # Pinned release keys (README_DEPLOY §11), root-owned: read-only for the mdhub user.

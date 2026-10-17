@@ -1,22 +1,29 @@
 """Console pages (ADMIN_DESIGN §4) and the operator / admin actions behind them.
 
-Read pages (Overview, Jobs, Data, Sources, API traffic, Updates) need ``viewer``; operator
+Read pages (Overview, Jobs, Data, Sources, API traffic) need ``viewer``; operator
 actions (request a job run, retry a failed backfill task, mark a gap ``not_expected``) need
 ``operator``. They only write to the database: a requested run is executed by the worker
 (``ops.job_request``, :mod:`mdhub.job_requests`), so the console holds no source credentials.
-Tokens, Users and Audit need ``admin``, and their changes a step-up. Every action is written
-to ``admin.audit_log``. Results come back as a fixed message key (``?done=``), never as text
+Tokens, Users, Audit and Updates need ``admin``, and their changes a step-up. Updates only
+queue ``ops.update_request`` rows (and store a verified upload in the shared upload volume);
+the updater (:mod:`mdhub.updater`) executes them. Every action is written to
+``admin.audit_log``. Results come back as a fixed message key (``?done=``), never as text
 from the URL.
 """
 
 from __future__ import annotations
 
+import hashlib
+import re
+import secrets
+import time
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Annotated, Any, Final
 
 import psycopg
 from apscheduler.triggers.cron import CronTrigger
-from fastapi import APIRouter, Depends, Form, Query
+from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import RedirectResponse, Response
 
 from mdhub import __version__
@@ -24,9 +31,19 @@ from mdhub.admin import store
 from mdhub.admin.web import Ctx, Denied, render, require
 from mdhub.api.auth import SCOPES, TokenError, create_token, list_tokens, revoke_token
 from mdhub.core.bizday import DbCalendar
+from mdhub.db.migrate import applied_migrations
 from mdhub.db.pool import DictConnection
 from mdhub.jobs import REGISTRY
 from mdhub.quality.health import job_health
+from mdhub.release import (
+    MAX_UPLOAD_BYTES,
+    ReleaseError,
+    default_keys_dir,
+    default_signature_path,
+    load_pinned_keys,
+    verify_archive,
+    version_key,
+)
 from mdhub.schedule import RULES, Rule, rule_applies
 
 __all__ = ["router"]
@@ -48,6 +65,8 @@ MESSAGES: Final = {
     "user_updated": "The user was updated.",
     "user_unlocked": "The login was unlocked.",
     "sessions_revoked": "The user's sessions were revoked.",
+    "update_queued": "The request is queued; the updater starts it within a few seconds.",
+    "update_cancelled": "The queued update was cancelled.",
 }
 
 
@@ -803,8 +822,28 @@ def audit_page(
 # ----------------------------------------------------------------------------------- updates
 
 
+UPDATE_FINAL: Final = ("done", "failed", "rolled_back", "cancelled")
+UPLOAD_MAX_AGE: Final = timedelta(days=1)
+_SHA256_RE: Final = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _vkey(version: str | None) -> tuple[int, ...] | None:
+    try:
+        return version_key(version or "")
+    except ReleaseError:
+        return None
+
+
+def _upload_dir(ctx: Ctx) -> Path:
+    return Path(ctx.settings.update_upload_dir)
+
+
 @router.get("/updates")
-def updates_page(ctx: Annotated[Ctx, Depends(viewer)]) -> Response:
+def updates_page(ctx: Annotated[Ctx, Depends(admin)], done: str | None = None) -> Response:
+    return _updates(ctx, flash=_flash(done))
+
+
+def _updates(ctx: Ctx, status_code: int = 200, **values: Any) -> Response:
     with ctx.db.connection() as conn:
         beats = conn.execute(
             """
@@ -813,4 +852,282 @@ def updates_page(ctx: Annotated[Ctx, Depends(viewer)]) -> Response:
             ORDER BY process, host, beat_at DESC
             """
         ).fetchall()
-    return render(ctx, "updates.html", beats=beats)
+        releases = conn.execute(
+            """
+            SELECT version, source, status, installed_at, installed_by, previous_version,
+                   key_id, git_commit FROM ops.release ORDER BY installed_at DESC LIMIT 20
+            """
+        ).fetchall()
+        available = [
+            dict(r)
+            for r in conn.execute(
+                "SELECT * FROM ops.release_available ORDER BY published_at DESC NULLS LAST"
+            ).fetchall()
+        ]
+        requests = conn.execute(
+            """
+            SELECT id, kind, source, version, state, requested_login, requested_at,
+                   finished_at, error FROM ops.update_request ORDER BY id DESC LIMIT 20
+            """
+        ).fetchall()
+        applied = applied_migrations(conn)
+        lines = _log_lines(conn, requests[0]["id"]) if requests else []
+    active = next((r for r in releases if r["status"] == "active"), None)
+    running = active["version"] if active else __version__
+    for a in available:
+        a["new_migrations"] = sorted(set(a["migrations"] or {}) - set(applied))
+        mine, theirs = _vkey(running), _vkey(a["version"])
+        a["newer"] = mine is None or (theirs is not None and theirs > mine)
+    latest = requests[0] if requests else None
+    return render(
+        ctx,
+        "updates.html",
+        status_code=status_code,
+        beats=beats,
+        running=running,
+        releases=releases,
+        available=available,
+        requests=requests,
+        latest=latest,
+        lines=lines,
+        final=UPDATE_FINAL,
+        busy=any(r["state"] not in UPDATE_FINAL for r in requests),
+        rollback_to=active["previous_version"] if active else None,
+        max_mb=MAX_UPLOAD_BYTES >> 20,
+        **values,
+    )
+
+
+def _log_lines(conn: DictConnection, request_id: int) -> list[dict[str, Any]]:
+    return conn.execute(
+        """
+        SELECT * FROM (SELECT ts, step, level, line, id FROM ops.update_log
+                       WHERE request_id = %s ORDER BY id DESC LIMIT 500) t ORDER BY id
+        """,
+        (request_id,),
+    ).fetchall()
+
+
+@router.get("/updates/log/{request_id}")
+def update_log(ctx: Annotated[Ctx, Depends(admin)], request_id: int) -> Response:
+    """Progress of one request (polled by htmx every 2 s until it is final)."""
+    with ctx.db.connection() as conn:
+        req = conn.execute(
+            "SELECT id, kind, version, state, error FROM ops.update_request WHERE id = %s",
+            (request_id,),
+        ).fetchone()
+        if req is None:
+            raise Denied(404, "No such update request.")
+        lines = _log_lines(conn, request_id)
+    return render(ctx, "_update_log.html", req=req, lines=lines, final=UPDATE_FINAL)
+
+
+def _confirm(ctx: Ctx, status_code: int = 200, **values: Any) -> Response:
+    return render(ctx, "update_confirm.html", status_code=status_code, **values)
+
+
+@router.get("/updates/confirm")
+def update_confirm(
+    ctx: Annotated[Ctx, Depends(admin)],
+    version: Annotated[str | None, Query(max_length=32)] = None,
+    rollback: bool = False,
+) -> Response:
+    """What an install or a rollback will do, before the admin confirms it."""
+    with ctx.db.connection() as conn:
+        applied = applied_migrations(conn)
+        active = conn.execute("SELECT * FROM ops.release WHERE status = 'active'").fetchone()
+        if rollback:
+            target = active["previous_version"] if active else None
+            if active is None or target is None:
+                raise Denied(404, "There is no previous version to roll back to.")
+            prev = conn.execute(
+                "SELECT migrations FROM ops.release WHERE version = %s", (target,)
+            ).fetchone()
+            known = prev["migrations"] if prev else None
+            return _confirm(
+                ctx,
+                kind="rollback",
+                version=target,
+                running=active["version"],
+                extra=None if known is None else sorted(set(applied) - set(known)),
+                backup_path=active["backup_path"],
+                installed_at=active["installed_at"],
+            )
+        row = conn.execute(
+            "SELECT * FROM ops.release_available WHERE version = %s AND verified",
+            (version or "",),
+        ).fetchone()
+    if row is None:
+        raise Denied(404, "No verified release with that version.")
+    return _confirm(
+        ctx,
+        kind="install",
+        source="github",
+        version=row["version"],
+        running=active["version"] if active else __version__,
+        release=row,
+        new_migrations=sorted(set(row["migrations"] or {}) - set(applied)),
+    )
+
+
+def _save_upload(upload: UploadFile, target: Path, limit: int) -> str | None:
+    """Copy an uploaded file to ``target``; its sha256, or ``None`` when over ``limit``."""
+    digest = hashlib.sha256()
+    size = 0
+    with target.open("wb") as out:
+        while chunk := upload.file.read(1 << 20):
+            size += len(chunk)
+            if size > limit:
+                break
+            digest.update(chunk)
+            out.write(chunk)
+    if size > limit:
+        target.unlink()
+        return None
+    return digest.hexdigest()
+
+
+@router.post("/updates/upload")
+def update_upload(
+    ctx: Annotated[Ctx, Depends(admin_step_up)],
+    archive: Annotated[UploadFile, File()],
+    signature: Annotated[UploadFile | None, File()] = None,
+) -> Response:
+    """Store an uploaded bundle (and its detached signature) in the upload volume, verify it
+    like the updater will, and show what installing it does."""
+    directory = _upload_dir(ctx)
+    directory.mkdir(parents=True, exist_ok=True)
+    cutoff = time.time() - UPLOAD_MAX_AGE.total_seconds()
+    for old in directory.iterdir():  # unconfirmed uploads of earlier days
+        if old.is_file() and old.stat().st_mtime < cutoff:
+            old.unlink(missing_ok=True)
+    # Verified under a temporary name: a refused upload never touches an accepted one.
+    tmp = directory / f".upload-{secrets.token_hex(8)}.tar.gz"
+    tmp_sig = default_signature_path(tmp)
+    sha = _save_upload(archive, tmp, MAX_UPLOAD_BYTES)
+    if sha is None:
+        raise Denied(413, f"The archive is larger than {MAX_UPLOAD_BYTES >> 20} MB.")
+    if signature is not None and signature.filename:
+        _save_upload(signature, tmp_sig, 4096)
+    details: dict[str, Any] = {"sha256": sha, "size": tmp.stat().st_size}
+    try:
+        verified = verify_archive(tmp, load_pinned_keys(default_keys_dir()))
+    except ReleaseError as exc:
+        tmp.unlink(missing_ok=True)
+        tmp_sig.unlink(missing_ok=True)
+        with ctx.db.connection() as conn:
+            ctx.audit(
+                conn,
+                "update.upload",
+                target=f"upload:{sha[:16]}",
+                details={**details, "error": str(exc)[:500]},
+                outcome="failed",
+            )
+        return _updates(ctx, 400, error=f"Upload refused: {exc}")
+    path = directory / f"{sha}.tar.gz"
+    tmp_sig.replace(default_signature_path(path))
+    tmp.replace(path)
+    m = verified.manifest
+    key_id = verified.key.key_id_hex if verified.key else None
+    with ctx.db.connection() as conn:
+        ctx.audit(
+            conn,
+            "update.upload",
+            target=f"upload:{sha[:16]}",
+            details={**details, "version": m.version, "key": key_id},
+        )
+        applied = applied_migrations(conn)
+    return _confirm(
+        ctx,
+        kind="install",
+        source="upload",
+        version=m.version,
+        running=__version__,
+        upload_sha256=sha,
+        manifest=m,
+        key_id=key_id,
+        new_migrations=sorted({v for v, _ in m.migrations} - set(applied)),
+    )
+
+
+def _queue_update(ctx: Ctx, kind: str, source: str, version: str, sha: str | None) -> Response:
+    with ctx.db.connection() as conn:
+        try:
+            with conn.transaction():
+                row = conn.execute(
+                    """
+                    INSERT INTO ops.update_request (kind, source, version, upload_sha256,
+                                                    requested_by, requested_login)
+                    VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
+                    """,
+                    (kind, source, version, sha, ctx.user.id, ctx.user.login),
+                ).fetchone()
+        except psycopg.errors.UniqueViolation:
+            raise Denied(409, "An update is already queued or running.") from None
+        assert row is not None
+        ctx.audit(
+            conn,
+            "update.request",
+            target=f"update:{row['id']}",
+            details={"kind": kind, "source": source, "version": version, "sha256": sha},
+        )
+    return _done("/updates", "update_queued")
+
+
+@router.post("/updates/install")
+def update_install(
+    ctx: Annotated[Ctx, Depends(admin_step_up)],
+    source: Annotated[str, Form(max_length=16)],
+    version: Annotated[str, Form(max_length=32)],
+    upload_sha256: Annotated[str | None, Form(max_length=64)] = None,
+) -> Response:
+    if _vkey(version) is None:
+        raise Denied(400, "Invalid version.")
+    if source == "upload":
+        if not upload_sha256 or not _SHA256_RE.match(upload_sha256):
+            raise Denied(400, "Invalid upload.")
+        if not (_upload_dir(ctx) / f"{upload_sha256}.tar.gz").is_file():
+            raise Denied(404, "The uploaded file is gone; upload it again.")
+        return _queue_update(ctx, "install", "upload", version, upload_sha256)
+    if source != "github":
+        raise Denied(400, "Invalid source.")
+    with ctx.db.connection() as conn:
+        row = conn.execute(
+            "SELECT 1 FROM ops.release_available WHERE version = %s AND verified", (version,)
+        ).fetchone()
+    if row is None:
+        raise Denied(404, "No verified release with that version.")
+    return _queue_update(ctx, "install", "github", version, None)
+
+
+@router.post("/updates/rollback")
+def update_rollback(ctx: Annotated[Ctx, Depends(admin_step_up)]) -> Response:
+    with ctx.db.connection() as conn:
+        row = conn.execute(
+            "SELECT previous_version FROM ops.release WHERE status = 'active'"
+        ).fetchone()
+    if row is None or row["previous_version"] is None:
+        raise Denied(404, "There is no previous version to roll back to.")
+    return _queue_update(ctx, "rollback", "release", str(row["previous_version"]), None)
+
+
+@router.post("/updates/requests/{request_id}/cancel")
+def update_cancel(ctx: Annotated[Ctx, Depends(admin_step_up)], request_id: int) -> Response:
+    with ctx.db.connection() as conn:
+        row = conn.execute(
+            """
+            UPDATE ops.update_request SET state = 'cancelled', state_at = now(),
+                finished_at = now()
+            WHERE id = %s AND state = 'queued' RETURNING version
+            """,
+            (request_id,),
+        ).fetchone()
+        if row is None:
+            raise Denied(404, "No queued update with that id.")
+        ctx.audit(
+            conn,
+            "update.cancel",
+            target=f"update:{request_id}",
+            details={"version": row["version"]},
+        )
+    return _done("/updates", "update_cancelled")

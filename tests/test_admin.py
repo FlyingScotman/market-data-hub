@@ -7,6 +7,7 @@ from __future__ import annotations
 import re
 import time
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import psycopg
@@ -23,6 +24,7 @@ from mdhub.admin.app import SECURITY_HEADERS, create_app
 from mdhub.admin.web import client_address, parse_networks
 from mdhub.config import Settings
 from mdhub.jobs import REGISTRY, JobContext
+from mdhub.release import default_signature_path
 
 Conn = psycopg.Connection[DictRow]
 PASSWORD = "correct horse battery staple"
@@ -466,9 +468,9 @@ def test_roles_viewer_operator_admin(
     console: Console, conn: Conn, db_url: str, fake_job: list[dict[str, Any]]
 ) -> None:
     _enrolled(console, conn, "viv", "viewer")
-    for path in ("/", "/jobs", "/data", "/sources", "/traffic", "/updates", "/account"):
+    for path in ("/", "/jobs", "/data", "/sources", "/traffic", "/account"):
         assert console.get(path).status_code == 200, path
-    for path in ("/tokens", "/users", "/audit"):
+    for path in ("/tokens", "/users", "/audit", "/updates"):
         assert console.get(path).status_code == 403, path
     console.get("/jobs")
     r = console.post("/jobs/admin_test_job/run")
@@ -799,10 +801,133 @@ def test_pages_render_real_data(console: Console, conn: Conn) -> None:
     traffic = console.get("/traffic")
     assert "tdm" in traffic.text and "192.0.2.66" in traffic.text
     assert "Datasets" in console.get("/data").text
-    assert "Running version" in console.get("/updates").text
+    assert "No updater heartbeat" in console.get("/updates").text
     assert "alice" in console.get("/users").text
     assert "login.success" in console.get("/audit").text
     assert console.get("/jobs?job=bonds_eod&status=failed").status_code == 200
+
+
+# ------------------------------------------------------------------------------ updates
+
+
+def test_updates_need_admin_and_step_up_upload_install(
+    db_url: str, conn: Conn, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Upload -> verified confirmation with the migration warning -> queued request; viewers
+    and operators get nothing, every change needs a step-up, the console runs nothing."""
+    from test_release import SigningKey
+    from test_updater import EXTRA, bundle
+
+    key = SigningKey.generate()
+    keys = tmp_path / "keys"
+    keys.mkdir()
+    (keys / f"{key.key_id_hex}.pub").write_bytes(key.public_file())
+    monkeypatch.setenv("MDHUB_RELEASE_KEYS_DIR", str(keys))
+    uploads = tmp_path / "uploads"
+    signed = bundle(tmp_path, key, "1.1.0", extra=True)
+    files = {
+        "archive": (signed.name, signed.read_bytes(), "application/gzip"),
+        "signature": ("x.minisig", default_signature_path(signed).read_bytes(), "text/plain"),
+    }
+    with _client(db_url, update_upload_dir=str(uploads)) as c:
+        console = Console(c)
+        op = Console(c.__class__(c.app, base_url=ORIGIN, client=(CLIENT_IP, 50001)))
+        _enrolled(op, conn, "otto", "operator")
+        assert op.get("/updates").status_code == 403
+        assert op.post("/updates/upload", files=files).status_code == 403
+        assert op.post("/updates/rollback").status_code == 403
+
+        auth = _enrolled(console, conn, "alice")
+        conn.execute("UPDATE admin.session SET step_up_at = now() - interval '6 minutes'")
+        conn.commit()
+        page = console.get("/updates")
+        assert page.status_code == 200 and "confirm your identity" in page.text
+        assert 'action="/updates/upload"' not in page.text  # no upload form without step-up
+        r = console.post("/updates/install", {"source": "github", "version": "1.1.0"})
+        assert r.url.path == "/step-up"
+        console.passkey(auth)
+        console.get("/updates")
+
+        r = console.post("/updates/upload", files=files)
+        assert r.status_code == 200 and "Install 1.1.0" in r.text, r.text
+        assert "1 new migration(s)" in r.text and EXTRA in r.text and "pre-update dump" in r.text
+        sha = re.search(r'name="upload_sha256" value="([0-9a-f]{64})"', r.text)
+        assert sha is not None and (uploads / f"{sha.group(1)}.tar.gz").is_file()
+        assert (uploads / f"{sha.group(1)}.SHA256SUMS.minisig").is_file()
+        conn.rollback()
+        assert conn.execute("SELECT count(*) AS n FROM ops.update_request").fetchone() == {"n": 0}
+        r = console.post(
+            "/updates/install",
+            {"source": "upload", "version": "1.1.0", "upload_sha256": sha.group(1)},
+        )
+        assert r.status_code == 200 and "The request is queued" in r.text
+        conn.rollback()
+        req = conn.execute("SELECT * FROM ops.update_request").fetchone()
+        assert req is not None and req["state"] == "queued" and req["kind"] == "install"
+        assert req["upload_sha256"] == sha.group(1) and req["requested_login"] == "alice"
+        assert 'hx-get="/updates/log/' in r.text  # live progress while open
+        assert _audit(conn, "update.upload")[-1]["details"]["version"] == "1.1.0"
+        assert _audit(conn, "update.request")[-1]["target"] == f"update:{req['id']}"
+        again = {"source": "upload", "version": "1.1.0", "upload_sha256": sha.group(1)}
+        assert console.post("/updates/install", again).status_code == 409  # one at a time
+        r = console.post(f"/updates/requests/{req['id']}/cancel")
+        assert "cancelled" in r.text
+        log = console.get(f"/updates/log/{req['id']}")
+        assert "cancelled" in log.text and "hx-get" not in log.text  # final: polling stops
+
+        # refused uploads leave nothing behind and queue nothing
+        bad = dict(files, signature=("x.minisig", key.sign(b"other"), "text/plain"))
+        r = console.post("/updates/upload", files=bad)
+        assert r.status_code == 400 and "Upload refused" in r.text and "does not verify" in r.text
+        r = console.post("/updates/upload", files={"archive": files["archive"]})
+        assert r.status_code == 400 and "unsigned" in r.text
+        assert sorted(p.name for p in uploads.iterdir()) == sorted(
+            [f"{sha.group(1)}.tar.gz", f"{sha.group(1)}.SHA256SUMS.minisig"]
+        )
+        assert _audit(conn, "update.upload")[-1]["outcome"] == "failed"
+        monkeypatch.setattr("mdhub.admin.app.UPLOAD_REQUEST_MAX", 1000)
+        assert console.post("/updates/upload", files=files).status_code == 413
+
+        # GitHub release listed by the updater, and a rollback across a migration
+        conn.execute(
+            """
+            INSERT INTO ops.release_available (version, tag, notes, verified, key_id,
+                                               migrations)
+            VALUES ('1.2.0', 'v1.2.0', 'Faster EOD.', true, 'ABCD', '{"0698_new": "x"}'),
+                   ('1.3.0', 'v1.3.0', NULL, false, NULL, NULL)
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO ops.release (version, source, status, previous_version, backup_path,
+                                     migrations)
+            VALUES ('1.0.0', 'manual', 'previous', NULL, NULL, '{}'),
+                   ('1.1.0', 'upload', 'active', '1.0.0', '/b/pre-update.dump', '{}')
+            """
+        )
+        conn.commit()
+        page = console.get("/updates")
+        assert "Faster EOD." in page.text and "refused" in page.text
+        assert "/updates/confirm?version=1.2.0" in page.text
+        assert "/updates/confirm?version=1.3.0" not in page.text
+        r = console.get("/updates/confirm?version=1.2.0")
+        assert "0698_new" in r.text and "Install 1.2.0" in r.text
+        assert console.get("/updates/confirm?version=1.3.0").status_code == 404
+        assert (
+            console.post("/updates/install", {"source": "github", "version": "1.3.0"}).status_code
+            == 404
+        )
+        r = console.get("/updates/confirm?rollback=1")
+        assert "Roll back to 1.0.0" in r.text and "/b/pre-update.dump" in r.text
+        r = console.post("/updates/rollback")
+        assert "The request is queued" in r.text
+        conn.rollback()
+        last = conn.execute("SELECT * FROM ops.update_request ORDER BY id DESC").fetchone()
+        assert last is not None and (last["kind"], last["source"], last["version"]) == (
+            "rollback",
+            "release",
+            "1.0.0",
+        )
 
 
 # --------------------------------------------------------------------------------- CLI

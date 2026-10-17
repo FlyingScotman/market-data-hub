@@ -7,7 +7,7 @@ the read API. Two variants: **docker compose** (recommended) and **bare metal** 
 | file | purpose |
 |---|---|
 | `Dockerfile` (+ `Dockerfile.dockerignore`) | image: Python 3.12, deps from `uv.lock`, `postgresql-client-16`, user `mdhub` (uid 10001) |
-| `docker-compose.yml` | `postgres` (16, tuned, healthcheck), `migrate` (one-shot), `worker`, `api`, `admin` (console, not published), optional `caddy` (profile `tls`) |
+| `docker-compose.yml` | `postgres` (16, tuned, healthcheck), `migrate` (one-shot), `worker`, `api`, `admin` (console, not published), `updater` (self-update, §13), optional `caddy` (profile `tls`) |
 | `env.example` | every environment variable, documented, no values |
 | `postgres/postgresql.conf` | tuning for 4 GB RAM |
 | `postgres/initdb/10-mdhub-roles.sh` | first start: read-only role + default privileges |
@@ -165,6 +165,9 @@ docker compose build
 docker compose up -d                           # migrate runs first, then worker/api restart
 docker compose run --rm --no-deps worker mdhub db-info
 ```
+
+With the release layout of §13 the console does all of this (Updates page): verify, backup,
+build, drain, migrate, restart, check and automatic rollback.
 
 Check a release before unpacking it: `mdhub release verify market-data-hub-X.Y.Z.tar.gz` (§11).
 Migrations are forward-only and checksummed; a failed migration stops `migrate` and the
@@ -414,3 +417,152 @@ Local try-out (no TLS): `MDHUB_ADMIN_DOMAIN=localhost MDHUB_ADMIN_ORIGIN=http://
 MDHUB_ADMIN_ALLOW_CIDRS=127.0.0.1/32 uvicorn mdhub.admin.app:app --port 8081`, then open
 `http://localhost:8081` (Chromium-based browsers and Firefox treat localhost as secure, so the
 `__Host-` cookie and passkeys work).
+
+## 13. Self-update from the console (updater)
+
+The `updater` service (`mdhub updater`, ADMIN_DESIGN §6) installs signed releases from GitHub
+or from a file uploaded on the console's Updates page, and rolls back. The console only queues
+requests (`ops.update_request`); the updater is the only container with the docker socket and
+the GitHub token, has no port, and verifies every archive against the keys pinned in the
+running image (§11) before it touches anything.
+
+### Layout
+
+The updater needs every release in its own directory and the shared files outside them:
+
+| path (`MDHUB_UPDATE_ROOT`, default `/opt/mdhub`) | content |
+|---|---|
+| `releases/X.Y.Z/` | unpacked bundles (the `mdhub/` directory of each archive) |
+| `current` | symlink to the running release; always run compose from `current/deploy` |
+| `archives/` | verified bundles and signatures (downloads and copied uploads) |
+| `shared/.env` | the `.env`, linked as `deploy/.env` into every release |
+| `shared/updater.env` | `MDHUB_UPDATE_GITHUB_TOKEN=...` (optional; only the updater reads it) |
+| `shared/backups/` | nightly dumps and the `pre-update-*.dump` files (never rotated: delete old ones by hand) |
+| `shared/updater-journal.json` | exists only while a restore runs (see recovery) |
+
+Move an existing installation (§2-3) to it once, with the first release that has the updater
+(`$V`, verified as in §11):
+
+```bash
+cd /opt/mdhub/deploy && docker compose run --rm --no-deps worker mdhub ops backup
+docker compose --profile tls down                      # volumes stay (project name mdhub)
+sudo mv /opt/mdhub /opt/mdhub-old
+sudo mkdir -p /opt/mdhub/releases /opt/mdhub/archives /opt/mdhub/shared
+sudo tar xzf /opt/market-data-hub-$V.tar.gz -C /opt/mdhub/releases
+sudo mv /opt/mdhub/releases/mdhub /opt/mdhub/releases/$V
+sudo cp /opt/market-data-hub-$V.* /opt/mdhub/archives/
+sudo mv /opt/mdhub-old/deploy/.env /opt/mdhub/shared/.env
+sudo mv /opt/mdhub-old/deploy/backups /opt/mdhub/shared/backups
+sudo ln -s /opt/mdhub/shared/.env /opt/mdhub/releases/$V/deploy/.env
+sudo ln -s releases/$V /opt/mdhub/current
+sudoedit /opt/mdhub/shared/.env   # MDHUB_IMAGE_TAG=$V, MDHUB_BACKUP_HOST_DIR=/opt/mdhub/shared/backups
+cd /opt/mdhub/current/deploy && docker compose build && docker compose up -d
+docker compose --profile tls up -d caddy               # the Caddyfile with the upload limit
+```
+
+GitHub releases (optional; uploads work without): create a fine-grained token with
+**Contents: read** on this one repository only, then
+
+```bash
+echo 'MDHUB_UPDATE_GITHUB_TOKEN=github_pat_...' | sudo tee /opt/mdhub/shared/updater.env
+sudo chmod 600 /opt/mdhub/shared/updater.env
+sudo ln -s /opt/mdhub/shared/updater.env /opt/mdhub/current/deploy/updater.env
+docker compose up -d updater
+```
+
+`env_file` entries with `required: false` need docker compose 2.24 or newer on the host.
+The token goes through `MDHUB_HTTP_PROXY` when set, and only to `api.github.com` (the asset
+download redirect does not carry it). Never put it into `.env`: worker, api and migrate read
+all of `.env`.
+
+### What an update does
+
+An admin with a fresh step-up picks a verified GitHub release ("Review and install") or uploads
+`market-data-hub-X.Y.Z.tar.gz` plus its `.SHA256SUMS.minisig` (200 MB at most; Caddy allows
+that size on `/updates/upload` only). The confirmation page lists the release's new
+migrations: with migrations, any rollback means restoring the pre-update dump. The updater then
+runs, logging each step on the page (refreshed every 2 s) and in `admin.audit_log`:
+
+1. **verifying**: signature, every file hash, manifest; newer than the running version and at
+   least its `min_previous_version`; migration checksums equal the applied ones;
+2. **backing_up**: `pg_dump` to `shared/backups/pre-update-<db>-<from>-to-<to>-<stamp>.dump`;
+3. **staging**: unpack to `releases/X.Y.Z`, `docker compose build` as `mdhub:X.Y.Z`;
+4. **draining**: `ops.worker_control.drain`: the worker finishes running jobs (at most 10
+   minutes) and starts no scheduled run or console request; then the worker is stopped.
+   Skipped scheduled fires are recorded as `lock_busy` and caught up by `quality`;
+5. **migrating**: `docker compose run --rm migrate` with the new image;
+6. **starting**: `MDHUB_IMAGE_TAG=X.Y.Z` in `shared/.env`, `current` -> `releases/X.Y.Z`,
+   `docker compose up -d --no-deps worker api admin`;
+7. **checking** (3 minutes at most): `/health/ready` reports X.Y.Z, a worker heartbeat reports
+   X.Y.Z and `/v1/coverage` answers a short-lived read token;
+8. **done**: the updater starts its successor (a one-off container recreates the `updater`
+   service) and exits.
+
+A failure in steps 1-3 changes nothing (`failed`). A later one rolls back automatically
+(`rolled_back`): when no migration ran, the previous tag and symlink come back within seconds;
+when one did, the services stop, the pre-update dump is restored (the database is dropped and
+re-created; the update and audit trail are kept), then the previous version starts. Data
+loaded after the backup is lost; backfill reloads it. "Roll back to X" on the page does the
+same for the version before the current one; across migrations it restores the dump taken
+before the current version was installed.
+
+The updater resumes an interrupted request at the recorded step when it starts again. Only one
+update runs at a time (an advisory lock, and the console refuses a second request).
+
+### Manual recovery
+
+- **Request `failed` with "rollback failed"**: the message says which step failed. Put the
+  previous version back by hand: `ln -sfn releases/<prev> /opt/mdhub/current`,
+  `MDHUB_IMAGE_TAG=<prev>` in `shared/.env`, restore the `pre-update-*.dump` named in the log
+  when migrations ran (`docker compose run --rm --no-deps worker mdhub ops restore <file>
+  --clean --yes` or §4), `UPDATE ops.worker_control SET drain = false;`, then
+  `cd /opt/mdhub/current/deploy && docker compose up -d`.
+- **`shared/updater-journal.json` exists**: a restore was interrupted; the updater redoes it
+  at start (logs: `docker compose logs updater`). Delete the file only after restoring the
+  database yourself.
+- **Updater down**: requests stay `queued` (the page warns when no updater heartbeat exists);
+  cancel them on the page.
+
+### Rehearsal on a throw-away VPS
+
+Do this once before relying on it in production, and again when the updater changes. Never on
+the production server, and never with the production signing key.
+
+1. Generate a rehearsal key (`minisign -G -p rehearsal.pub -s rehearsal.key`) and commit
+   `rehearsal.pub` as `deploy/release-keys/<KEYID>.pub` on a throw-away branch. From that branch
+   build and sign (`make_bundle.sh --code-only --version ...`, `minisign -S -s rehearsal.key -m
+   dist/market-data-hub-X.Y.Z.SHA256SUMS`) five bundles:
+   - **A** `9.0.0`: the branch as is;
+   - **B** `9.1.0`: plus a migration `0690_rehearsal.sql` (`CREATE TABLE ops.rehearsal (x int);`);
+   - **C** `9.2.0`: A plus a broken API (`raise RuntimeError` at the top of
+     `src/mdhub/api/app.py`), no new migration;
+   - **D** `9.3.0`: B plus the broken API (new migration *and* failing check);
+   - **E** `9.4.0`: B with one file changed after signing (repack the archive: tampered).
+2. Fresh Ubuntu VPS: §1, then §2-3 with bundle A directly in the §13 layout, load a little
+   data (`mdhub run cbr`, `mdhub run quality`), create an admin (§12), allow-list your IP.
+3. **Install with a migration**: upload B; the confirmation shows `0690_rehearsal`; install.
+   Expect `done`; `ops.release`: 9.1.0 active, 9.0.0 previous; `docker compose ps` shows
+   `mdhub:9.1.0` for worker, api, admin and (after a few seconds) updater; the Overview shows
+   no version mismatch.
+4. **Drain**: before step 3, start a long job from the Jobs page ("Run now"); the update log
+   must show "waiting for running jobs" and continue only after it finished.
+5. **Rollback across a migration**: "Roll back to 9.0.0". Expect `done`, `ops.rehearsal` gone,
+   `ops.update_log` and `admin.audit_log` still holding the 9.1.0 install.
+6. **Automatic rollback without migration**: install C. Expect `rolled_back` within about
+   3 minutes, back on 9.0.0 (tag switch only, no restore in the log).
+7. **Automatic rollback with restore**: install B again, then D. Expect D `rolled_back` with
+   "restoring the pre-update dump", back on 9.1.0 with `ops.rehearsal` present and data
+   loaded before the D backup intact.
+8. **Refusals** (each ends at verifying, nothing restarts): upload E (hash mismatch), A's archive
+   without its signature (unsigned), A signed with another key (unknown key), and A while 9.1.0
+   runs (older version).
+9. **Crash and resume**: install C again and run `docker compose kill updater` while the log
+   shows `staging`, then `docker compose up -d updater`: the log shows "resuming at staging"
+   and the request completes. Repeat with D, killing the updater while it restores; on restart
+   it redoes the restore (journal) and finishes `rolled_back`.
+10. **GitHub**: push the rehearsal bundles as releases of a private test repository, point
+    `MDHUB_UPDATE_GITHUB_REPO` at it with a token for that repository, and check that the page
+    lists them with notes, verified, and installs one. Confirm with `tcpdump`/proxy logs that
+    the token only goes to `api.github.com` (and through `MDHUB_HTTP_PROXY` when set).
+11. **Upload limit**: a 250 MB file is refused by Caddy (413) before it reaches the console.
+12. Destroy the VPS and the rehearsal key.

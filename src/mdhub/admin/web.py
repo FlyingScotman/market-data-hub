@@ -224,7 +224,7 @@ NAV: Final[tuple[tuple[str, str, Role], ...]] = (
     ("/tokens", "Tokens", "admin"),
     ("/users", "Users", "admin"),
     ("/audit", "Audit", "admin"),
-    ("/updates", "Updates", "viewer"),
+    ("/updates", "Updates", "admin"),
 )
 
 

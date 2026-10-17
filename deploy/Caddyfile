@@ -48,7 +48,13 @@
 # the app (which trusts X-Forwarded-For only from Caddy). Security headers come from the app.
 {$MDHUB_ADMIN_DOMAIN:admin.invalid} {
 	@outside not remote_ip {$MDHUB_ADMIN_ALLOW_CIDRS:192.0.2.1/32}
-	request_body {
+	# Release uploads (ADMIN_DESIGN §6.2): 200 MB archive + signature; every other path 1 MB.
+	@upload path /updates/upload
+	@not_upload not path /updates/upload
+	request_body @upload {
+		max_size 201MB
+	}
+	request_body @not_upload {
 		max_size 1MB
 	}
 	route {

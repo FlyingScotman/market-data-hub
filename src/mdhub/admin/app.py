@@ -43,6 +43,7 @@ from mdhub.config import Settings
 from mdhub.core.redact import SecretRedactingFilter, sanitize_text
 from mdhub.db.pool import Database
 from mdhub.jobs import discover_jobs
+from mdhub.release import MAX_UPLOAD_BYTES
 
 __all__ = ["SECURITY_HEADERS", "app", "create_app"]
 
@@ -67,6 +68,18 @@ SECURITY_HEADERS: Final = {
         "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()"
     ),
 }
+
+
+UPLOAD_PATH: Final = "/updates/upload"
+UPLOAD_REQUEST_MAX: Final = MAX_UPLOAD_BYTES + (1 << 20)
+"""The archive plus its signature and the multipart framing (Caddy allows this path 201 MB)."""
+
+
+def _upload_size_ok(request: Request) -> bool:
+    """A declared ``Content-Length`` within the limit: the server reads no more than that, so
+    the body never exceeds it (chunked uploads without a length are refused)."""
+    length = request.headers.get("content-length", "")
+    return length.isdigit() and int(length) <= UPLOAD_REQUEST_MAX
 
 
 def _wants_json(request: Request) -> bool:
@@ -130,6 +143,8 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
             response = PlainTextResponse("Forbidden", status_code=403)
         elif cfg.rp is None:
             response = PlainTextResponse("Admin console not configured", status_code=503)
+        elif request.url.path == UPLOAD_PATH and not _upload_size_ok(request):  # before parsing
+            response = PlainTextResponse("Upload too large", status_code=413)
         else:
             try:
                 response = await call_next(request)

@@ -60,6 +60,8 @@ KEYS_DIR_ENV: Final = "MDHUB_RELEASE_KEYS_DIR"
 MAX_MEMBERS: Final = 50_000
 MAX_TOTAL_BYTES: Final = 1 << 30
 """Uncompressed size limit of an archive (the upload limit is 200 MB compressed)."""
+MAX_UPLOAD_BYTES: Final = 200 << 20
+"""Size limit of an archive uploaded in the console or downloaded from GitHub (200 MiB)."""
 MAX_SMALL_FILE: Final = 4 << 20
 """Limit for files read into memory: SHA256SUMS, MANIFEST.json, signatures, keys."""
 
@@ -605,6 +607,8 @@ def verify_archive(
 
 __all__ = [
     "KEYS_DIR_ENV",
+    "MAX_UPLOAD_BYTES",
+    "MIGRATIONS_PREFIX",
     "Manifest",
     "PublicKey",
     "ReleaseError",

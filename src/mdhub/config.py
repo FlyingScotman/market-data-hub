@@ -32,6 +32,14 @@ Environment variables (DESIGN §7 plus a few operational knobs):
                                     space separated); empty = every request refused
 ``MDHUB_ADMIN_TRUSTED_PROXIES``     peers (IPs/CIDRs) whose ``X-Forwarded-For`` is used
 ``MDHUB_ADMIN_SECRET_KEY``          32 random bytes (hex or base64) encrypting TOTP secrets
+``MDHUB_UPDATE_GITHUB_TOKEN``       fine-grained GitHub token (contents:read on the repository);
+                                    updater only (``deploy/updater.env``), never in ``.env``
+``MDHUB_UPDATE_GITHUB_REPO``        ``owner/name`` of the release repository
+``MDHUB_UPDATE_ROOT``               host directory with ``releases/``, ``current``, ``shared/``;
+                                    mounted at the same path in the updater, default ``/opt/mdhub``
+``MDHUB_UPDATE_UPLOAD_DIR``         upload volume shared by console and updater, default
+                                    ``/var/lib/mdhub/uploads``
+``MDHUB_UPDATE_API_URL``            read API as the updater reaches it, default ``http://api:8080``
 ``MOEX_API_KEY``                    MOEX APIM bearer token
 ``MOEX_PASSPORT_LOGIN`` / ``_PASSWORD`` MOEX Passport credentials
 ``RATESCALC_USERNAME`` / ``_PASSWORD``  Ratescalcs basic auth
@@ -156,6 +164,23 @@ class Settings(BaseSettings):
     admin_trusted_proxies: str | None = _env("MDHUB_ADMIN_TRUSTED_PROXIES")
     admin_secret_key: SecretStr | None = _env("MDHUB_ADMIN_SECRET_KEY")
 
+    update_github_token: SecretStr | None = _env("MDHUB_UPDATE_GITHUB_TOKEN")
+    update_github_repo: str = Field(
+        default="FiveLimaGolf/market-data-hub",
+        validation_alias=AliasChoices("MDHUB_UPDATE_GITHUB_REPO", "update_github_repo"),
+    )
+    update_root: str = Field(
+        default="/opt/mdhub", validation_alias=AliasChoices("MDHUB_UPDATE_ROOT", "update_root")
+    )
+    update_upload_dir: str = Field(
+        default="/var/lib/mdhub/uploads",
+        validation_alias=AliasChoices("MDHUB_UPDATE_UPLOAD_DIR", "update_upload_dir"),
+    )
+    update_api_url: str = Field(
+        default="http://api:8080",
+        validation_alias=AliasChoices("MDHUB_UPDATE_API_URL", "update_api_url"),
+    )
+
     moex_api_key: SecretStr | None = _env("MOEX_API_KEY")
     moex_passport_login: SecretStr | None = _env("MOEX_PASSPORT_LOGIN")
     moex_passport_password: SecretStr | None = _env("MOEX_PASSPORT_PASSWORD")
@@ -199,6 +224,7 @@ class Settings(BaseSettings):
         "admin_allow_cidrs",
         "admin_trusted_proxies",
         "admin_secret_key",
+        "update_github_token",
         mode="before",
     )
     @classmethod
