@@ -25,6 +25,7 @@ from mdhub.admin.web import Ctx, Denied, render, require
 from mdhub.api.auth import SCOPES, TokenError, create_token, list_tokens, revoke_token
 from mdhub.core.bizday import DbCalendar
 from mdhub.db.pool import DictConnection
+from mdhub.hostmon.status import Machine, format_value, machine_status, worst
 from mdhub.jobs import REGISTRY
 from mdhub.quality.health import job_health
 from mdhub.schedule import RULES, Rule, rule_applies
@@ -96,6 +97,7 @@ def overview_data(ctx: Ctx) -> dict[str, Any]:
         failed_tasks = _one(
             conn, "SELECT count(*) AS v FROM ops.backfill_task WHERE status = 'failed'"
         )
+        machine = machine_status(conn, ctx.settings)
     problems: list[str] = []
     worker = next((b for b in beats if b["process"] == "worker"), None)
     worker_age = (now - worker["beat_at"]).total_seconds() if worker else None
@@ -170,8 +172,35 @@ def overview_data(ctx: Ctx) -> dict[str, Any]:
             f"{len(stale)} stale, {open_gaps} open gaps, {unfillable} unfillable",
         ),
         ("Version", "ok" if not any(v != __version__ for v in versions) else "warn", __version__),
+        *_machine_lights(machine),
     ]
+    for c in machine.problems():
+        problems.append(f"Machine: {c.area} {c.label} {format_value(c.value, c.unit)} ({c.state}).")
+    if not machine.containers_reporting:
+        problems.append("Machine: the updater is not reporting container status.")
     return {"lights": lights, "problems": problems, "beats": beats, "now": now}
+
+
+def _machine_lights(machine: Machine) -> list[tuple[str, str, str]]:
+    def light(label: str, areas: tuple[str, ...]) -> tuple[str, str, str]:
+        bad = [c for c in machine.problems() if c.area in areas]
+        state = worst([machine.area_state(a) for a in areas])
+        return label, state, ", ".join(c.label for c in bad[:3]) or "ok"
+
+    containers = machine.area_state("Containers")
+    return [
+        light("Machine", ("CPU", "Memory", "Network", "System")),
+        light("Disks", ("Disks",)),
+        light("PostgreSQL", ("PostgreSQL",)),
+        (
+            "Containers",
+            containers,
+            "updater not reporting"
+            if not machine.containers_reporting
+            else f"{sum(s == 'ok' for s in machine.container_states.values())}"
+            f"/{len(machine.container_states)} ok",
+        ),
+    ]
 
 
 def _one(conn: DictConnection, query: str) -> Any:

@@ -221,6 +221,7 @@ NAV: Final[tuple[tuple[str, str, Role], ...]] = (
     ("/data", "Data", "viewer"),
     ("/sources", "Sources", "viewer"),
     ("/traffic", "API traffic", "viewer"),
+    ("/machine", "Machine", "viewer"),
     ("/tokens", "Tokens", "admin"),
     ("/users", "Users", "admin"),
     ("/audit", "Audit", "admin"),

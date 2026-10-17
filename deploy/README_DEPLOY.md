@@ -7,7 +7,7 @@ the read API. Two variants: **docker compose** (recommended) and **bare metal** 
 | file | purpose |
 |---|---|
 | `Dockerfile` (+ `Dockerfile.dockerignore`) | image: Python 3.12, deps from `uv.lock`, `postgresql-client-16`, user `mdhub` (uid 10001) |
-| `docker-compose.yml` | `postgres` (16, tuned, healthcheck), `migrate` (one-shot), `worker`, `api`, `admin` (console, not published), optional `caddy` (profile `tls`) |
+| `docker-compose.yml` | `postgres` (16, tuned, healthcheck), `migrate` (one-shot), `worker`, `api`, `admin` (console, not published), `hostmon` (host sampler, §13), optional `caddy` (profile `tls`) |
 | `env.example` | every environment variable, documented, no values |
 | `postgres/postgresql.conf` | tuning for 4 GB RAM |
 | `postgres/initdb/10-mdhub-roles.sh` | first start: read-only role + default privileges |
@@ -414,3 +414,39 @@ Local try-out (no TLS): `MDHUB_ADMIN_DOMAIN=localhost MDHUB_ADMIN_ORIGIN=http://
 MDHUB_ADMIN_ALLOW_CIDRS=127.0.0.1/32 uvicorn mdhub.admin.app:app --port 8081`, then open
 `http://localhost:8081` (Chromium-based browsers and Firefox treat localhost as secure, so the
 `__Host-` cookie and passkeys work).
+
+## 13. Machine monitoring
+
+The console's **Machine** page (ADMIN_DESIGN §10) shows CPU (including steal and iowait),
+memory, disks, network, uptime, the clock offset, PostgreSQL statistics and containers, with
+ok/warn/crit states that also feed the Overview lights.
+
+- **`hostmon`** (`mdhub hostmon`) samples the host every 30 s into `ops.host_metric` and rolls
+  it up to `ops.host_metric_5m` every 5 minutes. It reads the host through read-only mounts
+  (`/proc` -> `/host/proc`, `/sys` -> `/host/sys`, `/` -> `/rootfs`), runs on the host network
+  (so it sees the host's interfaces and reaches PostgreSQL on `127.0.0.1:${MDHUB_PG_HOST_PORT}`),
+  with a read-only root file system and no capabilities. It has no docker socket, no `env_file`
+  and no port: its environment is `MDHUB_DATABASE_URL`, `MDHUB_HOSTMON_*` and
+  `MDHUB_NTP_SERVER` only.
+- The **worker** samples `pg_stat_*` every minute (sizes, connections, longest transaction
+  and query, lock waits, cache hit ratio, dead tuples, autovacuum, WAL rate, checkpoints).
+- **Containers** come from the updater (phase D), the only process with the docker socket;
+  until it writes `ops.container_status` the page says "updater not reporting".
+- Retention (nightly `maintenance mode=retention`): raw samples 7 days, rollup 90 days.
+
+Settings (`.env`, see `env.example`): `MDHUB_HOSTMON_MOUNTS` lists the file systems to show as
+host paths (default `/`; add the docker data root and the backup directory when they are
+separate file systems), `MDHUB_NTP_SERVER` (default `pool.ntp.org`, `off` disables the clock
+check; UDP 123 outbound must be allowed) and the `MDHUB_HOSTMON_*` thresholds. After a change:
+`docker compose up -d hostmon admin`.
+
+Check what the sampler sees (prints one sample, writes nothing):
+
+```bash
+docker compose run --rm --no-deps hostmon mdhub hostmon --once
+```
+
+Reboot-required and pending security updates are read from `/run/reboot-required` and
+`/var/lib/update-notifier/updates-available` (Debian/Ubuntu with `update-notifier-common`);
+on other hosts those rows are absent. Bare metal: run `mdhub hostmon` under systemd with the
+same minimal environment; it then reads `/proc` and `/` directly.

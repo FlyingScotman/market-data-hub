@@ -25,7 +25,7 @@ from mdhub.loaders.maintenance import BACKUP_DIR_ENV
 
 DEPLOY = Path(__file__).resolve().parents[1] / "deploy"
 PSQL = Path(pgserver.__file__).parent / "pginstall" / "bin" / "psql"
-SERVICES = {"postgres", "migrate", "worker", "api", "admin", "caddy"}
+SERVICES = {"postgres", "migrate", "worker", "api", "admin", "hostmon", "caddy"}
 
 
 def env_names(path: Path) -> list[str]:
@@ -162,7 +162,7 @@ def test_admin_service_gets_no_source_credentials() -> None:
     }
     assert {"MOEX_API_KEY", "RATESCALC_PASSWORD", "CBONDS_PASSWORD"} <= forbidden
     assert not forbidden & set(admin["environment"]), forbidden & set(admin["environment"])
-    assert set(admin["environment"]) <= {
+    assert {n for n in admin["environment"] if not _hostmon_setting(n)} <= {
         "MDHUB_DATABASE_URL",
         "MDHUB_ADMIN_DOMAIN",
         "MDHUB_ADMIN_ORIGIN",
@@ -172,6 +172,30 @@ def test_admin_service_gets_no_source_credentials() -> None:
         "MDHUB_LOG_LEVEL",
         "MDHUB_TZ",
     }
+
+
+def _hostmon_setting(name: str) -> bool:
+    return name.startswith("MDHUB_HOSTMON_") or name == "MDHUB_NTP_SERVER"
+
+
+def test_hostmon_service_has_no_docker_socket_and_no_credentials() -> None:
+    """hostmon (ADMIN_DESIGN §10) reads the host read-only; the updater alone has the socket."""
+    yaml = pytest.importorskip("yaml")
+    svc = yaml.safe_load(_compose_text())["services"]["hostmon"]
+    assert svc["command"] == ["mdhub", "hostmon"]
+    assert "env_file" not in svc and "ports" not in svc
+    assert not any("docker.sock" in v for v in svc["volumes"])
+    assert all(v.split(":")[2].split(",")[0] == "ro" for v in svc["volumes"]), svc["volumes"]
+    assert {v.split(":")[1] for v in svc["volumes"]} == {"/host/proc", "/host/sys", "/rootfs"}
+    env = set(svc["environment"])
+    assert {n for n in env if not _hostmon_setting(n)} == {"MDHUB_DATABASE_URL"}
+    hostmon_fields = {
+        str(f.validation_alias.choices[0])  # type: ignore[union-attr]
+        for name, f in Settings.model_fields.items()
+        if name.startswith("hostmon_") or name == "ntp_server"
+    }
+    assert env - {"MDHUB_DATABASE_URL"} == hostmon_fields
+    assert svc["read_only"] is True and svc["cap_drop"] == ["ALL"]
 
 
 def test_dockerfile() -> None:
