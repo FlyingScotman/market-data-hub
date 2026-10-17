@@ -68,6 +68,9 @@
    backfill_worker fill the days between the seed date (2026-10-16) and the deploy date automatically.
 2. Snapshot layer (session hub-snapshot-layer, worktree): review + merge when done.
 3. Bond static verification: accrued interest / yield recomputed from ref schedules vs MOEX EOD.
+4. Admin console, observability, self-update: design in docs/ADMIN_DESIGN.md (owner decisions 2026-10-17:
+   internet + IP allow-list, roles viewer/operator/admin, passkeys + TOTP, updater v1 = docker compose).
+   Phases A (observability backend) and C (release pipeline) can start in parallel; migrations 0600+.
 
 ## Open items for owner
 - Cbonds API → HTTP 401 for any login (likely IP allow-list of old server); hub auto-skips.
