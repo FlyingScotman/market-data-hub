@@ -28,8 +28,8 @@ the job's lock (a backfill of the same job, or a previous run, may hold it); bac
 to a waiting fire. A fire that still cannot run is recorded in ``ops.job_run`` as ``skipped``
 with an error starting ``lock_busy:``; job health reports it as ``missed`` and the ``quality``
 job re-runs it (rules with ``catch_up``). Polling rules (``_poll``: intraday snapshots,
-AlgoPack, Ratescalcs, OTC Monitor, the backfill worker) neither wait nor catch up - the next
-fire supersedes a missed one.
+AlgoPack, Ratescalcs, OTC Monitor, the backfill worker, source probes) neither wait nor catch
+up - the next fire supersedes a missed one.
 
 The scheduler skips rules whose job is not registered (with a warning), so loaders can be
 added incrementally.
@@ -97,6 +97,7 @@ KNOWN_JOBS: Final = (
     "quality",
     "backfill_worker",
     "maintenance",
+    "source_probe",
 )
 """All scheduled job names. Loaders must register exactly these names."""
 
@@ -246,6 +247,13 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
         Rule(cron="30 20 * * *", catch_up=False),
     ),
     "backfill_worker": (_poll("*/10 * * * *", days="all", note="DB-driven; runs on all days"),),
+    "source_probe": (
+        _poll(
+            "*/5 * * * *",
+            days="all",
+            note="reachability, credentials, TLS expiry per source (Cbonds hourly)",
+        ),
+    ),
     "maintenance": (
         _r("0 2 * * *", days="all", mode="backup", keep=14, note="pg_dump, keep 14"),
         _r("0 3 * * *", days="all", mode="retention", note="raw retention + VACUUM ANALYZE"),

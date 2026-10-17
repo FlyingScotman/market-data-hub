@@ -2,7 +2,9 @@
 # Runs once, when the postgres container initialises an empty data volume.
 # Creates the read-only role for backend consumers (MDHUB_RO_USER, default mdhub_ro) and the
 # default privileges that make everything the owner role (POSTGRES_USER) creates later -
-# `mdhub migrate`, seed restore - readable by it (/mdhub-sql/readonly_defaults.sql).
+# `mdhub migrate`, seed restore - readable by it (/mdhub-sql/readonly_defaults.sql), except
+# schema `admin` (secrets and identities): its migrations revoke every privilege there from
+# all roles but the owner (admin.restrict_access(), ADMIN_DESIGN §3.1).
 # If MDHUB_RO_PASSWORD is empty the role is created without LOGIN.
 set -euo pipefail
 

@@ -121,7 +121,11 @@ def test_compose_yaml() -> None:
     for name in ("migrate", "worker", "api"):
         svc = services[name]
         assert svc["env_file"] == ".env"
-        assert svc["build"] == {"context": "..", "dockerfile": "deploy/Dockerfile"}
+        assert svc["build"] == {
+            "context": "..",
+            "dockerfile": "deploy/Dockerfile",
+            "args": {"MDHUB_VERSION": "${MDHUB_VERSION:-}"},
+        }
         assert "MDHUB_DATABASE_URL" in svc["environment"]
         assert svc["logging"]["options"]["max-size"]
     assert services["migrate"]["restart"] == "no"
@@ -247,6 +251,10 @@ def test_readonly_grant_scripts(db_url: str, conn: psycopg.Connection[Any]) -> N
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             conn.execute("INSERT INTO md.deploy_after VALUES (1)")
         conn.rollback()
+        conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(ro)))
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            conn.execute("SELECT count(*) FROM admin.api_token")
+        conn.rollback()
     finally:
         conn.rollback()
         conn.execute("RESET ROLE")
@@ -259,6 +267,72 @@ def test_readonly_grant_scripts(db_url: str, conn: psycopg.Connection[Any]) -> N
         conn.commit()
         conn.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(ro)))
         conn.commit()
+
+
+@pytest.mark.skipif(not PSQL.exists(), reason="pgserver psql not available")
+def test_readonly_role_cannot_read_admin(empty_db_url: str) -> None:
+    """VPS order: role + default privileges at initdb, then migrations, then the grant
+    script (and a re-run of the defaults, as after a seed restore). The read-only role must
+    not see anything in schema admin (ADMIN_DESIGN §3.1) but keeps reading ops/md/ref."""
+    ro = f"ro_{uuid.uuid4().hex[:10]}"
+    conn = psycopg.connect(empty_db_url, autocommit=True)
+    owner = conn.execute("SELECT current_user, current_database()").fetchone()
+    assert owner is not None
+    conn.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(ro)))
+
+    def psql(*args: str) -> None:
+        subprocess.run(
+            [str(PSQL), "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", empty_db_url, *args],
+            check=True,
+            capture_output=True,
+        )
+
+    defaults = (
+        "-v", f"owner={owner[0]}", "-v", f"ro_user={ro}", "-v", f"dbname={owner[1]}",
+        "-f", str(DEPLOY / "sql" / "readonly_defaults.sql"),
+    )  # fmt: skip
+    try:
+        psql(*defaults)
+        migrate(empty_db_url)
+        psql("-v", f"ro_user={ro}", "-f", str(DEPLOY / "sql" / "grant_readonly.sql"))
+        psql(*defaults)
+        privileges = conn.execute(
+            """
+            SELECT c.relname, has_table_privilege(%(ro)s, c.oid, 'SELECT') AS can_select
+            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'admin' AND c.relkind IN ('r', 'v', 'S', 'p')
+            """,
+            {"ro": ro},
+        ).fetchall()
+        assert ("api_token", False) in privileges and not any(p[1] for p in privileges)
+        usage = conn.execute("SELECT has_schema_privilege(%s, 'admin', 'USAGE')", (ro,)).fetchone()
+        assert usage == (False,)
+        # The owner's global default privileges do reach admin: a table created there later
+        # (e.g. by a restore) is readable until the grant script / migrate locks it again.
+        conn.execute("CREATE TABLE admin.later (x int)")
+        can = "SELECT has_table_privilege(%s, 'admin.later', 'SELECT')"
+        assert conn.execute(can, (ro,)).fetchone() == (True,)
+        psql("-v", f"ro_user={ro}", "-f", str(DEPLOY / "sql" / "grant_readonly.sql"))
+        assert conn.execute(can, (ro,)).fetchone() == (False,)
+        conn.execute("GRANT SELECT ON admin.later TO PUBLIC")
+        migrate(empty_db_url)  # nothing pending, still locks admin
+        assert conn.execute(can, (ro,)).fetchone() == (False,)
+        conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(ro)))
+        conn.execute("SELECT count(*) FROM ops.api_request").fetchone()
+        conn.execute("SELECT count(*) FROM ops.v_source_status").fetchone()
+        conn.execute("SELECT count(*) FROM md.fixing").fetchone()
+        for query in (
+            "SELECT count(*) FROM admin.api_token",
+            "SELECT name FROM admin.api_token",
+            "CALL admin.restrict_access()",
+        ):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                conn.execute(query)
+    finally:
+        conn.execute("RESET ROLE")
+        conn.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(ro)))
+        conn.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(ro)))
+        conn.close()
 
 
 def _table_counts(url: str) -> dict[str, int]:

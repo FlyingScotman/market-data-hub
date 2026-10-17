@@ -23,6 +23,7 @@ from mdhub import __version__
 from mdhub.config import ConfigError, Settings
 from mdhub.core.bizday import DbCalendar
 from mdhub.core.capture import reap_orphaned_runs
+from mdhub.core.heartbeat import Heartbeat
 from mdhub.core.redact import SecretRedactingFilter
 from mdhub.db.migrate import MigrationError, applied_migrations, discover_migrations, migrate
 from mdhub.db.pool import Database
@@ -33,6 +34,7 @@ from mdhub.jobs import (
     discover_jobs,
     parse_param_pairs,
     run_job,
+    running_jobs,
 )
 from mdhub.schedule import RULES, build_scheduler, check_rules
 
@@ -190,7 +192,10 @@ def run_cmd(
 def scheduler_cmd(
     max_workers: Annotated[int, typer.Option(help="Concurrent job threads.")] = 8,
 ) -> None:
-    """Run the blocking scheduler (DESIGN §6) until SIGTERM/SIGINT."""
+    """Run the blocking scheduler (DESIGN §6) until SIGTERM/SIGINT.
+
+    Also writes the worker heartbeat (``ops.worker_heartbeat``, every 30 s) with the jobs
+    running in this process."""
     settings = _settings()
     report = discover_jobs()
     for module, err in report.failed.items():
@@ -211,7 +216,9 @@ def scheduler_cmd(
         raise SystemExit(0)
 
     signal.signal(signal.SIGTERM, _stop)
-    log.info("scheduler starting with %d trigger(s)", len(scheduler.get_jobs()))
+    heartbeat = Heartbeat(db, "worker", running=running_jobs)
+    heartbeat.start()
+    log.info("scheduler %s starting with %d trigger(s)", __version__, len(scheduler.get_jobs()))
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
@@ -219,6 +226,7 @@ def scheduler_cmd(
     finally:
         if scheduler.running:
             scheduler.shutdown(wait=True)
+        heartbeat.stop()
         db.close()
 
 

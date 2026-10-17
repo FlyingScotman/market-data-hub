@@ -230,6 +230,15 @@ Only one update can run at a time, enforced by an advisory lock.
 
 A and C can run in parallel. The authentication part of B can also start in parallel with A.
 
+**Phase A status (2026-10-17):** implemented. Migrations `0600_admin_api_token` (schema `admin`,
+`admin.api_token`, `admin.restrict_access()`) and `0610_ops_observability` (`ops.api_request`,
+`ops.worker_heartbeat`, `ops.source_probe`, `ops.job_source`, `ops.v_source_status`); code in
+`mdhub.api.auth`, `mdhub.api.requestlog`, `mdhub.core.heartbeat`, `mdhub.quality.source_probe`,
+`mdhub tokens …`; new env `MDHUB_OPS_LOG_RETENTION_DAYS` (and the compose build arg
+`MDHUB_VERSION`). Deviations from §3: `ops.job_source` maps loader jobs to sources (the job run
+table has no source column); `/health/*` requests are not logged; Cbonds is probed at most hourly
+and Ratescalcs only in its service hours.
+
 ## 8. Open points
 
 - The admin host name and the initial allow-list: the owner's office or home IPs. A dynamic home IP needs either a wider

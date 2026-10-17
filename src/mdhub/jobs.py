@@ -18,6 +18,9 @@ never runs twice concurrently (across processes). Parameters arriving as strings
 ``--param k=v``) are converted according to the function's type annotations
 (:func:`coerce_params`).
 
+:func:`running_jobs` lists the jobs executing in this process right now (the worker heartbeat
+reports them, :mod:`mdhub.core.heartbeat`).
+
 Job modules are found by :func:`discover_jobs`, which imports every module of the packages in
 :data:`JOB_PACKAGES` with :mod:`pkgutil` - new loader modules need no registration anywhere.
 """
@@ -29,13 +32,14 @@ import inspect
 import json
 import logging
 import pkgutil
+import threading
 import time
 import types
 import typing
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Final, TypeVar
 
@@ -61,6 +65,7 @@ __all__ = [
     "JobRegistry",
     "JobSkipped",
     "JobSpec",
+    "RunningJob",
     "UnknownJobError",
     "coerce_params",
     "discover_jobs",
@@ -68,6 +73,7 @@ __all__ = [
     "parse_param_pairs",
     "record_skipped_run",
     "run_job",
+    "running_jobs",
 ]
 
 log = logging.getLogger(__name__)
@@ -403,6 +409,26 @@ class JobOutcome:
     result: Any = None
 
 
+@dataclass(frozen=True, slots=True)
+class RunningJob:
+    """A job executing in this process (see :func:`running_jobs`)."""
+
+    job: str
+    run_id: int
+    started_at: datetime
+    trigger: str
+
+
+_RUNNING: dict[int, RunningJob] = {}
+_RUNNING_LOCK = threading.Lock()
+
+
+def running_jobs() -> list[RunningJob]:
+    """Jobs executing in this process right now (started by :func:`run_job`), oldest first."""
+    with _RUNNING_LOCK:
+        return sorted(_RUNNING.values(), key=lambda r: (r.started_at, r.run_id))
+
+
 LOCK_BUSY: Final = "lock_busy"
 """Prefix of the ``ops.job_run.error`` text of a run skipped because the job lock was busy
 (health treats such a run as "did not run")."""
@@ -524,7 +550,13 @@ def run_job(
                 calendar=calendar,
                 http_factory=http_factory,
             )
-            result = spec.fn(ctx, **coerced)
+            with _RUNNING_LOCK:
+                _RUNNING[run.id] = RunningJob(name, run.id, datetime.now(UTC), trigger)
+            try:
+                result = spec.fn(ctx, **coerced)
+            finally:
+                with _RUNNING_LOCK:
+                    _RUNNING.pop(run.id, None)
         status = _final_status(db, run.id)
         return JobOutcome(job=name, run_id=run.id, status=status, result=result)
 

@@ -20,6 +20,9 @@ x-mdhub: &mdhub
   build:
     context: ..
     dockerfile: deploy/Dockerfile
+    args:
+      # Version override for images built from a git checkout (a bundle carries its own).
+      MDHUB_VERSION: ${MDHUB_VERSION:-}
   env_file: .env
   environment:
     MDHUB_DATABASE_URL: postgresql://${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-mdhub}

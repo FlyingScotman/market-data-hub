@@ -35,11 +35,20 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
+# Version from git tags vX.Y.Z (untagged commits: X.Y.Z+1.devN+g<hash>). A `git archive`
+# (bundle) carries it in .git_archival.txt (export-subst); without git metadata the build
+# falls back to 0.0.0 unless SETUPTOOLS_SCM_PRETEND_VERSION is set (deploy/Dockerfile:
+# build arg MDHUB_VERSION).
 [tool.hatch.version]
-path = "src/mdhub/__init__.py"
+source = "vcs"
+fallback-version = "0.0.0"
+
+[tool.uv]
+# Rebuild the editable install (and so its version) when the commit or tags change.
+cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mdhub"]
