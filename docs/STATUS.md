@@ -1,4 +1,4 @@
-# STATUS — 2026-10-16 (orchestrator checkpoint)
+# STATUS — 2026-10-17 (orchestrator checkpoint)
 
 ## Decisions (owner)
 - GitHub: FiveLimaGolf/market-data-hub (private, `gh flg` alias). Nothing pushed yet — push at the end.
@@ -35,18 +35,29 @@
   cny_rusfar_ois 646 days (2023-12-12→), cny_ruonia_xccy 746 days (2023-07-10→); export time 18:05:15 MSK.
 - Final quality run 415 + backfill_worker 416: 0 open gaps. docs/SEED_REPORT.md regenerated (report now
   honours rolling windows).
+- 2026-10-17 fixing depth (owner: "низкая глубина фиксингов, не хватает для старых купонов"):
+  19e00b5 Rosstat CPI (rosstat_cpi, 0425; Russian Trusted Sub CA bundled), CBR refinancing rate
+  1992-2015 (closed series, DatasetSpec.history_end), MOEX FX fixings discovery over long ranges,
+  history starts CBR FX 1998 / zcyc + indices 2014-01-06 / FX fixings 2013-03. 539d61b CBR FX ranges
+  via per-currency XML_dynamic (1998-2026 reload in 10 min, 0 values changed) and the fix that a
+  rate ends at the next daily-set record (12 stale LTL 2015 rows archived to row_history, deleted).
+  Seed: CPI 1991-01→2026-09 (429), refi 8766 days, FX 1998→ every day, zcyc 2014→ (2016-11-25 source
+  inconsistency, unfillable), indices 2014→, USDFIXME 2013-03→2024-06-11, CNYFIXME 2013-11→2025-04-07.
+  Quality run: 36 datasets, 0 stale, 0 open gaps. NB seed scripts must pass DbCalendar to run_job
+  (the default weekday calendar opened holiday gaps in one quality run; its 413 tasks were cancelled).
 - Snapshot layer (owner-started session hub-snapshot-layer, own worktree, migrations 0500+): contract v1,
   as-known-at static readers, ops.published_snapshot, /v1/snapshots. See docs/SYSTEM_CONTEXT.md.
 
 ## Seed database (data/pgseed, pgserver PG 16.2, db `mdhub`; gitignored)
-- Migrations applied from frozen copies in data/pgseed_migs (0001…0424).
-- Loaded: bond static (16,055 bonds), CBR full history (key rate 2013+, RUONIA 2010+, FX 2020+, liquidity,
-  meetings, calendars), ECB 2015+, legacy MD/BC verbatim (verified) + mapped (curves, intraday, zcyc,
+- Migrations applied 0001…0425 (0425 from src/mdhub/db/migrations).
+- Loaded: bond static (16,055 bonds), CBR full history (key rate 2013+, RUONIA 2010+, refinancing rate
+  1992-2015, FX 1998+, liquidity, meetings, calendars), Rosstat CPI 1991+, ECB 2015+, legacy MD/BC verbatim (verified) + mapped (curves, intraday, zcyc,
   fixings, liquidity, 3 curated formulas).
-- Backfilled: bonds_eod 2024→, futures/fx EOD + fx_indicative 2024→, zcyc 2022→, indices 2022→; AlgoPack last 90 days.
+- Backfilled: bonds_eod 2024→, futures/fx EOD + fx_indicative 2024→, MOEX FX fixings 2013→, zcyc 2014→,
+  indices 2014→; AlgoPack last 90 days.
 - Swaps: andromeda history (RUONIA OIS, KRS, CNY OIS/xccy), otc_monitor 2026-09→ + live, ratescalcs live.
 
-## Bundle (2026-10-16)
+## Bundle (2026-10-16; outdated by the 2026-10-17 fixing depth work — rebuild before deploying)
 - dist/market-data-hub-20261016.tar.gz (668 MB, sha256 54c17d26…) from 1c67321; seed dump 670 MB (DB 3.4 GB).
 - Restore tested into a fresh UTF8 PostgreSQL 16 (restore_seed.sh --database-url): 14 migrations, checksums
   match, seed report identical to the bundled one. 1c67321: migrate/restore refuse non-UTF8 databases.
@@ -66,4 +77,5 @@
 - andromeda (EOD swap archive, stopped 2026-09-10) not connected — personal browser session on old server.
 - Ratescalcs credentials are trivially guessable (username = common word, password = site URL path
   segment) — ask provider to rotate.
-- Not in hub (no source): SOFR/€STR/SARON fixings & curves, CDS, issuer ratings (Cbonds), CPI index.
+- Not in hub (no source): SOFR/€STR/SARON fixings & curves, CDS, issuer ratings (Cbonds).
+- Two floaters with MOEX benchmark OTHER (Ситимат НН, КВС 01): reference rate not identified.
