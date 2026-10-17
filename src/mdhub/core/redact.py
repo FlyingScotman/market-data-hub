@@ -9,7 +9,13 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
-__all__ = ["SecretRedactingFilter", "is_sensitive_param", "redact_url", "sanitize_text"]
+__all__ = [
+    "SecretRedactingFilter",
+    "is_sensitive_param",
+    "redact_url",
+    "register_secrets",
+    "sanitize_text",
+]
 
 _SENSITIVE_PARAM = re.compile(
     r"key|token|passw|pwd|login|secret|auth|session|signature|credential|cert",
@@ -17,6 +23,18 @@ _SENSITIVE_PARAM = re.compile(
 )
 _URL_IN_TEXT = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]*://[^\s'\"<>]+")
 REDACTED = "***"
+_registered: frozenset[str] = frozenset()
+
+
+def register_secrets(values: Iterable[str]) -> None:
+    """Redact ``values`` everywhere from now on (:func:`sanitize_text`, hence every
+    :class:`SecretRedactingFilter`), for secrets learnt after start-up: the source credentials
+    the worker decrypts (:mod:`mdhub.credentials`). Values shorter than 4 characters are
+    skipped, as in :meth:`mdhub.config.Settings.secret_values`."""
+    global _registered
+    new = {v for v in values if len(v) >= 4} - _registered
+    if new:
+        _registered = _registered | new  # rebind, never mutate: readers iterate without a lock
 
 
 def is_sensitive_param(name: str) -> bool:
@@ -50,7 +68,8 @@ def redact_url(url: str | httpx.URL) -> str:
 
 
 def sanitize_text(text: str, secrets: Iterable[str] = ()) -> str:
-    """Redact URLs (via :func:`redact_url`) and literal secret values in ``text``."""
+    """Redact URLs (via :func:`redact_url`), literal ``secrets`` and the values of
+    :func:`register_secrets` in ``text``."""
 
     def _url(m: re.Match[str]) -> str:
         try:
@@ -59,7 +78,7 @@ def sanitize_text(text: str, secrets: Iterable[str] = ()) -> str:
             return REDACTED
 
     out = _URL_IN_TEXT.sub(_url, text)
-    for s in sorted({s for s in secrets if s}, key=len, reverse=True):
+    for s in sorted({s for s in secrets if s} | _registered, key=len, reverse=True):
         out = out.replace(s, REDACTED)
     return out
 

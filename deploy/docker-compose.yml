@@ -31,13 +31,15 @@ x-mdhub-image: &mdhub-image
   logging: *logging
   restart: unless-stopped
 
-# migrate, worker and api read the whole .env (source credentials included).
+# migrate, worker and api read the whole .env (source credentials included), except
+# MDHUB_SECRETS_PRIVATE_KEY: blanked here, only the worker gets it (ADMIN_DESIGN §9).
 x-mdhub: &mdhub
   <<: *mdhub-image
   env_file: .env
-  environment:
+  environment: &mdhub-env
     MDHUB_DATABASE_URL: postgresql://${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-mdhub}
     MDHUB_BACKUP_DIR: /var/backups/mdhub
+    MDHUB_SECRETS_PRIVATE_KEY: ""
 
 services:
   postgres:
@@ -81,6 +83,10 @@ services:
   worker:
     <<: *mdhub
     command: ["mdhub", "scheduler"]
+    environment:
+      <<: *mdhub-env
+      # Opens the source credentials set in the console; no other service has it.
+      MDHUB_SECRETS_PRIVATE_KEY: ${MDHUB_SECRETS_PRIVATE_KEY:-}
     volumes:
       - ${MDHUB_BACKUP_HOST_DIR:-./backups}:/var/backups/mdhub
     stop_grace_period: 120s

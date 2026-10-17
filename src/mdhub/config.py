@@ -40,6 +40,8 @@ Environment variables (DESIGN §7 plus a few operational knobs):
 ``MDHUB_UPDATE_UPLOAD_DIR``         upload volume shared by console and updater, default
                                     ``/var/lib/mdhub/uploads``
 ``MDHUB_UPDATE_API_URL``            read API as the updater reaches it, default ``http://api:8080``
+``MDHUB_SECRETS_PRIVATE_KEY``       worker only: X25519 private key opening the source
+                                    credentials set in the console (``mdhub secrets init-key``)
 ``MOEX_API_KEY``                    MOEX APIM bearer token
 ``MOEX_PASSPORT_LOGIN`` / ``_PASSWORD`` MOEX Passport credentials
 ``RATESCALC_USERNAME`` / ``_PASSWORD``  Ratescalcs basic auth
@@ -163,6 +165,7 @@ class Settings(BaseSettings):
     admin_allow_cidrs: str | None = _env("MDHUB_ADMIN_ALLOW_CIDRS")
     admin_trusted_proxies: str | None = _env("MDHUB_ADMIN_TRUSTED_PROXIES")
     admin_secret_key: SecretStr | None = _env("MDHUB_ADMIN_SECRET_KEY")
+    secrets_private_key: SecretStr | None = _env("MDHUB_SECRETS_PRIVATE_KEY")
 
     update_github_token: SecretStr | None = _env("MDHUB_UPDATE_GITHUB_TOKEN")
     update_github_repo: str = Field(
@@ -225,6 +228,7 @@ class Settings(BaseSettings):
         "admin_trusted_proxies",
         "admin_secret_key",
         "update_github_token",
+        "secrets_private_key",
         mode="before",
     )
     @classmethod
