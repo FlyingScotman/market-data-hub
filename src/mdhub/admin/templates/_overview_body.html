@@ -1,0 +1,31 @@
+<div class="lights">
+  {% for label, state, text in lights %}
+  <div class="light {{ state }}"><span class="dot" aria-hidden="true"></span><strong>{{ label }}</strong><span>{{ text }}</span><span class="sr">{{ state }}</span></div>
+  {% endfor %}
+</div>
+<section class="card">
+  <h2>Problems</h2>
+  {% if problems %}
+  <ul class="problems">{% for p in problems %}<li>{{ p }}</li>{% endfor %}</ul>
+  {% else %}
+  <p>Nothing to report.</p>
+  {% endif %}
+</section>
+<section class="card">
+  <h2>Processes</h2>
+  <table>
+    <thead><tr><th>Process</th><th>Host</th><th>Version</th><th>Last beat</th><th>Running jobs</th></tr></thead>
+    <tbody>
+    {% for b in beats %}
+    <tr>
+      <td>{{ b.process }}</td><td>{{ b.host }}</td><td>{{ b.version }}</td>
+      <td>{% if b.stopped_at %}stopped {{ b.stopped_at|ago(now) }}{% else %}{{ b.beat_at|ago(now) }}{% endif %}</td>
+      <td>{% for j in b.running_jobs %}{{ j.job }}{% if not loop.last %}, {% endif %}{% else %}-{% endfor %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5">No heartbeat recorded yet.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="small">Updated {{ now|dt }} UTC; refreshes every 15 s.</p>
+</section>

@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block title %}API traffic{% endblock %}
+{% block content %}
+<h1>API traffic</h1>
+<form method="get" action="/traffic" class="row">
+  <label>Window <select name="hours">{% for h in (1, 6, 24, 168, 720) %}<option value="{{ h }}"{% if h == hours %} selected{% endif %}>{{ h }} h</option>{% endfor %}</select></label>
+  <button type="submit" class="secondary">Show</button>
+</form>
+<div class="lights">
+  <div class="light ok"><strong>Requests</strong><span>{{ totals.requests|num }}</span></div>
+  <div class="light ok"><strong>2xx/3xx</strong><span>{{ totals.ok|num }}</span></div>
+  <div class="light {{ 'warn' if totals.s401 else 'ok' }}"><strong>401</strong><span>{{ totals.s401|num }}</span></div>
+  <div class="light {{ 'warn' if totals.s403 else 'ok' }}"><strong>403</strong><span>{{ totals.s403|num }}</span></div>
+  <div class="light {{ 'warn' if totals.s429 else 'ok' }}"><strong>429</strong><span>{{ totals.s429|num }}</span></div>
+  <div class="light {{ 'bad' if totals.s5xx else 'ok' }}"><strong>5xx</strong><span>{{ totals.s5xx|num }}</span></div>
+</div>
+
+<section class="card">
+  <h2>By consumer</h2>
+  <table>
+    <thead><tr><th>Consumer</th><th>Requests</th><th>Errors</th><th>Avg ms</th><th>p95 ms</th><th>IPs</th><th>Last</th></tr></thead>
+    <tbody>{% for r in consumers %}<tr><td>{{ r.consumer }}</td><td class="num">{{ r.requests|num }}</td><td class="num">{{ r.errors|num }}</td><td class="num">{{ r.avg_ms }}</td><td class="num">{{ r.p95_ms }}</td><td class="num">{{ r.ips }}</td><td>{{ r.last_at|dt }}</td></tr>{% else %}<tr><td colspan="7">No requests.</td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>By IP</h2>
+  <table>
+    <thead><tr><th>IP</th><th>Requests</th><th>401</th><th>403</th><th>429</th><th>5xx</th><th>Consumers</th><th>Last</th></tr></thead>
+    <tbody>{% for r in ips %}<tr><td>{{ r.ip or '-' }}</td><td class="num">{{ r.requests|num }}</td><td class="num">{{ r.s401 }}</td><td class="num">{{ r.s403 }}</td><td class="num">{{ r.s429 }}</td><td class="num">{{ r.s5xx }}</td><td class="small">{{ r.consumers or '-' }}</td><td>{{ r.last_at|dt }}</td></tr>{% else %}<tr><td colspan="8">No requests.</td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>By endpoint</h2>
+  <table>
+    <thead><tr><th>Method</th><th>Path</th><th>Requests</th><th>Errors</th><th>Avg ms</th><th>Max ms</th><th>Bytes</th></tr></thead>
+    <tbody>{% for r in endpoints %}<tr><td>{{ r.method }}</td><td>{{ r.path }}</td><td class="num">{{ r.requests|num }}</td><td class="num">{{ r.errors|num }}</td><td class="num">{{ r.avg_ms }}</td><td class="num">{{ r.max_ms }}</td><td class="num">{{ r.bytes|num }}</td></tr>{% else %}<tr><td colspan="7">No requests.</td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Unknown-token attempts by IP</h2>
+  <table>
+    <thead><tr><th>IP</th><th>Attempts</th><th>First</th><th>Last</th><th>User agent</th></tr></thead>
+    <tbody>{% for r in unknown %}<tr><td>{{ r.ip or '-' }}</td><td class="num">{{ r.attempts|num }}</td><td>{{ r.first_at|dt }}</td><td>{{ r.last_at|dt }}</td><td class="small">{{ r.user_agent or '-' }}</td></tr>{% else %}<tr><td colspan="5">None.</td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Slowest requests</h2>
+  <table>
+    <thead><tr><th>Time</th><th>Consumer</th><th>IP</th><th>Request</th><th>Status</th><th>ms</th><th>Bytes</th></tr></thead>
+    <tbody>{% for r in slow %}<tr><td>{{ r.ts|dt }}</td><td>{{ r.consumer }}</td><td>{{ r.ip or '-' }}</td><td>{{ r.method }} {{ r.path }}</td><td>{{ r.status }}</td><td class="num">{{ r.duration_ms|num }}</td><td class="num">{{ r.response_bytes|num }}</td></tr>{% else %}<tr><td colspan="7">None.</td></tr>{% endfor %}</tbody>
+  </table>
+</section>
+{% endblock %}

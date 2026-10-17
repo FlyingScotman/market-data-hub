@@ -17,7 +17,7 @@ import pgserver
 import psycopg
 import pytest
 from psycopg import sql
-from pydantic import AliasChoices
+from pydantic import AliasChoices, SecretStr
 
 from mdhub.config import Settings
 from mdhub.db.migrate import MigrationError, migrate
@@ -25,7 +25,7 @@ from mdhub.loaders.maintenance import BACKUP_DIR_ENV
 
 DEPLOY = Path(__file__).resolve().parents[1] / "deploy"
 PSQL = Path(pgserver.__file__).parent / "pginstall" / "bin" / "psql"
-SERVICES = {"postgres", "migrate", "worker", "api", "caddy"}
+SERVICES = {"postgres", "migrate", "worker", "api", "admin", "caddy"}
 
 
 def env_names(path: Path) -> list[str]:
@@ -137,6 +137,41 @@ def test_compose_yaml() -> None:
     assert services["api"]["command"][:2] == ["uvicorn", "mdhub.api.app:app"]
     assert all(p.startswith("127.0.0.1:") for p in services["api"]["ports"])
     assert services["caddy"]["profiles"] == ["tls"]
+    admin = services["admin"]
+    assert admin["command"][:2] == ["uvicorn", "mdhub.admin.app:app"]
+    assert "--no-proxy-headers" in admin["command"] and "ports" not in admin
+    caddy_ip = services["caddy"]["networks"]["admin_edge"]["ipv4_address"]
+    assert admin["environment"]["MDHUB_ADMIN_TRUSTED_PROXIES"] == caddy_ip
+    assert "MDHUB_DATABASE_URL" in admin["environment"]
+
+
+def test_admin_service_gets_no_source_credentials() -> None:
+    """The console runs no job (the worker does, ops.job_request): its container must not see
+    source credentials, the egress proxy or the read-API tokens."""
+    yaml = pytest.importorskip("yaml")
+    admin = yaml.safe_load(_compose_text())["services"]["admin"]
+    assert "env_file" not in admin
+    secret_fields = {
+        str(field.validation_alias.choices[0])  # type: ignore[union-attr]
+        for name, field in Settings.model_fields.items()
+        if field.annotation == (SecretStr | None)
+    }
+    forbidden = (secret_fields - {"MDHUB_DATABASE_URL", "MDHUB_ADMIN_SECRET_KEY"}) | {
+        "MDHUB_API_TOKENS",
+        "MDHUB_HTTP_PROXY",
+    }
+    assert {"MOEX_API_KEY", "RATESCALC_PASSWORD", "CBONDS_PASSWORD"} <= forbidden
+    assert not forbidden & set(admin["environment"]), forbidden & set(admin["environment"])
+    assert set(admin["environment"]) <= {
+        "MDHUB_DATABASE_URL",
+        "MDHUB_ADMIN_DOMAIN",
+        "MDHUB_ADMIN_ORIGIN",
+        "MDHUB_ADMIN_ALLOW_CIDRS",
+        "MDHUB_ADMIN_TRUSTED_PROXIES",
+        "MDHUB_ADMIN_SECRET_KEY",
+        "MDHUB_LOG_LEVEL",
+        "MDHUB_TZ",
+    }
 
 
 def test_dockerfile() -> None:
@@ -201,6 +236,9 @@ def test_systemd_units() -> None:
 def test_caddyfile_and_readme() -> None:
     caddy = (DEPLOY / "Caddyfile").read_text()
     assert "{$MDHUB_API_DOMAIN}" in caddy and "reverse_proxy" in caddy
+    admin_site = caddy.split("{$MDHUB_ADMIN_DOMAIN", 1)[1]
+    assert "not remote_ip {$MDHUB_ADMIN_ALLOW_CIDRS" in admin_site
+    assert admin_site.index('respond @outside "Forbidden" 403') < admin_site.index("reverse_proxy")
     readme = (DEPLOY / "README_DEPLOY.md").read_text()
     for needle in (
         "docker compose up -d",
@@ -305,6 +343,17 @@ def test_readonly_role_cannot_read_admin(empty_db_url: str) -> None:
             {"ro": ro},
         ).fetchall()
         assert ("api_token", False) in privileges and not any(p[1] for p in privileges)
+        names = {p[0] for p in privileges}
+        assert {
+            "user_account",
+            "session",
+            "webauthn_credential",
+            "totp_secret",
+            "recovery_code",
+            "enrollment",
+            "login_attempt",
+            "audit_log",
+        } <= names
         usage = conn.execute("SELECT has_schema_privilege(%s, 'admin', 'USAGE')", (ro,)).fetchone()
         assert usage == (False,)
         # The owner's global default privileges do reach admin: a table created there later
@@ -324,6 +373,10 @@ def test_readonly_role_cannot_read_admin(empty_db_url: str) -> None:
         for query in (
             "SELECT count(*) FROM admin.api_token",
             "SELECT name FROM admin.api_token",
+            "SELECT password_hash FROM admin.user_account",
+            "SELECT id_sha256 FROM admin.session",
+            "SELECT secret_enc FROM admin.totp_secret",
+            "SELECT count(*) FROM admin.audit_log",
             "CALL admin.restrict_access()",
         ):
             with pytest.raises(psycopg.errors.InsufficientPrivilege):

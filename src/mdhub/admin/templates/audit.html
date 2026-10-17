@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Audit{% endblock %}
+{% block content %}
+<h1>Audit trail</h1>
+<form method="get" action="/audit" class="row">
+  <label>Action starts with <input name="action" value="{{ action }}" maxlength="64" placeholder="login."></label>
+  <label>Login <input name="login" value="{{ login }}" maxlength="64"></label>
+  <button type="submit" class="secondary">Filter</button>
+</form>
+<section class="card">
+  <table>
+    <thead><tr><th>Id</th><th>Time (UTC)</th><th>User</th><th>IP</th><th>Action</th><th>Target</th><th>Outcome</th><th>Details</th><th>Session</th></tr></thead>
+    <tbody>
+    {% for r in rows %}
+    <tr>
+      <td>{{ r.id }}</td><td>{{ r.ts|dt }}</td><td>{{ r.login or 'cli' }}</td><td>{{ r.ip or '-' }}</td><td>{{ r.action }}</td><td>{{ r.target or '' }}</td>
+      <td><span class="pill {{ 'ok' if r.outcome == 'ok' else 'bad' }}">{{ r.outcome }}</span></td>
+      <td class="small">{{ r.details|tojson if r.details else '' }}</td><td class="small">{{ r.session_ref or '' }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="9">No entries.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if older %}<p><a href="/audit?action={{ action|urlencode }}&amp;login={{ login|urlencode }}&amp;before={{ older }}">Older entries</a></p>{% endif %}
+</section>
+{% endblock %}

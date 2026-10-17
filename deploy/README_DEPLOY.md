@@ -7,7 +7,7 @@ the read API. Two variants: **docker compose** (recommended) and **bare metal** 
 | file | purpose |
 |---|---|
 | `Dockerfile` (+ `Dockerfile.dockerignore`) | image: Python 3.12, deps from `uv.lock`, `postgresql-client-16`, user `mdhub` (uid 10001) |
-| `docker-compose.yml` | `postgres` (16, tuned, healthcheck), `migrate` (one-shot), `worker`, `api`, optional `caddy` (profile `tls`) |
+| `docker-compose.yml` | `postgres` (16, tuned, healthcheck), `migrate` (one-shot), `worker`, `api`, `admin` (console, not published), optional `caddy` (profile `tls`) |
 | `env.example` | every environment variable, documented, no values |
 | `postgres/postgresql.conf` | tuning for 4 GB RAM |
 | `postgres/initdb/10-mdhub-roles.sh` | first start: read-only role + default privileges |
@@ -15,7 +15,7 @@ the read API. Two variants: **docker compose** (recommended) and **bare metal** 
 | `make_bundle.sh` | build machine: `dist/market-data-hub-<YYYYMMDD>.tar.gz` = code + seed dump + report + manifest; `--code-only`: the signed release bundle (§11) |
 | `release-keys/` | pinned minisign public keys that `mdhub release verify` accepts (§11) |
 | `restore_seed.sh` | restore the bundle's seed dump into the compose database, or any PostgreSQL 16 (`--database-url`) |
-| `Caddyfile` | TLS reverse proxy for the API (Let's Encrypt) |
+| `Caddyfile` | TLS reverse proxy for the API and the admin console with its IP allow-list (Let's Encrypt) |
 | `install.sh`, `systemd/` | bare-metal alternative |
 
 ## 0. Build the bundle (build machine)
@@ -228,6 +228,7 @@ service (`systemctl edit caddy` -> `[Service] Environment=...`), `systemctl relo
 | backup / restore | `mdhub ops backup [--keep N]`, `mdhub ops restore <file> [--clean] --yes` |
 | seed report | `mdhub report seed [--out FILE] [--as-of YYYY-MM-DD]` (read-only, Markdown) |
 | psql | `docker compose exec postgres psql -U mdhub mdhub` |
+| console users | `mdhub admin create-user LOGIN --role admin`, `mdhub admin list / reset / unlock / disable / enable LOGIN` (§12) |
 
 ## 11. Release bundles and signing
 
@@ -361,3 +362,55 @@ If the secret key leaks, delete its `.pub` and release immediately with a truste
 servers that cannot be updated in time, point `MDHUB_RELEASE_KEYS_DIR` at a directory without
 the leaked key. A lost key without a second pinned key cannot be rotated through the updater:
 install the next release by hand (§8) after checking it with minisign and the new public key.
+
+## 12. Admin console
+
+The console (ADMIN_DESIGN §4-5) is the `admin` service: `uvicorn mdhub.admin.app:app` on
+port 8081 inside the compose network, reachable only through Caddy on its own host name. It
+shows jobs, data coverage and gaps, sources, API traffic, tokens, users and the audit trail;
+operators can request a job run, retry a failed backfill task and mark a gap not expected.
+The console holds no source credentials: compose gives it an explicit environment (database
+URL, `MDHUB_ADMIN_*`, log level, time zone) instead of `.env`, and a requested run is a row in
+`ops.job_request` that the worker picks up within about 5 seconds and runs like any other run
+(trigger `admin` in `ops.job_run`). A worker that dies mid-run has its requests requeued once
+by the next worker.
+
+1. DNS: point `admin.example.com` at the VPS.
+2. `.env`: `MDHUB_ADMIN_DOMAIN=admin.example.com`, `MDHUB_ADMIN_ALLOW_CIDRS="203.0.113.7/32"`
+   (your office / home IPs, space-separated; a dynamic home IP needs a wider range or a
+   WireGuard peer), `MDHUB_ADMIN_SECRET_KEY=$(openssl rand -hex 32)`. Compose sets
+   `MDHUB_ADMIN_TRUSTED_PROXIES` to Caddy's fixed address on the `admin_edge` network.
+3. Start: `docker compose up -d admin && docker compose --profile tls up -d caddy`.
+4. First user (no user or password exists after installation):
+
+   ```bash
+   docker compose run --rm --no-deps admin mdhub admin create-user alice --role admin --name "Alice"
+   ```
+
+   It prints a one-time link valid for 15 minutes. Open it from an allowed IP, set a password
+   (12-128 characters, common passwords refused) and register a passkey. Then add an
+   authenticator app and recovery codes on the Account page as a fallback. Invite further
+   users from the Users page.
+
+Security model: the allow-list is checked by Caddy and again by the app (an empty list
+refuses everything); passwords are argon2id; login needs password + passkey (or TOTP or a
+recovery code), or a passkey alone when the user turns that on; sessions are server-side
+(cookie `__Host-mdhub_admin`, idle 30 min, absolute 12 h); 10 failed attempts lock a login
+for 15 minutes (`mdhub admin unlock LOGIN`); tokens and users need a fresh passkey/TOTP check
+(step-up, 5 min). Every action lands in `admin.audit_log`, which cannot be updated or deleted.
+
+Lost factors: `mdhub admin reset LOGIN` prints a reset link (new password and passkey; old
+factors are removed when the link is used). Key rotation: `mdhub admin rotate-key` re-encrypts
+the TOTP secrets and prints the new `MDHUB_ADMIN_SECRET_KEY`; put it into `.env` and
+`docker compose up -d admin`. Changing `MDHUB_ADMIN_DOMAIN` invalidates every passkey
+(they are bound to the host name): reset each user afterwards.
+
+Bare metal: run `uvicorn mdhub.admin.app:app --host 127.0.0.1 --port 8081 --no-proxy-headers`
+under systemd with its own minimal environment file (not `/etc/mdhub/mdhub.env`: no source
+credentials) and `MDHUB_ADMIN_TRUSTED_PROXIES=127.0.0.1`, and add
+the console site of the `Caddyfile` with `MDHUB_ADMIN_UPSTREAM=127.0.0.1:8081`.
+
+Local try-out (no TLS): `MDHUB_ADMIN_DOMAIN=localhost MDHUB_ADMIN_ORIGIN=http://localhost:8081
+MDHUB_ADMIN_ALLOW_CIDRS=127.0.0.1/32 uvicorn mdhub.admin.app:app --port 8081`, then open
+`http://localhost:8081` (Chromium-based browsers and Firefox treat localhost as secure, so the
+`__Host-` cookie and passkeys work).

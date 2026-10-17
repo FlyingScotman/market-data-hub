@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Sources{% endblock %}
+{% block content %}
+<h1>Sources</h1>
+<section class="card">
+  <table>
+    <thead><tr><th>Source</th><th>Reachable</th><th>Credentials</th><th>HTTP</th><th>Latency</th><th>Probed</th><th>Last ok probe</th><th>TLS expiry</th><th>Last load</th><th>Error</th></tr></thead>
+    <tbody>
+    {% for s in sources %}
+    <tr>
+      <td title="{{ s.name }}">{{ s.source }}</td>
+      <td>{% if s.ok is none %}-{% elif s.ok %}<span class="pill ok">yes</span>{% else %}<span class="pill bad">no</span>{% endif %}</td>
+      <td><span class="pill {{ 'bad' if s.auth == 'rejected' else ('warn' if s.auth == 'not_configured' else 'ok') }}">{{ s.auth or '-' }}</span></td>
+      <td>{{ s.http_status or '-' }}</td><td class="num">{{ s.latency_ms|num }} ms</td>
+      <td>{{ s.probed_at|ago(now) if s.probed_at else 'never' }}</td><td>{{ s.last_ok_probe_at|ago(now) if s.last_ok_probe_at else 'never' }}</td>
+      <td>{{ s.tls_expires_at|dt if s.tls_expires_at else '-' }}</td>
+      <td>{% if s.last_load_at %}{{ s.last_load_at|ago(now) }} ({{ s.last_load_job }}){% else %}-{% endif %}</td>
+      <td class="small">{{ s.error or '' }}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="10">No probes yet (job source_probe, every 5 minutes).</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

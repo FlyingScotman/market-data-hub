@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Log in{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>Log in</h1>
+  <form method="post" action="/login">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label>Login <input name="login" autocomplete="username webauthn" required maxlength="64" autofocus></label>
+    <label>Password <input name="password" type="password" autocomplete="current-password" required maxlength="128"></label>
+    <button type="submit">Continue</button>
+  </form>
+  <p class="or">or</p>
+  <button type="button" class="secondary" data-passkey="login" data-next="{{ next }}">Log in with a passkey only</button>
+  <p class="hint">A passkey on its own works when you turned that on in your account.</p>
+  <p class="error" data-passkey-error hidden></p>
+</section>
+{% endblock %}

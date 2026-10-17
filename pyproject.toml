@@ -19,6 +19,10 @@ dependencies = [
   "uvicorn>=0.30,<1",
   "tzdata>=2024.1",
   "cryptography>=43,<47",
+  "jinja2>=3.1,<4",
+  "argon2-cffi>=23.1,<26",
+  "webauthn>=2.2,<3",
+  "python-multipart>=0.0.9",
 ]
 
 [project.scripts]

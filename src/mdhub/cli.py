@@ -19,7 +19,7 @@ from typing import Annotated, Any
 import typer
 from psycopg.rows import tuple_row
 
-from mdhub import __version__
+from mdhub import __version__, job_requests
 from mdhub.config import ConfigError, Settings
 from mdhub.core.bizday import DbCalendar
 from mdhub.core.capture import reap_orphaned_runs
@@ -195,7 +195,8 @@ def scheduler_cmd(
     """Run the blocking scheduler (DESIGN §6) until SIGTERM/SIGINT.
 
     Also writes the worker heartbeat (``ops.worker_heartbeat``, every 30 s) with the jobs
-    running in this process."""
+    running in this process, and runs the job requests of the admin console
+    (``ops.job_request``, :mod:`mdhub.job_requests`)."""
     settings = _settings()
     report = discover_jobs()
     for module, err in report.failed.items():
@@ -204,7 +205,7 @@ def scheduler_cmd(
         log.warning("schedule problem: %s", problem)
     # Jobs open nested pooled connections (e.g. DbCalendar lookups inside a data transaction):
     # two per worker plus headroom avoids PoolTimeout with all workers busy.
-    db = _database(settings, pool_size=2 * max_workers + 2)
+    db = _database(settings, pool_size=2 * (max_workers + job_requests.MAX_PARALLEL) + 3)
     try:
         reap_orphaned_runs(db)
     except Exception:  # never block the scheduler start on housekeeping
@@ -218,6 +219,10 @@ def scheduler_cmd(
     signal.signal(signal.SIGTERM, _stop)
     heartbeat = Heartbeat(db, "worker", running=running_jobs)
     heartbeat.start()
+    requests = job_requests.JobRequestPoller(
+        settings, db, calendar=DbCalendar(db), worker_instance=heartbeat.instance_id
+    )
+    requests.start()
     log.info("scheduler %s starting with %d trigger(s)", __version__, len(scheduler.get_jobs()))
     try:
         scheduler.start()
@@ -226,6 +231,7 @@ def scheduler_cmd(
     finally:
         if scheduler.running:
             scheduler.shutdown(wait=True)
+        requests.stop()
         heartbeat.stop()
         db.close()
 

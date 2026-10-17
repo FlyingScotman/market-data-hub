@@ -241,6 +241,31 @@ A and C can run in parallel. The authentication part of B can also start in para
 table has no source column); `/health/*` requests are not logged; Cbonds is probed at most hourly
 and Ratescalcs only in its service hours.
 
+**Phase B status (2026-10-17):** implemented. Migration `0620_admin_auth` (`admin.user_account`,
+`webauthn_credential`, `totp_secret`, `recovery_code`, `enrollment`, `session`, `login_attempt`,
+append-only `audit_log`; job trigger `admin`); code in `mdhub.admin` (app, auth, pages, factors,
+store, security), `mdhub.job_requests` (worker side of "run now") and `mdhub admin …` (create-user, list, reset, unlock, disable, enable,
+rotate-key); compose service `admin` (not published; Caddy reaches it on network `admin_edge`
+from a fixed address, the only trusted proxy) and the Caddy site with `remote_ip` allow-list;
+new env `MDHUB_ADMIN_DOMAIN`, `MDHUB_ADMIN_ORIGIN`, `MDHUB_ADMIN_ALLOW_CIDRS`,
+`MDHUB_ADMIN_TRUSTED_PROXIES`, `MDHUB_ADMIN_SECRET_KEY`. Deviations: the user table is
+`admin.user_account` with a lower-case `text` login (no citext); sessions carry a stage
+(anonymous login page, password done, enrolling, full) and the pending WebAuthn challenge; the
+lockout is derived from `login_attempt` per typed login (an unlock is an `unlocked` row), so it
+behaves the same for logins that do not exist; the common-password list holds the 12+ character
+entries of the NCSC top-100k list (shorter ones fail the length rule); "run a job now" inserts a
+row into `ops.job_request` (migration `0630_ops_job_request`, one open request per job) that the
+worker (`mdhub.job_requests`, polled every 5 s, `FOR UPDATE SKIP LOCKED`) runs through
+`run_job` with trigger `admin` and default parameters; running requests of a worker whose
+heartbeat stopped or went stale are requeued (2 attempts at most). The `admin` compose service
+therefore gets no `env_file`, only `MDHUB_DATABASE_URL`, `MDHUB_ADMIN_*`, `MDHUB_LOG_LEVEL` and
+`MDHUB_TZ` (no source credentials, no `MDHUB_API_TOKENS`; the Tokens page lists only named
+tokens);
+`Origin: null` (sent by browsers on form posts under `Referrer-Policy: no-referrer`) counts as
+absent, so `Sec-Fetch-Site: same-origin` must then be present; the overview's TLS light shows
+the sources' certificates (the console's own certificate is Caddy's). Login flows are tested
+end to end with a software authenticator (`tests/admin_helpers.py`), not Playwright.
+
 ## 8. Open points
 
 - The admin host name and the initial allow-list: the owner's office or home IPs. A dynamic home IP needs either a wider
