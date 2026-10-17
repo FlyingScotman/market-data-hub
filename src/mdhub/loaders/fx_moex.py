@@ -51,6 +51,7 @@ from mdhub.sources.moex_fx import (
 )
 
 __all__ = [
+    "fixing_list_dates",
     "fx_indicative",
     "fx_moex_eod",
     "fx_moex_intraday",
@@ -65,6 +66,9 @@ FX_CALENDAR: Final = "MOEX_FX"
 FORTS_CALENDAR: Final = "MOEX_FORTS"
 DEFAULT_FIXINGS: Final = ("SRATE_CNY_ON",)
 FIXING_LOOKBACK_DAYS: Final = 7
+FIXING_LIST_STEP_DAYS: Final = 28
+INDICATIVE_START: Final = date(2024, 1, 3)
+FIXING_START: Final = date(2013, 3, 1)
 """Scheduled ``fx_indicative`` runs re-read the last week of fixings (late publication)."""
 
 FX_EOD_KEY: Final = ["trade_date", "secid", "board"]
@@ -112,7 +116,7 @@ register_dataset(
         frequency="business_daily",
         max_lag_days=1,
         backfill_job="fx_indicative",
-        history_start=date(2024, 1, 3),
+        history_start=INDICATIVE_START,
         min_rows_per_day=10,
         description="MOEX indicative FX rates vs RUB at 14:00 (tc) and 19:00 (mc) clearing",
     )
@@ -126,8 +130,9 @@ register_dataset(
         frequency="event",
         max_lag_days=5,
         backfill_job="fx_indicative",
-        history_start=date(2024, 1, 3),
-        description="MOEX currency-market fixings (SRATE_CNY_ON); not published every day",
+        history_start=FIXING_START,
+        description="MOEX currency-market fixings (USD/EUR/CNY/... FIXME, SRATE_*); "
+        "not published every day",
     )
 )
 
@@ -390,14 +395,16 @@ def fx_indicative(
     date_from: date | None = None,
     date_to: date | None = None,
 ) -> None:
-    """Indicative rates for each business date (default: today) and fixings for the range
-    (default: the last :data:`FIXING_LOOKBACK_DAYS` days)."""
+    """Indicative rates for each business date from :data:`INDICATIVE_START` (default: today)
+    and fixings for the range (default: the last :data:`FIXING_LOOKBACK_DAYS` days)."""
     run_id = ctx.run.id
     explicit = date_from is not None or date_to is not None
     if explicit:
         dates = resolve_dates(
             ctx, FORTS_CALENDAR, days_back=None, date_from=date_from, date_to=date_to
         )
+        # a fixings backfill reaching before the indicative history leaves those days alone
+        dates = [d for d in dates if d >= INDICATIVE_START]
         fix_from = date_from or date_to
         fix_to = date_to or date_from
     else:
@@ -435,19 +442,33 @@ def fx_indicative(
         _load_fixings(ctx, http, fix_from, fix_to)
 
 
+def fixing_list_dates(start: date, end: date) -> list[date]:
+    """Dates whose fixing list is read for ``[start, end]``: both ends and every
+    :data:`FIXING_LIST_STEP_DAYS` days between, so that a fixing discontinued inside a long
+    backfill range (USDFIXME after 2024-06-11) is still found."""
+    out: list[date] = []
+    d = start
+    while d < end:
+        out.append(d)
+        d += timedelta(days=FIXING_LIST_STEP_DAYS)
+    out.append(end)
+    return out
+
+
 def _load_fixings(ctx: JobContext, http: Any, start: date, end: date) -> None:
     run_id = ctx.run.id
-    res = http.get_json(FIXING_LIST, params={"iss.meta": "off", "date": end.isoformat()})
     secids = set(DEFAULT_FIXINGS)
-    with ctx.connection() as conn:
-        cap = record_capture(
-            conn, run_id, SOURCE, "fx_fixing_list", None, res.response, PARSER_VERSION
-        )
-        listed = parse_fixing_rows(
-            parse_block(res.data, "history", required=("tradedate", "secid", "rate"))
-        )
+    for day in fixing_list_dates(start, end):
+        res = http.get_json(FIXING_LIST, params={"iss.meta": "off", "date": day.isoformat()})
+        with ctx.connection() as conn:
+            cap = record_capture(
+                conn, run_id, SOURCE, "fx_fixing_list", None, res.response, PARSER_VERSION
+            )
+            listed = parse_fixing_rows(
+                parse_block(res.data, "history", required=("tradedate", "secid", "rate"))
+            )
         secids |= {r["secid"] for r in listed}
-        ctx.logger.debug("fixing list capture %d: %s", cap, sorted(secids))
+        ctx.logger.debug("fixing list %s capture %d: %s", day, cap, sorted(secids))
     for secid in sorted(secids):
         with ctx.connection() as conn:
             rows: list[dict[str, Any]] = []

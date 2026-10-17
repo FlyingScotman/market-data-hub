@@ -3,7 +3,8 @@
 Features (DESIGN §2):
 
 * TLS: certifi bundle **plus** the bundled Russian Trusted Root CA (needed by
-  ``iss.moex.com``/``apim.moex.com``) in one :class:`ssl.SSLContext`, used for all hosts.
+  ``iss.moex.com``/``apim.moex.com``) and its Russian Trusted Sub CA (``rosstat.gov.ru``
+  does not send the intermediate) in one :class:`ssl.SSLContext`, used for all hosts.
 * Honest ``User-Agent: market-data-hub/<version>``.
 * Per-host token-bucket rate limiting, shared process-wide by default
   (:data:`GLOBAL_RATE_LIMITER`), so concurrent jobs hitting ISS stay within ``MDHUB_ISS_RPS``.
@@ -69,6 +70,9 @@ __all__ = [
 log = logging.getLogger(__name__)
 
 RU_CA_RESOURCE: Final = "russian_trusted_root_ca.pem"
+RU_SUB_CA_RESOURCE: Final = "russian_trusted_sub_ca.pem"
+"""Russian Trusted Sub CA (2024-2029, issued by the root above; from the Ministry's AIA URL
+``nuc-cdp.digital.gov.ru/cdp/subca_ssl_rsa2024.crt``)."""
 IDEMPOTENT_METHODS: Final = frozenset({"GET", "HEAD", "OPTIONS", "PUT", "DELETE"})
 DEFAULT_HOST_RPS: Final = 5.0
 """Rate for hosts without an explicit limit."""
@@ -118,10 +122,11 @@ class RedirectError(HttpError):
 
 @lru_cache(maxsize=1)
 def build_ssl_context() -> ssl.SSLContext:
-    """SSL context trusting certifi's bundle plus the Russian Trusted Root CA."""
+    """SSL context trusting certifi's bundle plus the Russian Trusted Root and Sub CA."""
     ctx = ssl.create_default_context(cafile=certifi.where())
-    pem = resources.files("mdhub.certs").joinpath(RU_CA_RESOURCE).read_text("ascii")
-    ctx.load_verify_locations(cadata=pem)
+    for name in (RU_CA_RESOURCE, RU_SUB_CA_RESOURCE):
+        pem = resources.files("mdhub.certs").joinpath(name).read_text("ascii")
+        ctx.load_verify_locations(cadata=pem)
     return ctx
 
 

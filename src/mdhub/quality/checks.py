@@ -5,8 +5,9 @@ Everything is driven by :class:`mdhub.datasets.DatasetSpec`:
 * **expected latest date** (:func:`expected_latest`): ``business_daily``/``intraday`` - the
   last business day of ``calendar`` on or before today, moved back ``max_lag_days`` business
   days; ``daily``/``event`` - today minus ``max_lag_days`` calendar days; ``monthly`` - the
-  first day of the month containing today minus ``max_lag_days`` days. A dataset whose latest
-  stored date is earlier is **stale**.
+  first day of the month containing today minus ``max_lag_days`` days; capped at
+  ``history_end`` for a closed series. A dataset whose latest stored date is earlier is
+  **stale**.
 * **gap scan** (:func:`scan_dataset`): over ``max(history_start, earliest stored date)`` ..
   expected latest, every expected day (business days of the calendar - ``ref.calendar_day``
   via the job's calendar predicate, weekday fallback; every day for ``daily``; month starts
@@ -129,7 +130,13 @@ def day_predicate(spec: DatasetSpec, calendar: CalendarPredicate) -> DayPredicat
 
 
 def expected_latest(spec: DatasetSpec, today: date, calendar: CalendarPredicate) -> date:
-    """Latest date ``spec`` should contain on ``today`` (see module docstring)."""
+    """Latest date ``spec`` should contain on ``today`` (see module docstring); never after
+    ``spec.history_end`` (closed series)."""
+    exp = _expected_latest_open(spec, today, calendar)
+    return exp if spec.history_end is None else min(exp, spec.history_end)
+
+
+def _expected_latest_open(spec: DatasetSpec, today: date, calendar: CalendarPredicate) -> date:
     if spec.frequency in ("business_daily", "intraday"):
         pred = day_predicate(spec, calendar)
         last = today if pred(today) else add_business_days(today, -1, pred)

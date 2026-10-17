@@ -108,7 +108,7 @@ def test_check_fails_on_tampered_params() -> None:
 
 def test_dataset_registered() -> None:
     spec = get_dataset("zcyc")
-    assert spec.history_start == date(2022, 1, 3) and spec.where == "is_eod"
+    assert spec.history_start == date(2014, 1, 6) and spec.where == "is_eod"
 
 
 # ---------------------------------------------------------------------------- DB tests

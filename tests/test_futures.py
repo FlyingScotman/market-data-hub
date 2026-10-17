@@ -77,6 +77,13 @@ def seed_ref(conn: Conn) -> None:
     conn.commit()
 
 
+@pytest.fixture(autouse=True)
+def _recorded_today(today_is: Callable[[date], None]) -> None:
+    """The responses were recorded on 2026-10-16 (the daily contract bootstrap and the
+    listing depend on "today")."""
+    today_is(date(2026, 10, 16))
+
+
 # ---------------------------------------------------------------------- parsers
 
 

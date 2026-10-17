@@ -7,6 +7,7 @@ import json
 from collections.abc import Callable
 from datetime import date, datetime, time
 from decimal import Decimal
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -16,7 +17,7 @@ import pytest
 import respx
 from psycopg.rows import DictRow
 
-import mdhub.loaders.fx_moex  # noqa: F401 - registers the jobs
+import mdhub.loaders.fx_moex as fx_loader
 from mdhub.config import Settings
 from mdhub.core.http import HttpClient, RateLimiter
 from mdhub.core.iss import ISS_BASE_URL, IssFormatError
@@ -330,3 +331,48 @@ def test_datasets_registered() -> None:
     assert spec.calendar == "MOEX_FX"
     assert spec.history_start == date(2024, 1, 3)
     assert get_dataset("fx_indicative").backfill_job == "fx_indicative"
+
+
+def test_fixing_list_dates_sample_long_ranges() -> None:
+    d = date(2026, 10, 9)
+    assert fx_loader.fixing_list_dates(d, date(2026, 10, 16)) == [d, date(2026, 10, 16)]
+    assert fx_loader.fixing_list_dates(d, d) == [d]
+    long = fx_loader.fixing_list_dates(date(2024, 1, 1), date(2024, 12, 31))
+    assert long[0] == date(2024, 1, 1) and long[-1] == date(2024, 12, 31)
+    assert all((b - a).days <= fx_loader.FIXING_LIST_STEP_DAYS for a, b in pairwise(long))
+
+
+@respx.mock
+def test_fixings_backfill_finds_discontinued_fixings(
+    settings: Settings, db: Database, conn: Conn, today_is: Callable[[date], None]
+) -> None:
+    """USDFIXME stopped on 2024-06-11: absent from the list at the range end, it is found on
+    an earlier sample date; days before the indicative history are not requested."""
+    empty = copy.deepcopy(load("indicative_2026-10-15.json"))
+    empty["securities"]["data"] = []
+    indicative = respx.get(ISS_BASE_URL + fx.INDICATIVE).mock(
+        return_value=httpx.Response(200, json=empty)
+    )
+
+    def listing(request: httpx.Request) -> httpx.Response:
+        body = copy.deepcopy(load("fixing_list.json"))
+        if request.url.params["date"] < "2024-06-12":
+            body["history"]["data"].append(
+                [request.url.params["date"], "USDFIXME", 89.0932]
+                + [None] * (len(body["history"]["columns"]) - 3)
+            )
+        return httpx.Response(200, json=body)
+
+    respx.get(ISS_BASE_URL + fx.FIXING_LIST).mock(side_effect=listing)
+    respx.get(ISS_BASE_URL + fx.FIXING_SECID.format(secid="SRATE_CNY_ON")).mock(
+        return_value=httpx.Response(200, json=load("fixing_srate.json"))
+    )
+    usd = respx.get(ISS_BASE_URL + fx.FIXING_SECID.format(secid="USDFIXME")).mock(
+        return_value=httpx.Response(200, json=load("fixing_srate.json"))
+    )
+    today_is(date(2026, 10, 16))
+    out = run("fx_indicative", {"date_from": "2023-12-01", "date_to": "2024-07-31"}, settings, db)
+    assert out.status == "succeeded"
+    assert usd.called and usd.calls.last.request.url.params["from"] == "2023-12-01"
+    asked = {c.request.url.params["date"] for c in indicative.calls}
+    assert asked and min(asked) >= fx_loader.INDICATIVE_START.isoformat()

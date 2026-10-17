@@ -10,6 +10,8 @@ Endpoints (all GET, public; ``HttpClient`` limits ``www.cbr.ru`` to 1 request/se
 * ``/hd_base/ProcStav/IR_MPO/``    standing facility rates (HTML, multi-row header)
 * ``/hd_base/bliquidity/``         liquidity balance (HTML, 15 columns, multi-row header)
 * ``/dkp/cal_mp/``                 board meeting calendar (HTML)
+* ``/statistics/idkp_br/refinancing_rates1/``  refinancing rate periods 1992-2015 (HTML; from
+  2016 the refinancing rate equals the key rate)
 * ``/scripts/XML_daily.asp``       official FX, all currencies, rate in force on ``date_req``
 * ``/scripts/XML_dynamic.asp``     official FX history of one currency id
 
@@ -33,6 +35,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal, InvalidOperation
 from html.parser import HTMLParser
+from pathlib import PurePosixPath
 from typing import Final
 
 import httpx
@@ -48,6 +51,7 @@ __all__ = [
     "FxRecord",
     "LiquidityRow",
     "Meeting",
+    "RefinancingPeriod",
     "RuoniaIndexRow",
     "RuoniaRow",
     "StandingRates",
@@ -55,6 +59,7 @@ __all__ = [
     "extract_tables",
     "fetch_hd_base",
     "fetch_meetings_page",
+    "fetch_refinancing_page",
     "fetch_ruonia_index_xlsx",
     "fetch_xml_daily",
     "fetch_xml_dynamic",
@@ -62,6 +67,7 @@ __all__ = [
     "parse_key_rate_page",
     "parse_liquidity_page",
     "parse_meetings_page",
+    "parse_refinancing_page",
     "parse_ruonia_index_xlsx",
     "parse_ruonia_page",
     "parse_standing_rates_page",
@@ -82,6 +88,7 @@ LIQUIDITY_PATH: Final = "/hd_base/bliquidity/"
 MEETINGS_PATH: Final = "/dkp/cal_mp/"
 XML_DAILY_PATH: Final = "/scripts/XML_daily.asp"
 XML_DYNAMIC_PATH: Final = "/scripts/XML_dynamic.asp"
+REFINANCING_PATH: Final = "/statistics/idkp_br/refinancing_rates1/"
 
 _MISSING = {"", "—", "-", "–", "н/д"}
 _DATE_RE = re.compile(r"^(\d{2})\.(\d{2})\.(\d{4})$")
@@ -327,6 +334,8 @@ def parse_ruonia_page(page: str) -> list[RuoniaRow]:
 # -------------------------------------------------------------- RUONIA index (XLSX)
 
 _XLSX_NS: Final = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+_REL_NS: Final = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+_DOC_REL_NS: Final = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 _CELL_REF = re.compile(r"^([A-Z]+)(\d+)$")
 _EXCEL_EPOCH: Final = date(1899, 12, 30)
 
@@ -338,8 +347,25 @@ def _col_index(letters: str) -> int:
     return n - 1
 
 
-def read_xlsx_rows(payload: bytes) -> list[list[str | None]]:
-    """Minimal stdlib reader for the first worksheet of an XLSX file.
+def _sheet_path(zf: zipfile.ZipFile, sheet: str) -> str:
+    """Archive path of the worksheet named ``sheet`` (``xl/workbook.xml`` + its rels)."""
+    wb = safe_xml_fromstring(zf.read("xl/workbook.xml"))
+    rels = safe_xml_fromstring(zf.read("xl/_rels/workbook.xml.rels"))
+    targets = {r.get("Id"): r.get("Target", "") for r in rels.iter(f"{_REL_NS}Relationship")}
+    for sh in wb.iter(f"{_XLSX_NS}sheet"):
+        if (sh.get("name") or "").strip() != sheet:
+            continue
+        target = targets.get(sh.get(f"{_DOC_REL_NS}id"))
+        if not target:
+            break
+        path = target.lstrip("/") if target.startswith("/") else f"xl/{target}"
+        return str(PurePosixPath(path))
+    raise FormatDriftError(f"XLSX: no worksheet named {sheet!r}")
+
+
+def read_xlsx_rows(payload: bytes, *, sheet: str | None = None) -> list[list[str | None]]:
+    """Minimal stdlib reader for one worksheet of an XLSX file (the first in archive order,
+    or the one named ``sheet``).
 
     Returns cell texts per row (inline strings, shared strings or the raw ``<v>`` text of
     numeric cells - no float conversion). Raises :class:`FormatDriftError` on a bad file.
@@ -347,15 +373,18 @@ def read_xlsx_rows(payload: bytes) -> list[list[str | None]]:
     try:
         with zipfile.ZipFile(io.BytesIO(payload)) as zf:
             names = zf.namelist()
-            sheet = next((n for n in sorted(names) if n.startswith("xl/worksheets/sheet")), None)
             if sheet is None:
-                raise FormatDriftError("XLSX: no worksheet")
+                path = next((n for n in sorted(names) if n.startswith("xl/worksheets/sheet")), None)
+                if path is None:
+                    raise FormatDriftError("XLSX: no worksheet")
+            else:
+                path = _sheet_path(zf, sheet)
             shared: list[str] = []
             if "xl/sharedStrings.xml" in names:
                 sroot = safe_xml_fromstring(zf.read("xl/sharedStrings.xml"))
                 for si in sroot.iter(f"{_XLSX_NS}si"):
                     shared.append("".join(t.text or "" for t in si.iter(f"{_XLSX_NS}t")))
-            root = safe_xml_fromstring(zf.read(sheet))
+            root = safe_xml_fromstring(zf.read(path))
     except (zipfile.BadZipFile, ET.ParseError, KeyError) as exc:
         raise FormatDriftError(f"XLSX: unreadable workbook: {exc}") from None
     rows: list[list[str | None]] = []
@@ -649,6 +678,82 @@ def parse_meetings_page(page: str) -> list[Meeting]:
     return [out[d] for d in sorted(out)]
 
 
+# ------------------------------------------------------------------- refinancing rate
+
+REFINANCING_FIRST_DAY: Final = date(1992, 1, 1)
+REFINANCING_MERGED_ON: Final = date(2016, 1, 1)
+"""From this day the refinancing rate equals the key rate (Указание № 3894-У); the page
+lists no values after it."""
+_RANGE_RE = re.compile(
+    r"^(\d{1,2}) ([а-яё]+) (\d{4}) г\. [–—-] (\d{1,2}) ([а-яё]+) (\d{4}) г\.$", re.IGNORECASE
+)
+_MERGED_RE = re.compile(r"^С (\d{1,2}) ([а-яё]+) (\d{4}) г\.$", re.IGNORECASE)
+
+
+@dataclass(frozen=True, slots=True)
+class RefinancingPeriod:
+    date_from: date
+    date_to: date
+    rate_pct: Decimal
+    document: str
+
+
+def _ru_long_date(parts: Sequence[str], what: str) -> date:
+    """``("14", "сентября", "2012")`` -> date."""
+    day, month, year = parts
+    m = _RU_MONTHS.get(month.casefold())
+    try:
+        if m is None:
+            raise ValueError(month)
+        return date(int(year), m, int(day))
+    except ValueError:
+        raise FormatDriftError(f"CBR {what}: bad date {day} {month} {year}") from None
+
+
+def parse_refinancing_page(page: str) -> list[RefinancingPeriod]:
+    """Refinancing rate periods (``/statistics/idkp_br/refinancing_rates1/``), ascending.
+
+    Fails closed unless the periods tile 1992-01-01 .. 2015-12-31 without gaps or overlaps
+    and the table opens with the "from 1 January 2016 equal to the key rate" row.
+    """
+    table = _find_table(page, "Период действия", "Ставка", what="refinancing rate")
+    if table is None:
+        raise FormatDriftError("CBR refinancing rate: table missing")
+    out: list[RefinancingPeriod] = []
+    merged: date | None = None
+    for cells in table.data_rows():
+        if len(cells) != 3:
+            raise FormatDriftError(f"CBR refinancing rate: row with {len(cells)} cells: {cells!r}")
+        m = _MERGED_RE.match(cells[0])
+        if m is not None:
+            if "ключевой ставки" not in cells[1]:
+                raise FormatDriftError(f"CBR refinancing rate: unexpected row {cells!r}")
+            merged = _ru_long_date(m.groups(), "refinancing rate")
+            continue
+        m = _RANGE_RE.match(cells[0])
+        if m is None:
+            raise FormatDriftError(f"CBR refinancing rate: bad period {cells[0]!r}")
+        d1 = _ru_long_date(m.groups()[:3], "refinancing rate")
+        d2 = _ru_long_date(m.groups()[3:], "refinancing rate")
+        rate = _require_number(cells[1], "refinancing rate")
+        if d2 < d1 or not Decimal(0) < rate <= Decimal(300):
+            raise FormatDriftError(f"CBR refinancing rate: bad row {cells!r}")
+        out.append(RefinancingPeriod(d1, d2, rate, cells[2]))
+    out.sort(key=lambda p: p.date_from)
+    if merged != REFINANCING_MERGED_ON:
+        raise FormatDriftError(f"CBR refinancing rate: key-rate merge row says {merged}")
+    expected = REFINANCING_FIRST_DAY
+    for p in out:
+        if p.date_from != expected:
+            raise FormatDriftError(
+                f"CBR refinancing rate: period starts {p.date_from}, not {expected}"
+            )
+        expected = p.date_to + timedelta(days=1)
+    if expected != REFINANCING_MERGED_ON:
+        raise FormatDriftError(f"CBR refinancing rate: periods end {expected - timedelta(days=1)}")
+    return out
+
+
 # -------------------------------------------------------------------------------- FX
 
 
@@ -779,6 +884,10 @@ def fetch_ruonia_index_xlsx(http: HttpClient, date_from: date, date_to: date) ->
 
 def fetch_meetings_page(http: HttpClient) -> httpx.Response:
     return http.get(f"{BASE_URL}{MEETINGS_PATH}")
+
+
+def fetch_refinancing_page(http: HttpClient) -> httpx.Response:
+    return http.get(f"{BASE_URL}{REFINANCING_PATH}")
 
 
 def fetch_xml_daily(http: HttpClient, day: date) -> httpx.Response:

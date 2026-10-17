@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
@@ -145,3 +146,26 @@ def test_hd_base_page_without_table_is_no_data() -> None:
     assert cbr.parse_key_rate_page(empty) == []
     with pytest.raises(FormatDriftError):  # not an hd_base page at all
         cbr.parse_liquidity_page("<html><body>maintenance</body></html>")
+
+
+def test_parse_refinancing_page() -> None:
+    periods = cbr.parse_refinancing_page(_text("cbr_refinancing_rates.html"))
+    assert len(periods) == 84
+    assert periods[0].date_from == date(1992, 1, 1) and periods[0].rate_pct == Decimal("20")
+    last = periods[-1]
+    assert (last.date_from, last.date_to) == (date(2012, 9, 14), date(2015, 12, 31))
+    assert last.rate_pct == Decimal("8.25") and "2873-У" in last.document
+    aug09 = next(p for p in periods if p.date_from == date(2009, 8, 10))
+    assert aug09.rate_pct == Decimal("10.75") and aug09.date_to == date(2009, 9, 14)
+    assert all(a.date_to + timedelta(days=1) == b.date_from for a, b in pairwise(periods))
+
+
+def test_refinancing_page_drift() -> None:
+    page = _text("cbr_refinancing_rates.html")
+    row = "30&nbsp;апреля 2010&nbsp;г. &ndash;&nbsp;31&nbsp;мая&nbsp;2010&nbsp;г."
+    merge = "1&nbsp;января 2016"
+    assert page.count(row) == 1 and page.count(merge) == 1, "fixture layout changed"
+    with pytest.raises(FormatDriftError, match="period starts"):  # a hole in the tiling
+        cbr.parse_refinancing_page(page.replace(row, row.replace("31&nbsp;мая", "30&nbsp;мая")))
+    with pytest.raises(FormatDriftError, match="merge row"):
+        cbr.parse_refinancing_page(page.replace(merge, "1&nbsp;января 2017"))

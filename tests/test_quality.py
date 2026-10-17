@@ -140,6 +140,19 @@ def test_expected_latest_per_frequency() -> None:
     assert expected_latest(spec(calendar=None), AS_OF, cal) == date(2026, 10, 15)
 
 
+def test_closed_series_is_never_stale_and_not_scanned_past_its_end(fake_table: Conn) -> None:
+    conn = fake_table
+    end = date(2026, 10, 7)
+    insert_days(conn, weekdays(START, end))
+    s = spec(history_end=end)
+    assert expected_latest(s, AS_OF, weekday_calendar) == end
+    check = scan_dataset(conn, s, today=AS_OF, calendar=weekday_calendar)
+    assert not check.is_stale and check.problem is None
+    assert check.scan_to == end and check.gaps == []
+    with pytest.raises(ValueError, match="history_end before history_start"):
+        spec(history_end=START - timedelta(days=1))
+
+
 def test_expected_days() -> None:
     s = spec()
     assert expected_days(s, date(2026, 10, 9), date(2026, 10, 13), weekday_calendar) == [

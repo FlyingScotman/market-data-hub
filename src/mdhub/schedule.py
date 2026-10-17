@@ -91,6 +91,7 @@ KNOWN_JOBS: Final = (
     "cbr_daily",
     "cbr_meetings",
     "ecb_fx",
+    "rosstat_cpi",
     "swaps_ratescalcs",
     "swaps_otc_monitor",
     "quality",
@@ -225,6 +226,10 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
         ),
     ),
     "ecb_fx": (_r("30 18 * * *", days="all"),),
+    "rosstat_cpi": (
+        _r("5 10 * * *", days="all"),
+        _r("35 19 * * *", days="all", note="monthly CPI release ~19:00 mid-month"),
+    ),
     "swaps_ratescalcs": (
         _poll("0,30 9-22 * * *", note="every 30 min 09:00-23:00; skip identical content"),
         _poll("0 23 * * *"),

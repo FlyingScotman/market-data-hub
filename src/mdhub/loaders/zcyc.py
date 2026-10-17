@@ -61,7 +61,7 @@ register_dataset(
         frequency="business_daily",
         max_lag_days=1,
         backfill_job="zcyc",
-        history_start=date(2022, 1, 3),
+        history_start=date(2014, 1, 6),  # first ISS publication
         min_rows_per_day=1,
         description="MOEX KBD (G-curve) parameters + standard yields, EOD publication",
         where="is_eod",

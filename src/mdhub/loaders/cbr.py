@@ -12,6 +12,9 @@ part in its own transaction (a failing part marks the run ``partial``, the other
   (``published_on``) and the statistics in ``details``,
 * ``RUONIA_INDEX`` and ``TERM_RUONIA_1M/3M/6M`` (XLSX ``DownloadExcel/125022``, calendar days),
 * ``CBR_DEPOSIT_STANDING`` / ``CBR_LENDING_STANDING`` (``/hd_base/ProcStav/IR_MPO/``),
+* ``CBR_REFINANCING_RATE`` (``/statistics/idkp_br/refinancing_rates1/``) - one row per
+  calendar day 1992-01-01..2015-12-31 (closed series: from 2016 the refinancing rate equals
+  ``KEY_RATE``); read only while not stored or for an explicit range before 2016,
 * liquidity balance -> ``md.cbr_liquidity`` (revision counter + ``ops.row_history``),
 * official FX of all currencies -> ``md.fx_official`` (see :func:`expand_fx_records`).
 
@@ -86,7 +89,10 @@ KEY_RATE_START: Final = date(2013, 9, 13)
 RUONIA_START: Final = date(2010, 1, 1)
 STANDING_START: Final = date(2014, 1, 1)
 LIQUIDITY_START: Final = date(2019, 1, 1)
-FX_START: Final = date(2020, 1, 1)
+FX_START: Final = date(1998, 1, 1)
+"""Official FX history from the 1998 redenomination (earlier rates are in old roubles)."""
+REFINANCING_CODE: Final = "CBR_REFINANCING_RATE"
+REFINANCING_END: Final = src.REFINANCING_MERGED_ON - timedelta(days=1)
 
 # ------------------------------------------------------------------------ datasets
 
@@ -161,6 +167,22 @@ _fixing_dataset(
 )
 register_dataset(
     DatasetSpec(
+        name="cbr_refinancing_rate",
+        table="md.fixing",
+        date_column="fixing_date",
+        calendar=None,
+        frequency="daily",
+        max_lag_days=0,
+        backfill_job="cbr_daily",
+        history_start=src.REFINANCING_FIRST_DAY,
+        history_end=REFINANCING_END,
+        where="index_code = 'CBR_REFINANCING_RATE' AND source = 'cbr'",
+        description="CBR refinancing rate per calendar day, 1992-2015 (closed: equal to the "
+        "key rate from 2016)",
+    )
+)
+register_dataset(
+    DatasetSpec(
         name="cbr_fx_official",
         table="md.fx_official",
         date_column="effective_date",
@@ -169,7 +191,8 @@ register_dataset(
         max_lag_days=0,
         backfill_job="cbr_daily",
         history_start=FX_START,
-        min_rows_per_day=30,
+        # 17-18 currencies in 2005-2009, 59 today: the floor catches a partial record only
+        min_rows_per_day=15,
         description="CBR official FX, all currencies, every calendar day by effective date",
     )
 )
@@ -415,6 +438,50 @@ def _load_standing_rates(
     return upsert_rows(conn, "md.fixing", rows, FIXING_KEY, run_id=ctx.run.id)
 
 
+def _load_refinancing_rate(
+    ctx: JobContext, http: HttpClient, conn: psycopg.Connection[Any], win: _Window
+) -> UpsertResult:
+    """Closed series: loaded when empty or when an explicit range reaches back before 2016."""
+    if win.explicit:
+        if win.date_from > REFINANCING_END:
+            return UpsertResult()
+        lo, hi = max(win.date_from, src.REFINANCING_FIRST_DAY), min(win.date_to, REFINANCING_END)
+    elif _has_rows(
+        conn,
+        "SELECT 1 FROM md.fixing WHERE index_code = %s AND source = %s LIMIT 1",
+        (REFINANCING_CODE, SOURCE),
+    ):
+        return UpsertResult()
+    else:
+        lo, hi = src.REFINANCING_FIRST_DAY, REFINANCING_END
+    resp = src.fetch_refinancing_page(http)
+    known_at = utc_now()
+    cap = record_capture(
+        conn, ctx.run.id, SOURCE, "refinancing_rate", None, resp, src.PARSER_VERSION
+    )
+    rows = []
+    for p in src.parse_refinancing_page(resp.text):
+        details = {
+            "period_from": p.date_from,
+            "period_to": p.date_to,
+            "document": p.document,
+        }
+        for d in date_range(max(p.date_from, lo), min(p.date_to, hi)):
+            rows.append(
+                fixing_row(
+                    REFINANCING_CODE,
+                    d,
+                    p.rate_pct,
+                    capture_id=cap,
+                    run_id=ctx.run.id,
+                    known_at=known_at,
+                    effective_date=d,
+                    details=details,
+                )
+            )
+    return upsert_rows(conn, "md.fixing", rows, FIXING_KEY, run_id=ctx.run.id)
+
+
 # ------------------------------------------------------------------------- liquidity
 
 
@@ -622,6 +689,7 @@ PARTS: Final[tuple[tuple[str, _Part], ...]] = (
     ("ruonia", _load_ruonia),
     ("ruonia_index", _load_ruonia_index),
     ("standing_rates", _load_standing_rates),
+    ("refinancing_rate", _load_refinancing_rate),
     ("liquidity", _load_liquidity),
     ("fx_official", _load_fx),
 )
@@ -638,7 +706,10 @@ def _fx_windows(ctx: JobContext, win: _Window) -> list[_Window]:
     return [_Window(c1, c2, True) for c1, c2 in src.chunk_range(d1, d2, FX_CHUNK_DAYS)]
 
 
-@job("cbr_daily", "CBR key rate, RUONIA (+index, term), standing rates, liquidity, official FX")
+@job(
+    "cbr_daily",
+    "CBR key rate, RUONIA (+index, term), standing and refinancing rates, liquidity, official FX",
+)
 def cbr_daily(
     ctx: JobContext, *, date_from: date | None = None, date_to: date | None = None
 ) -> dict[str, Any]:

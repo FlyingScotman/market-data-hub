@@ -59,8 +59,9 @@ register_dataset(
         # run D-2 is the latest a healthy feed has, so a lag of 1 flagged it stale every day.
         max_lag_days=2,
         backfill_job="indices_eod",
-        history_start=date(2022, 1, 3),
-        min_rows_per_day=300,
+        history_start=date(2014, 1, 6),
+        # ~190 indices a day in 2014, ~600 today: the floor catches a truncated day only
+        min_rows_per_day=150,
         description="All MOEX ISS indices EOD (history by date)",
         where="basis = 'history'",
     )
@@ -79,7 +80,7 @@ for _group, _secids in (
             frequency="business_daily",
             max_lag_days=1,
             backfill_job="indices_eod",
-            history_start=date(2022, 1, 3),
+            history_start=date(2014, 1, 6),
             min_rows_per_day=1,
             series_column="secid",
             series=_secids,

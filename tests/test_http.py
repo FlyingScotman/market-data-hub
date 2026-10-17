@@ -211,6 +211,7 @@ def test_ssl_context_contains_russian_root_and_certifi() -> None:
     subjects = [dict(x[0] for x in c["subject"]) for c in ctx.get_ca_certs()]
     names = {s.get("commonName") for s in subjects}
     assert "Russian Trusted Root CA" in names
+    assert "Russian Trusted Sub CA" in names
     assert len(names) > 50  # certifi bundle loaded too
 
 

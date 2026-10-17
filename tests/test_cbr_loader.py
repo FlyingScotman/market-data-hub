@@ -89,6 +89,7 @@ class Pages:
             cbr.STANDING_RATES_PATH: _page("cbr_standing_rates.html"),
             cbr.LIQUIDITY_PATH: _page("cbr_bliquidity.html"),
             cbr.MEETINGS_PATH: _page("cbr_cal_mp.html"),
+            cbr.REFINANCING_PATH: _page("cbr_refinancing_rates.html"),
         }
 
     def handler(self, path: str) -> Callable[[httpx.Request], httpx.Response]:
@@ -110,6 +111,12 @@ def pages() -> Iterator[Pages]:
 
 
 RANGE = {"date_from": "2026-10-12", "date_to": "2026-10-16"}
+
+
+@pytest.fixture(autouse=True)
+def _recorded_today(today_is: Callable[[date], None]) -> None:
+    """The responses were recorded on 2026-10-16 (FX tails depend on "today")."""
+    today_is(date(2026, 10, 16))
 
 
 def _counts(conn: Conn, run_id: int | None) -> dict[str, Any]:
@@ -383,3 +390,43 @@ def test_expand_fx_known_through_covers_unscheduled_holidays() -> None:
     assert usd == [date(2020, 3, d) for d in range(28, 32)] + [date(2020, 4, 1), date(2020, 4, 2)]
     # a currency missing from the latest record is not extended (dropped from the daily set)
     assert [r["effective_date"] for r in rows if r["ccy"] == "XDR"] == [date(2020, 3, 27)]
+
+
+def test_refinancing_rate_seeded_once_and_by_range(
+    pages: Pages, settings: Settings, db: Database, conn: Conn
+) -> None:
+    def refi(where: str = "") -> list[DictRow]:
+        return conn.execute(
+            "SELECT * FROM md.fixing WHERE index_code = 'CBR_REFINANCING_RATE' "
+            + where
+            + " ORDER BY fixing_date"
+        ).fetchall()
+
+    def captures() -> int:
+        row = conn.execute(
+            "SELECT count(*) AS n FROM ops.raw_capture WHERE endpoint = 'refinancing_rate'"
+        ).fetchone()
+        assert row is not None
+        return int(row["n"])
+
+    _run("cbr_daily", RANGE, settings, db)  # explicit range after 2015: not read
+    assert refi() == [] and captures() == 0
+    out = _run("cbr_daily", {}, settings, db)  # scheduled run, series empty: seeded
+    assert _counts(conn, out.run_id)["status"] in ("succeeded", "partial")
+    rows = refi()
+    assert len(rows) == (date(2016, 1, 1) - date(1992, 1, 1)).days
+    by = {r["fixing_date"]: r for r in rows}
+    assert by[date(2009, 8, 27)]["value"] == Decimal("10.75")  # ДОМ.РФ 15: coupon 1 = +2.5
+    assert by[date(2013, 9, 15)]["value"] == Decimal("8.25")  # not the key rate (7.00)
+    assert by[date(2015, 12, 31)]["details"]["period_from"] == "2012-09-14"
+    _run("cbr_daily", {}, settings, db)  # stored: not read again
+    assert captures() == 1
+    _run("cbr_daily", {"date_from": "2009-08-01", "date_to": "2009-08-31"}, settings, db)
+    assert captures() == 2 and len(refi()) == len(rows)
+
+
+def test_refinancing_dataset_is_closed() -> None:
+    from mdhub.datasets import get_dataset
+
+    spec = get_dataset("cbr_refinancing_rate")
+    assert spec.history_end == date(2015, 12, 31) and spec.backfill_job == "cbr_daily"

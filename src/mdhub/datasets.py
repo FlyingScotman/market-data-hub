@@ -68,6 +68,9 @@ class DatasetSpec:
     description: str
     backfill_job: str | None = None
     history_start: date | None = None
+    history_end: date | None = None
+    """Last date of a closed series (e.g. the CBR refinancing rate, merged into the key rate
+    from 2016): the expected latest date never moves past it, so the series is not stale."""
     min_rows_per_day: int = 1
     series_column: str | None = None
     series: tuple[str, ...] = ()
@@ -89,6 +92,12 @@ class DatasetSpec:
             raise ValueError(f"{self.name}: negative thresholds")
         if self.series and not self.series_column:
             raise ValueError(f"{self.name}: series requires series_column")
+        if (
+            self.history_start is not None
+            and self.history_end is not None
+            and self.history_end < self.history_start
+        ):
+            raise ValueError(f"{self.name}: history_end before history_start")
         if self.max_task_days is not None and self.max_task_days < 1:
             raise ValueError(f"{self.name}: max_task_days must be >= 1")
         if self.rolling_window_setting is not None:
