@@ -10,7 +10,8 @@ SU29025RMFS2    OFZ-PK
 SU52002RMFS1    OFZ-IN (indexed face)
 RU000A10A356    key-rate floater, current label 'Облигация с плавающим купоном'
 RU000A0JR4U9    amortizing bond
-RU000A0JS4Z7    put offer (2027-08-26) and a '0000-00-00' offer
+RU000A0JS4Z7    put offer (2027-08-26) and a '0000-00-00' offer; labelled fixed with known
+                coupons, but 9 of 11 future coupons unpublished (-> variable_known)
 RU000A0JXTS9    RUS-27: USD face, RUB settlement (FACEUNIT != CURRENCYID)
 RU000A0JWMZ1    perpetual (Бессрочные)
 RU000A0NNH09    EQRP structured note, qualified investors only (not in the collection)
@@ -303,7 +304,7 @@ def test_parse_bondization_one_checks_totals() -> None:
         ("SU29025RMFS2", "ofz_pk", "floating"),
         ("SU52002RMFS1", "ofz_in", "indexed_face"),
         ("RU000A10A356", "corporate", "floating"),
-        ("RU000A0JS4Z7", "corporate", "fixed"),
+        ("RU000A0JS4Z7", "corporate", "variable_known"),
         ("RU000A0JXTS9", "sovereign_fx", "fixed"),
         ("RU000A10DQB6", "sovereign_fx", "fixed"),
         ("RU000A0JWMZ1", "corporate", "fixed"),
@@ -346,6 +347,109 @@ def test_classify_legacy_floater_label_and_unlabelled() -> None:
         secid="RU000Z", sec_type="corporate_bond", is_matured=True, coupon_values=(True, True)
     )
     assert ms.classify_coupon_type(matured, "corporate") == ("fixed", "schedule")
+
+
+PAID = (date(2026, 4, 15), Decimal("85.48"), Decimal("17"))
+"""(pay_date, amount, rate) of a paid coupon (before TODAY)."""
+
+
+def fixed_label_bond(
+    coupons: list[tuple[date, Decimal | None, Decimal | None]], **kw: Any
+) -> ms.ClassifyInput:
+    """Synthetic active corporate labelled fixed with known coupons; coupons in schedule order."""
+    base: dict[str, Any] = {
+        "secid": "RU000TEST01",
+        "sec_type": "corporate_bond",
+        "coupon_details": ms.DETAILS_FIXED_KNOWN,
+        "has_description": True,
+        "is_active": True,
+        "today": TODAY,
+    }
+    base.update(kw)
+    return ms.ClassifyInput(
+        coupon_values=tuple(any(v is not None and v != 0 for v in (a, r)) for _, a, r in coupons),
+        coupon_rates=tuple(ms.CouponRate(None, pay, r) for pay, _, r in coupons),
+        **base,
+    )
+
+
+def test_fixed_label_with_unknown_future_coupons_is_variable_known() -> None:
+    unknown = (date(2027, 4, 15), None, None)
+    inp = fixed_label_bond([PAID, unknown])
+    assert ms.unknown_future_coupons(inp) == (2,)
+    assert ms.classify_coupon_type(inp, "corporate") == ("variable_known", "schedule")
+    # the same through BOND_TYPE alone; MOEX's 0 counts as missing
+    by_type = fixed_label_bond(
+        [PAID, (date(2027, 4, 15), Decimal(0), Decimal(0))],
+        coupon_details=None,
+        bond_type="Облигация с фиксированным (известным) купоном",
+    )
+    assert ms.fixed_known_label(by_type) == "Облигация с фиксированным (известным) купоном"
+    assert ms.classify_coupon_type(by_type, "corporate") == ("variable_known", "schedule")
+    # a structured note labelled fixed is no exception
+    note = fixed_label_bond([PAID, unknown], struct_flag=True)
+    assert ms.classify_coupon_type(note, "structured") == ("variable_known", "schedule")
+
+
+@pytest.mark.parametrize(
+    ("case", "inp"),
+    [
+        # fixed-rate pool: rate published, amount depends on the face outstanding
+        ("rate_without_amount", fixed_label_bond([PAID, (date(2027, 4, 15), None, Decimal(9))])),
+        (
+            "all_future_known",
+            fixed_label_bond([PAID, (date(2027, 4, 15), Decimal("85.48"), None)]),
+        ),
+        ("only_paid_unknown", fixed_label_bond([(date(2026, 4, 15), None, None)])),
+        ("pays_today", fixed_label_bond([PAID, (TODAY, None, None)])),
+        ("delisted", fixed_label_bond([PAID, (date(2027, 4, 15), None, None)], is_active=False)),
+        ("no_today", fixed_label_bond([PAID, (date(2027, 4, 15), None, None)], today=None)),
+    ],
+)
+def test_fixed_label_kept(case: str, inp: ms.ClassifyInput) -> None:
+    assert ms.classify_coupon_type(inp, "corporate") == ("fixed", "moex_label"), case
+
+
+def test_unknown_future_coupons_needs_aligned_schedule() -> None:
+    inp = fixed_label_bond([PAID, (date(2027, 4, 15), None, None)])
+    misaligned = ms.ClassifyInput(
+        secid=inp.secid, today=TODAY, coupon_values=(True,), coupon_rates=inp.coupon_rates
+    )
+    assert ms.unknown_future_coupons(misaligned) == ()
+
+
+def test_fixed_label_conflict_row() -> None:
+    row, facts = bond(fixture_universe(), "RU000A0JS4Z7")
+    assert (row["coupon_type"], row["coupon_type_basis"]) == ("variable_known", "schedule")
+    assert row["status"] == "active"
+    assert facts.coupon_type_conflict == {
+        "secid": "RU000A0JS4Z7",
+        "field": "coupon_type",
+        "source_a": "moex_schedule",
+        "source_b": "moex_label",
+        "value_a": "variable_known",
+        "value_b": "fixed (Фиксированный с известными купонами)",
+        "selected_source": "moex_schedule",
+        "reason": "active bond: 9 of 11 future coupons without amount or rate"
+        " (first #32 paying 2028-02-22)",
+        "resolved": False,
+        "run_id": 1,
+        "capture_id": row["capture_id"],
+    }
+    # labels agreeing with the schedule raise no conflict
+    _, ofz = bond(fixture_universe(), "SU26238RMFS4")
+    assert ofz.coupon_type_conflict is None
+
+
+def test_fixed_label_kept_for_delisted_bond() -> None:
+    u = fixture_universe()
+    u.market.pop("RU000A0JS4Z7")
+    u.directory["RU000A0JS4Z7"]["is_traded"] = False
+    u.collection["RU000A0JS4Z7"]["IS_TRADED"] = 0
+    row, facts = bond(u, "RU000A0JS4Z7")
+    assert row["status"] == "delisted"
+    assert (row["coupon_type"], row["coupon_type_basis"]) == ("fixed", "moex_label")
+    assert facts.coupon_type_conflict is None
 
 
 # ---------------------------------------------------------------------- schedules
@@ -723,6 +827,45 @@ def test_revisions_tracked(settings: Settings, db: Database, conn: Conn, fixed_t
         "SELECT status, currency_id FROM ref.bond WHERE secid = 'RU000A0JXTS9'"
     ).fetchone()
     assert rus is not None and rus["status"] == "active"
+
+
+@respx.mock
+def test_fixed_label_conflict_written_and_resolved(
+    settings: Settings, db: Database, conn: Conn, fixed_today: None
+) -> None:
+    mock_iss(respx)  # type: ignore[arg-type]
+    assert run_full(settings, db).status == "succeeded"
+    sql = "SELECT * FROM ref.static_conflict WHERE secid = 'RU000A0JS4Z7'"
+    rows = conn.execute(sql).fetchall()
+    assert len(rows) == 1
+    assert (rows[0]["field"], rows[0]["value_a"], rows[0]["resolved"]) == (
+        "coupon_type",
+        "variable_known",
+        False,
+    )
+    assert conn.execute("SELECT count(*) AS n FROM ref.static_conflict").fetchone() == {"n": 1}
+
+    def publish_coupons(payload: dict[str, Any]) -> None:
+        c = payload["coupons"]
+        i_val, i_prc = c["columns"].index("value"), c["columns"].index("valueprc")
+        for r in c["data"]:
+            if r[i_val] is None and r[i_prc] is None:
+                r[i_val], r[i_prc] = 95.49, 19.15
+
+    blocks = bulk_bondization_payloads(["RU000A0JS4Z7"], mutate=publish_coupons)
+    other = bulk_bondization_payloads([s for s in SAMPLES if s != "RU000A0JS4Z7"])
+    for name, b in other.items():
+        blocks[name]["data"] += b["data"]
+    mock_iss(respx, blocks=blocks)  # type: ignore[arg-type]
+    out = run_full(settings, db)
+    assert out.status == "succeeded", run_row(conn, out.run_id)["error"]
+    after = conn.execute(sql).fetchone()
+    assert after is not None and after["resolved"] is True and after["run_id"] == out.run_id
+    labels = conn.execute(
+        "SELECT coupon_type, coupon_type_basis FROM ref.bond WHERE secid = 'RU000A0JS4Z7'"
+    ).fetchone()
+    assert labels == {"coupon_type": "fixed", "coupon_type_basis": "moex_label"}
+    assert history_count(conn, "ref.static_conflict") == 1
 
 
 @respx.mock
