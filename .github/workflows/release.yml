@@ -1,0 +1,162 @@
+# Release on a tag vX.Y.Z (ADMIN_DESIGN §6.1, README_DEPLOY §11).
+#
+#   ci       tests, ruff, mypy (ci.yml)
+#   build    deploy/make_bundle.sh --code-only -> market-data-hub-X.Y.Z.tar.gz + .SHA256SUMS
+#            (the tag must equal the package version from importlib.metadata)
+#   sign     environment `release` (required reviewers): minisign -S over the SHA256SUMS.
+#            The secret key is handed to the minisign binary only: no checkout, no Python,
+#            no project dependencies in this job
+#   verify   mdhub release verify against deploy/release-keys/ of the tagged commit
+#   publish  GitHub Release with the archive, SHA256SUMS and SHA256SUMS.minisig
+#
+# Jobs get the least permissions they need; only `publish` can write to the repository.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  build:
+    needs: ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: false
+      - name: uv sync --frozen
+        run: uv sync --frozen
+      - name: tag matches the package version
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]; then
+            echo "::error::tag $TAG is not vX.Y.Z or vX.Y.Z{a|b|rc}N"; exit 1
+          fi
+          package="$(uv run --frozen python -c 'import importlib.metadata as m; print(m.version("market-data-hub"))')"
+          if [[ "$version" != "$package" ]]; then
+            echo "::error::tag $TAG but the package version is $package"; exit 1
+          fi
+          echo "version=$version" >>"$GITHUB_OUTPUT"
+      - name: code-only bundle
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          deploy/make_bundle.sh --code-only --version "$VERSION"
+          uv run --frozen mdhub release verify "dist/market-data-hub-$VERSION.tar.gz" --allow-unsigned
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: bundle
+          path: |
+            dist/market-data-hub-${{ steps.version.outputs.version }}.tar.gz
+            dist/market-data-hub-${{ steps.version.outputs.version }}.SHA256SUMS
+          if-no-files-found: error
+          retention-days: 7
+
+  sign:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: release
+    permissions: {}
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: bundle
+          path: dist
+      - name: install minisign
+        run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends minisign
+      - name: sign SHA256SUMS
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          umask 077
+          key="$RUNNER_TEMP/minisign.key"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$MINISIGN_SECRET_KEY" >"$key"
+          printf '%s\n' "$MINISIGN_PASSWORD" | minisign -S -s "$key" \
+            -m "dist/market-data-hub-$VERSION.SHA256SUMS" \
+            -t "market-data-hub $VERSION $GITHUB_SHA"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signature
+          path: dist/market-data-hub-${{ needs.build.outputs.version }}.SHA256SUMS.minisig
+          if-no-files-found: error
+          retention-days: 7
+
+  verify:
+    needs: [build, sign]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+      - name: mdhub release verify (pinned keys of this commit)
+        run: |
+          uv sync --frozen
+          uv run --frozen mdhub release keys --keys-dir deploy/release-keys
+          uv run --frozen mdhub release verify "dist/market-data-hub-$VERSION.tar.gz" \
+            --keys-dir deploy/release-keys
+
+  publish:
+    needs: [build, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+      - name: gh release create
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          pre=()
+          if [[ "$VERSION" =~ (a|b|rc)[0-9]+$ ]]; then pre=(--prerelease); fi
+          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag "${pre[@]}" \
+            --title "market-data-hub $VERSION" --generate-notes \
+            "dist/market-data-hub-$VERSION.tar.gz" \
+            "dist/market-data-hub-$VERSION.SHA256SUMS" \
+            "dist/market-data-hub-$VERSION.SHA256SUMS.minisig"

@@ -12,7 +12,8 @@ the read API. Two variants: **docker compose** (recommended) and **bare metal** 
 | `postgres/postgresql.conf` | tuning for 4 GB RAM |
 | `postgres/initdb/10-mdhub-roles.sh` | first start: read-only role + default privileges |
 | `sql/readonly_defaults.sql`, `sql/grant_readonly.sql` | read-only consumer role setup / re-grant |
-| `make_bundle.sh` | build machine: `dist/market-data-hub-<YYYYMMDD>.tar.gz` = code + seed dump + report + manifest |
+| `make_bundle.sh` | build machine: `dist/market-data-hub-<YYYYMMDD>.tar.gz` = code + seed dump + report + manifest; `--code-only`: the signed release bundle (§11) |
+| `release-keys/` | pinned minisign public keys that `mdhub release verify` accepts (§11) |
 | `restore_seed.sh` | restore the bundle's seed dump into the compose database, or any PostgreSQL 16 (`--database-url`) |
 | `Caddyfile` | TLS reverse proxy for the API (Let's Encrypt) |
 | `install.sh`, `systemd/` | bare-metal alternative |
@@ -165,6 +166,7 @@ docker compose up -d                           # migrate runs first, then worker
 docker compose run --rm --no-deps worker mdhub db-info
 ```
 
+Check a release before unpacking it: `mdhub release verify market-data-hub-X.Y.Z.tar.gz` (§11).
 Migrations are forward-only and checksummed; a failed migration stops `migrate` and the
 worker/api do not start (`docker compose logs migrate`). To roll back the code, restore the
 pre-upgrade dump with `restore_seed.sh` and start the previous image tag
@@ -226,3 +228,136 @@ service (`systemctl edit caddy` -> `[Service] Environment=...`), `systemctl relo
 | backup / restore | `mdhub ops backup [--keep N]`, `mdhub ops restore <file> [--clean] --yes` |
 | seed report | `mdhub report seed [--out FILE] [--as-of YYYY-MM-DD]` (read-only, Markdown) |
 | psql | `docker compose exec postgres psql -U mdhub mdhub` |
+
+## 11. Release bundles and signing
+
+A release is a **code-only bundle** signed with an ed25519 key in minisign format
+(ADMIN_DESIGN §6.1). The tag `vX.Y.Z` triggers `.github/workflows/release.yml`, which publishes
+three files on the GitHub Release:
+
+| file | content |
+|---|---|
+| `market-data-hub-X.Y.Z.tar.gz` | `mdhub/`: `git archive` of the tag, `MANIFEST.json`, `SHA256SUMS`; no seed dump |
+| `market-data-hub-X.Y.Z.SHA256SUMS` | copy of `mdhub/SHA256SUMS` (SHA-256 of every other file in the archive) |
+| `market-data-hub-X.Y.Z.SHA256SUMS.minisig` | minisign signature over it, trusted comment `market-data-hub X.Y.Z <commit>` |
+
+`MANIFEST.json` holds `version`, `commit`, `created_at`, `min_previous_version` (from
+`[tool.mdhub.release]` in `pyproject.toml`: the oldest installed version this release can be
+installed over) and every migration with the checksum `mdhub migrate` records.
+
+### Build locally
+
+```bash
+deploy/make_bundle.sh --code-only --version 0.2.0    # or tag HEAD v0.2.0 first
+# -> dist/market-data-hub-0.2.0.tar.gz, dist/market-data-hub-0.2.0.SHA256SUMS
+```
+
+No database is needed. The version is `--version`, else the `v*` tag on HEAD, else the installed
+package version (`importlib.metadata`); it must be `X.Y.Z` or `X.Y.Z{a|b|rc}N`. The dirty-tree
+rule and the forbidden-path check are the same as for the full bundle, and the archive must not
+contain `db/`, `SEED_REPORT.md` or `MANIFEST.txt`. A rebuild deletes a stale `.minisig`.
+
+### Verify
+
+```bash
+mdhub release verify market-data-hub-X.Y.Z.tar.gz   # .SHA256SUMS.minisig next to it
+mdhub release verify ARCHIVE --signature FILE.minisig --keys-dir deploy/release-keys --json
+mdhub release keys                                  # the pinned keys
+```
+
+`mdhub release verify` is pure Python (no minisign binary on the server). It checks, failing
+closed:
+
+1. the archive layout: only regular files and directories under `mdhub/`; no links, devices,
+   absolute paths, `..`, duplicate members or setuid bits; at most 1 GiB unpacked;
+2. the signature over the archive's own `mdhub/SHA256SUMS` against the pinned keys;
+3. every file's hash: none missing, none unlisted, none different;
+4. the manifest: format, project name, version, commit, `min_previous_version <= version`, and
+   migrations that match `src/mdhub/db/migrations/*.sql` in the archive exactly.
+
+Exit status 0 means verified, 1 refused, 2 a usage or key-list error. An unsigned archive or a
+signature by an unknown key is refused. `--allow-unsigned` is the only override, it exists on
+the CLI only, and it prints a warning. It still checks every hash and the manifest, and never
+accepts a signature by a pinned key that does not verify, because that means tampering.
+
+The pinned keys are `deploy/release-keys/*.pub` of the **installed** version, never the keys
+inside the archive under test. The image carries them in `/app/release-keys`
+(`MDHUB_RELEASE_KEYS_DIR`). In a source checkout the default is `deploy/release-keys/`. On
+compose:
+
+```bash
+docker compose run --rm --no-deps -v "$HOME/dl:/dl:ro" worker \
+    mdhub release verify /dl/market-data-hub-X.Y.Z.tar.gz
+```
+
+Without mdhub (any machine with minisign):
+
+```bash
+minisign -V -p deploy/release-keys/<KEYID>.pub -m market-data-hub-X.Y.Z.SHA256SUMS
+mkdir x && tar xzf market-data-hub-X.Y.Z.tar.gz -C x
+cmp x/mdhub/SHA256SUMS market-data-hub-X.Y.Z.SHA256SUMS && (cd x/mdhub && sha256sum -c --quiet SHA256SUMS)
+```
+
+### Generate the signing key (once, on the owner's machine)
+
+```bash
+brew install minisign                       # or: apt install minisign
+minisign -G -p mdhub-release.pub -s mdhub-release.key   # asks for a strong password
+id="$(sed -n 's/^untrusted comment: minisign public key //p' mdhub-release.pub)"
+cp mdhub-release.pub "deploy/release-keys/$id.pub"   # commit the public key only
+```
+
+Keep `mdhub-release.key` and its password offline, for example in a password manager and on an
+encrypted USB stick. Never commit them, and never sign with `minisign -W` (an unencrypted key).
+
+### The protected environment `release`
+
+Repository **Settings -> Environments -> New environment** `release`:
+
+- **Required reviewers**: the owner (and a second maintainer when there is one). The `sign` job
+  waits for an approval in the Actions tab before it can read the secrets.
+- **Deployment branches and tags**: *Selected branches and tags*, add the tag pattern `v*`.
+  Nothing else may deploy to `release`.
+- **Environment secrets** (environment secrets, not repository secrets):
+
+```bash
+gh secret set MINISIGN_SECRET_KEY --env release < mdhub-release.key
+gh secret set MINISIGN_PASSWORD --env release          # prompts; paste the key password
+```
+
+Also add a tag ruleset (**Settings -> Rules -> Rulesets**, target tags `v*`) so that only admins
+can create, update or delete release tags.
+
+Only the `sign` job reads the secrets. It downloads the build artifact, installs `minisign` from
+Ubuntu and runs `minisign -S`. It has no checkout, no Python, no project dependencies and no
+token permissions. `verify` then checks the result against the pinned keys of the tagged
+commit, and only `publish` can write, to create the Release. The workflow pins every action
+to a commit SHA.
+
+Plan limits: required reviewers on a **private** repository need a plan that offers them
+(GitHub Enterprise at the time of writing). Without them, keep the environment with its tag rule
+and the tag ruleset, or sign offline:
+
+```bash
+gh run download <run-id> -n bundle -D dist           # from the release run, after `build`
+minisign -S -s mdhub-release.key -m dist/market-data-hub-X.Y.Z.SHA256SUMS -t "market-data-hub X.Y.Z $(git rev-parse vX.Y.Z)"
+mdhub release verify dist/market-data-hub-X.Y.Z.tar.gz
+gh release create vX.Y.Z --verify-tag dist/market-data-hub-X.Y.Z.tar.gz \
+    dist/market-data-hub-X.Y.Z.SHA256SUMS dist/market-data-hub-X.Y.Z.SHA256SUMS.minisig
+```
+
+### Rotating the key
+
+Servers trust only the keys of the version they run, so a new key reaches them inside a release
+signed by a key they already trust:
+
+1. Generate the new key pair as above and commit its `.pub` **next to** the old one.
+2. Release N, still signed with the old key. Servers that install N trust both keys.
+3. Replace `MINISIGN_SECRET_KEY` and `MINISIGN_PASSWORD` in the `release` environment with the
+   new key. Release N+1 is signed with the new key.
+4. Once every server runs N or later, delete the old `.pub` in a later release.
+
+If the secret key leaks, delete its `.pub` and release immediately with a trusted key. On
+servers that cannot be updated in time, point `MDHUB_RELEASE_KEYS_DIR` at a directory without
+the leaked key. A lost key without a second pinned key cannot be rotated through the updater:
+install the next release by hand (§8) after checking it with minisign and the new public key.
