@@ -12,6 +12,7 @@ from typing import Any
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
+from psycopg.conninfo import make_conninfo
 from psycopg.rows import DictRow
 
 from admin_helpers import CLIENT_IP, ORIGIN, RP_ID, Console, SoftAuthenticator
@@ -28,6 +29,7 @@ from mdhub.hostmon.sampler import (
     Sampler,
     parse_sntp,
     parse_updates,
+    rollup,
     write_samples,
 )
 from mdhub.hostmon.status import above, machine_status, project_full, worst
@@ -242,7 +244,8 @@ def test_sntp_offset_parsing() -> None:
 # ------------------------------------------------------------------- storage and rollup
 
 
-def test_write_rollup_and_retention(db: Database, conn: Conn) -> None:
+def test_write_rollup_and_retention(db: Database, conn: Conn, db_url: str) -> None:
+    hostmon = Database(make_conninfo(db_url, user="mdhub_hostmon"))
     conn.execute(
         """
         INSERT INTO ops.host_metric (ts, metric, labels, value)
@@ -258,7 +261,7 @@ def test_write_rollup_and_retention(db: Database, conn: Conn) -> None:
         "(now() - interval '91 days', 'cpu.util_pct', '{}', 1, 1, 1, 1)"
     )
     conn.commit()
-    write_samples(db, [Sample("cpu.util_pct", {}, 99.0)])  # current bucket: not rolled up yet
+    write_samples(hostmon, [Sample("cpu.util_pct", {}, 99.0)])  # current bucket: not rolled up
     deleted = purge_host_metrics(db)
     assert deleted == {"ops.host_metric": 1, "ops.host_metric_5m": 1}
     rows = conn.execute(
@@ -269,8 +272,7 @@ def test_write_rollup_and_retention(db: Database, conn: Conn) -> None:
         ("cpu.util_pct", 10, 0, 4.5, 9),  # 10 samples 30 s apart in one bucket
     ]
     # idempotent: a second run rewrites the newest bucket, adds nothing
-    with db.connection() as c:
-        c.execute("SELECT ops.host_metric_rollup()")
+    rollup(hostmon)
     assert conn.execute("SELECT count(*) AS n FROM ops.host_metric_5m").fetchone() == {"n": 2}
     latest = conn.execute("SELECT * FROM ops.v_host_status").fetchall()
     assert [(r["metric"], r["value"]) for r in latest] == [("cpu.util_pct", 99.0)]
@@ -339,7 +341,7 @@ def fast_hasher(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 def viewer(db_url: str, conn: Conn) -> Iterator[Console]:
     settings = Settings(
-        database_url=db_url,
+        database_url=make_conninfo(db_url, user="mdhub_admin"),
         admin_domain=RP_ID,
         admin_allow_cidrs="203.0.113.0/24",
         admin_secret_key="11" * 32,

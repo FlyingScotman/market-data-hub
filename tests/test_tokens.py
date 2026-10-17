@@ -12,6 +12,7 @@ from typing import Any
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
+from psycopg.conninfo import make_conninfo
 from psycopg.rows import DictRow
 from typer.testing import CliRunner
 
@@ -43,7 +44,11 @@ ENV_TOKENS = "tok-alpha-123,tdm=tok-named-456"
 
 
 def _app(db_url: str, tokens: str | None = ENV_TOKENS) -> TestClient:
-    return TestClient(create_app(Settings(database_url=db_url, api_tokens=tokens)))
+    return TestClient(
+        create_app(
+            Settings(database_url=make_conninfo(db_url, user="mdhub_api"), api_tokens=tokens)
+        )
+    )
 
 
 def _bearer(token: str) -> dict[str, str]:

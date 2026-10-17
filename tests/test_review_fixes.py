@@ -15,6 +15,7 @@ from zoneinfo import ZoneInfo
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
+from psycopg.conninfo import make_conninfo
 from psycopg.rows import DictRow
 from typer.testing import CliRunner
 
@@ -277,7 +278,9 @@ def test_api_secid_filters_keep_case(conn: Conn, db_url: str) -> None:
         "('d', '{}', '2026-10-01')"
     )
     conn.commit()
-    app = create_app(Settings(database_url=db_url, api_tokens="tok-review-1234"))
+    app = create_app(
+        Settings(database_url=make_conninfo(db_url, user="mdhub_api"), api_tokens="tok-review-1234")
+    )
     h = {"Authorization": "Bearer tok-review-1234"}
     with TestClient(app) as c:
         by_secid = c.get("/v1/futures/eod?date=2026-10-15&secid=SiZ6", headers=h).json()

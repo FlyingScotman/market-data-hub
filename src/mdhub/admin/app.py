@@ -41,7 +41,7 @@ from mdhub.admin.web import (
 )
 from mdhub.config import Settings
 from mdhub.core.redact import SecretRedactingFilter, sanitize_text
-from mdhub.db.pool import Database
+from mdhub.db.pool import Database, warn_if_owner
 from mdhub.jobs import discover_jobs
 from mdhub.release import MAX_UPLOAD_BYTES
 
@@ -109,6 +109,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
         else:
             owned = Database.from_settings(cfg, pool_size=ADMIN_POOL_SIZE)
             app.state.database = owned
+        warn_if_owner(app.state.database.conninfo, "admin", "MDHUB_ADMIN_DB_PASSWORD")
         report = discover_jobs()
         for module, err in report.failed.items():
             log.warning("job module %s failed to import: %s", module, err)

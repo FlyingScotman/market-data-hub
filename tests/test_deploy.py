@@ -57,6 +57,9 @@ def test_env_example_lists_every_setting() -> None:
         "POSTGRES_PASSWORD",
         "MDHUB_RO_USER",
         "MDHUB_RO_PASSWORD",
+        "MDHUB_API_DB_PASSWORD",
+        "MDHUB_ADMIN_DB_PASSWORD",
+        "MDHUB_HOSTMON_DB_PASSWORD",
         "MDHUB_API_DOMAIN",
         "ACME_EMAIL",
     }

@@ -16,6 +16,7 @@ import pytest
 import respx
 from apscheduler.triggers.cron import CronTrigger
 from fastapi.testclient import TestClient
+from psycopg.conninfo import make_conninfo
 from psycopg.rows import DictRow
 
 import mdhub.loaders.swaps  # noqa: F401 - registers the job
@@ -445,7 +446,9 @@ def test_api_serves_otc_curves(
     site: Site, otc_settings: Settings, db: Database, db_url: str
 ) -> None:
     assert _run(otc_settings, db).status == "succeeded"
-    app = create_app(Settings(database_url=db_url, api_tokens="tok-otc-123"))
+    app = create_app(
+        Settings(database_url=make_conninfo(db_url, user="mdhub_api"), api_tokens="tok-otc-123")
+    )
     with TestClient(app) as client:
         auth = {"Authorization": "Bearer tok-otc-123"}
         lst = client.get("/v1/curves", headers=auth).json()["data"]

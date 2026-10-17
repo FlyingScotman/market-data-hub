@@ -73,7 +73,7 @@ from mdhub.api.auth import create_token, revoke_token
 from mdhub.config import Settings
 from mdhub.core.heartbeat import Heartbeat
 from mdhub.core.redact import sanitize_text
-from mdhub.db.migrate import applied_migrations, discover_migrations
+from mdhub.db.migrate import applied_migrations, discover_migrations, restrict_admin
 from mdhub.db.pool import Database, DictConnection
 from mdhub.loaders.maintenance import (
     PG_DUMP_TIMEOUT_S,
@@ -1153,6 +1153,7 @@ class Updater:
             self.host.restore(Path(journal["dump"]))
             with self.db.connection() as conn:
                 _reload(conn, journal["tables"])
+                restrict_admin(conn)  # service roles created after the dump get their grants
             self.layout.journal.unlink()
         finally:
             if had_lock and not self.acquire_lock():

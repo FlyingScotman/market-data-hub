@@ -14,6 +14,7 @@ import psycopg
 import pytest
 from argon2 import PasswordHasher
 from fastapi.testclient import TestClient
+from psycopg.conninfo import make_conninfo
 from psycopg.rows import DictRow
 from typer.testing import CliRunner
 
@@ -41,7 +42,7 @@ def fast_hasher(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _settings(db_url: str, **overrides: Any) -> Settings:
     values: dict[str, Any] = {
-        "database_url": db_url,
+        "database_url": make_conninfo(db_url, user="mdhub_admin"),
         "admin_domain": RP_ID,
         "admin_allow_cidrs": "203.0.113.0/24, 198.51.100.7",
         "admin_trusted_proxies": "10.9.0.2",
