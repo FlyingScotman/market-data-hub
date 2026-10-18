@@ -239,6 +239,11 @@ def test_proxy_setting_is_secret() -> None:
             "https://iss.moex.com/iss/a.json?iss.only=history,history.cursor&start=100",
         ),
         ("http://h:8080/p?client_secret=z", "http://h:8080/p"),
+        (
+            "file:curve.xlsx?token=hidden&date=2026-10-16#fragment",
+            "file:curve.xlsx?date=2026-10-16",
+        ),
+        ("urn:mdhub:curve?password=hidden&date=2026-10-16", "urn:mdhub:curve?date=2026-10-16"),
     ],
 )
 def test_redact_url(url: str, expected: str) -> None:

@@ -64,6 +64,10 @@ def redact_url(url: str | httpx.URL) -> str:
         ],
         safe=",:/",
     )
+    if parts.scheme and not netloc and not parts.path.startswith("/"):
+        # Preserve scheme:path identifiers (including relative file: names). Python
+        # patch releases disagree about adding file:/// to such paths.
+        return parts.scheme + ":" + urlunsplit(("", "", parts.path, query, ""))
     return urlunsplit((parts.scheme, netloc, parts.path, query, ""))
 
 
