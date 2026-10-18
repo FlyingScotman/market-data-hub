@@ -18,7 +18,7 @@ EXPECTED_JOBS = {
     "fx_moex_intraday", "fx_moex_eod", "fx_indicative", "futures_intraday", "futures_eod",
     "algopack_fx_futures", "indices_eod", "zcyc", "cbr_daily", "cbr_meetings", "ecb_fx",
     "rosstat_cpi", "swaps_ratescalcs", "swaps_otc_monitor", "quality", "backfill_worker",
-    "maintenance",
+    "maintenance", "source_probe",
 }  # fmt: skip
 
 

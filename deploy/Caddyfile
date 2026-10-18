@@ -1,8 +1,10 @@
-# TLS reverse proxy for the market-data-hub read API.
-# Compose: `docker compose --profile tls up -d` (upstream api:8080).
+# TLS reverse proxy for the market-data-hub read API and the admin console.
+# Compose: `docker compose --profile tls up -d` (upstreams api:8080 and admin:8081).
 # Bare metal: install caddy (apt), copy to /etc/caddy/Caddyfile and set
 #   MDHUB_API_DOMAIN, ACME_EMAIL and MDHUB_API_UPSTREAM=127.0.0.1:8080
-# in /etc/default/caddy (or a systemd drop-in Environment=).
+# in /etc/default/caddy (or a systemd drop-in Environment=); for the console also
+#   MDHUB_ADMIN_DOMAIN, MDHUB_ADMIN_ALLOW_CIDRS (space-separated) and
+#   MDHUB_ADMIN_UPSTREAM=127.0.0.1:8081.
 # The DNS A/AAAA record of MDHUB_API_DOMAIN must point at this host; ports 80+443 open
 # (80 is only needed for the ACME HTTP challenge and redirects to 443).
 {
@@ -35,6 +37,32 @@
 		Referrer-Policy "no-referrer"
 		-Server
 	}
+
+	log {
+		output stdout
+		format json
+	}
+}
+
+# Admin console (ADMIN_DESIGN §2). The allow-list is enforced here on the TCP peer and again in
+# the app (which trusts X-Forwarded-For only from Caddy). Security headers come from the app.
+{$MDHUB_ADMIN_DOMAIN:admin.invalid} {
+	@outside not remote_ip {$MDHUB_ADMIN_ALLOW_CIDRS:192.0.2.1/32}
+	# Release uploads (ADMIN_DESIGN §6.2): 200 MB archive + signature; every other path 1 MB.
+	@upload path /updates/upload
+	@not_upload not path /updates/upload
+	request_body @upload {
+		max_size 201MB
+	}
+	request_body @not_upload {
+		max_size 1MB
+	}
+	route {
+		respond @outside "Forbidden" 403
+		reverse_proxy {$MDHUB_ADMIN_UPSTREAM:admin:8081}
+	}
+
+	header -Server
 
 	log {
 		output stdout

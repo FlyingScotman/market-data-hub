@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="htmx-config" content='{"allowEval": false, "allowScriptTags": false, "includeIndicatorStyles": false, "historyCacheSize": 0, "selfRequestsOnly": true}'>
+<title>{% block title %}Admin{% endblock %} · mdhub admin</title>
+<link rel="stylesheet" href="{{ assets['admin.css'].url }}" integrity="{{ assets['admin.css'].integrity }}">
+<script src="{{ assets['htmx-2.0.4.min.js'].url }}" integrity="{{ assets['htmx-2.0.4.min.js'].integrity }}" defer></script>
+<script src="{{ assets['admin.js'].url }}" integrity="{{ assets['admin.js'].integrity }}" defer></script>
+</head>
+<body data-csrf="{{ csrf }}" hx-headers='{"X-CSRF-Token": "{{ csrf }}"}'>
+<header class="top">
+  <a class="brand" href="/">mdhub admin</a>
+  {% if user %}
+  <nav>
+    {% for href, label in nav %}
+    <a href="{{ href }}"{% if path == href or (href != '/' and path.startswith(href)) %} aria-current="page"{% endif %}>{{ label }}</a>
+    {% endfor %}
+  </nav>
+  <div class="who">
+    <a href="/account">{{ user.display_name or user.login }}</a>
+    <span class="role">{{ user.role }}</span>
+    <form method="post" action="/logout" class="inline">
+      <input type="hidden" name="csrf_token" value="{{ csrf }}">
+      <button type="submit" class="link">Log out</button>
+    </form>
+  </div>
+  {% endif %}
+</header>
+<main>
+{% if flash %}<p class="flash" role="status">{{ flash }}</p>{% endif %}
+{% if error %}<p class="error" role="alert">{{ error }}</p>{% endif %}
+{% block content %}{% endblock %}
+</main>
+<footer>market-data-hub {{ version }}</footer>
+</body>
+</html>

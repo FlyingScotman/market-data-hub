@@ -13,6 +13,7 @@ from typing import Any
 import psycopg
 import pytest
 from fastapi.testclient import TestClient
+from psycopg.conninfo import make_conninfo
 from psycopg.rows import DictRow
 
 from mdhub.api.app import create_app
@@ -26,7 +27,9 @@ AUTH = {"Authorization": "Bearer tok-alpha-123"}
 
 @pytest.fixture
 def client(db_url: str) -> Iterator[TestClient]:
-    app = create_app(Settings(database_url=db_url, api_tokens=TOKENS))
+    app = create_app(
+        Settings(database_url=make_conninfo(db_url, user="mdhub_api"), api_tokens=TOKENS)
+    )
     with TestClient(app) as c:
         yield c
 
@@ -65,7 +68,9 @@ def test_health_is_public_and_ready(client: TestClient) -> None:
 def test_ready_reports_pending_migrations(db_url: str) -> None:
     with psycopg.connect(db_url, autocommit=True) as c:
         c.execute("DELETE FROM ops.schema_migration WHERE version = '0410_api_views'")
-    app = create_app(Settings(database_url=db_url, api_tokens=TOKENS))
+    app = create_app(
+        Settings(database_url=make_conninfo(db_url, user="mdhub_api"), api_tokens=TOKENS)
+    )
     with TestClient(app) as c:
         r = c.get("/health/ready")
     assert r.status_code == 503
@@ -108,7 +113,7 @@ def test_second_token_and_openapi(client: TestClient) -> None:
 
 
 def test_no_tokens_configured_rejects_everything(db_url: str) -> None:
-    app = create_app(Settings(database_url=db_url))
+    app = create_app(Settings(database_url=make_conninfo(db_url, user="mdhub_api")))
     with TestClient(app) as c:
         assert c.get("/v1/coverage", headers=AUTH).status_code == 401
         assert c.get("/health/live").status_code == 200

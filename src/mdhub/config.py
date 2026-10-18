@@ -17,11 +17,37 @@ Environment variables (DESIGN §7 plus a few operational knobs):
 ``MDHUB_ALGOPACK_FULL_REREAD_MINUTES`` AlgoPack whole-day re-read interval, default 30
 ``MDHUB_ALGOPACK_RETENTION_DAYS``   AlgoPack rolling window in calendar days, default 90
 ``MDHUB_API_TOKENS``                comma-separated bearer tokens for the read API
+                                    (``token`` -> name ``env:N``, or ``name=token``)
+``MDHUB_OPS_LOG_RETENTION_DAYS``    retention of ``ops.api_request`` / ``source_probe`` /
+                                    ``worker_heartbeat`` rows, default 90
 ``MDHUB_ENABLE_SDFI``               enable the MOEX SDFI curve loader, default false
 ``MDHUB_LOG_LEVEL``                 logging level, default ``INFO`` (extension)
 ``MDHUB_HTTP_TIMEOUT``              HTTP timeout in seconds, default 30 (extension)
 ``MDHUB_API_POOL_SIZE``             read-API connection pool size, default 8 (extension)
 ``MDHUB_BACKUP_DIR``                pg_dump target directory, default ``/var/backups/mdhub``
+``MDHUB_ADMIN_DOMAIN``              admin console host name (WebAuthn RP ID), e.g.
+                                    ``admin.example.com``; ``localhost`` for local use
+``MDHUB_ADMIN_ORIGIN``              console origin, default ``https://<MDHUB_ADMIN_DOMAIN>``
+``MDHUB_ADMIN_ALLOW_CIDRS``         client networks allowed to reach the console (comma or
+                                    space separated); empty = every request refused
+``MDHUB_ADMIN_TRUSTED_PROXIES``     peers (IPs/CIDRs) whose ``X-Forwarded-For`` is used
+``MDHUB_ADMIN_SECRET_KEY``          32 random bytes (hex or base64) encrypting TOTP secrets
+``MDHUB_UPDATE_GITHUB_TOKEN``       fine-grained GitHub token (contents:read on the repository);
+                                    updater only (``deploy/updater.env``), never in ``.env``
+``MDHUB_UPDATE_GITHUB_REPO``        ``owner/name`` of the release repository
+``MDHUB_UPDATE_ROOT``               host directory with ``releases/``, ``current``, ``shared/``;
+                                    mounted at the same path in the updater, default ``/opt/mdhub``
+``MDHUB_UPDATE_UPLOAD_DIR``         upload volume shared by console and updater, default
+                                    ``/var/lib/mdhub/uploads``
+``MDHUB_UPDATE_API_URL``            read API as the updater reaches it, default ``http://api:8080``
+``MDHUB_SECRETS_PRIVATE_KEY``       worker only: X25519 private key opening the source
+                                    credentials set in the console (``mdhub secrets init-key``)
+``MDHUB_HOSTMON_MOUNTS``            host mounts sampled by ``mdhub hostmon`` (comma or space
+                                    separated host paths), default ``/``
+``MDHUB_HOSTMON_*``                 Machine page thresholds (ADMIN_DESIGN §10), see the
+                                    ``hostmon_*`` fields
+``MDHUB_NTP_SERVER``                SNTP server for the clock offset, default ``pool.ntp.org``;
+                                    ``off`` = no clock check
 ``MOEX_API_KEY``                    MOEX APIM bearer token
 ``MOEX_PASSPORT_LOGIN`` / ``_PASSWORD`` MOEX Passport credentials
 ``RATESCALC_USERNAME`` / ``_PASSWORD``  Ratescalcs basic auth
@@ -32,6 +58,7 @@ Environment variables (DESIGN §7 plus a few operational knobs):
 
 from __future__ import annotations
 
+import re
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -39,6 +66,10 @@ from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = ["ConfigError", "Settings", "get_settings"]
+
+_NAMED_TOKEN_RE = re.compile(r"^([a-z0-9][a-z0-9._-]{0,63})=([^=].*)$")
+"""``name=token`` entry of ``MDHUB_API_TOKENS``. The token part must not start with ``=``, so
+a padded base64 token (``abc==``) is never split."""
 
 
 class ConfigError(RuntimeError):
@@ -48,6 +79,11 @@ class ConfigError(RuntimeError):
 def _env(name: str) -> Any:
     # Accept both the env name and the python field name (for tests / programmatic use).
     return Field(default=None, validation_alias=AliasChoices(name, name.lower()))
+
+
+def _threshold(name: str, default: float) -> Any:
+    env = f"MDHUB_HOSTMON_{name}"
+    return Field(default=default, gt=0, validation_alias=AliasChoices(env, env.lower()[6:]))
 
 
 class Settings(BaseSettings):
@@ -112,6 +148,13 @@ class Settings(BaseSettings):
     api_tokens: SecretStr | None = Field(
         default=None, validation_alias=AliasChoices("MDHUB_API_TOKENS", "api_tokens")
     )
+    ops_log_retention_days: int = Field(
+        default=90,
+        ge=1,
+        validation_alias=AliasChoices("MDHUB_OPS_LOG_RETENTION_DAYS", "ops_log_retention_days"),
+    )
+    """Days of ``ops.api_request``, ``ops.source_probe`` and ``ops.worker_heartbeat`` kept by
+    ``maintenance mode=retention`` (ADMIN_DESIGN §3.2)."""
     enable_sdfi: bool = Field(
         default=False, validation_alias=AliasChoices("MDHUB_ENABLE_SDFI", "enable_sdfi")
     )
@@ -126,6 +169,48 @@ class Settings(BaseSettings):
         ge=1,
         le=100,
         validation_alias=AliasChoices("MDHUB_API_POOL_SIZE", "api_pool_size"),
+    )
+
+    hostmon_mounts: str = Field(
+        default="/", validation_alias=AliasChoices("MDHUB_HOSTMON_MOUNTS", "hostmon_mounts")
+    )
+    ntp_server: str | None = Field(
+        default="pool.ntp.org", validation_alias=AliasChoices("MDHUB_NTP_SERVER", "ntp_server")
+    )
+    # Machine page thresholds (ADMIN_DESIGN §10); the states are in mdhub.hostmon.status.
+    hostmon_disk_warn_pct: float = _threshold("DISK_WARN_PCT", 80)
+    hostmon_disk_crit_pct: float = _threshold("DISK_CRIT_PCT", 90)
+    hostmon_disk_full_days: float = _threshold("DISK_FULL_DAYS", 14)
+    hostmon_mem_available_min_pct: float = _threshold("MEM_AVAILABLE_MIN_PCT", 10)
+    hostmon_swap_max_pct: float = _threshold("SWAP_MAX_PCT", 50)
+    hostmon_steal_max_pct: float = _threshold("STEAL_MAX_PCT", 10)
+    hostmon_load_per_core_max: float = _threshold("LOAD_PER_CORE_MAX", 2)
+    hostmon_clock_offset_max_s: float = _threshold("CLOCK_OFFSET_MAX_S", 1)
+    hostmon_pg_connections_max_pct: float = _threshold("PG_CONNECTIONS_MAX_PCT", 80)
+    hostmon_pg_xact_max_minutes: float = _threshold("PG_XACT_MAX_MINUTES", 30)
+
+    admin_domain: str | None = _env("MDHUB_ADMIN_DOMAIN")
+    admin_origin: str | None = _env("MDHUB_ADMIN_ORIGIN")
+    admin_allow_cidrs: str | None = _env("MDHUB_ADMIN_ALLOW_CIDRS")
+    admin_trusted_proxies: str | None = _env("MDHUB_ADMIN_TRUSTED_PROXIES")
+    admin_secret_key: SecretStr | None = _env("MDHUB_ADMIN_SECRET_KEY")
+    secrets_private_key: SecretStr | None = _env("MDHUB_SECRETS_PRIVATE_KEY")
+
+    update_github_token: SecretStr | None = _env("MDHUB_UPDATE_GITHUB_TOKEN")
+    update_github_repo: str = Field(
+        default="FiveLimaGolf/market-data-hub",
+        validation_alias=AliasChoices("MDHUB_UPDATE_GITHUB_REPO", "update_github_repo"),
+    )
+    update_root: str = Field(
+        default="/opt/mdhub", validation_alias=AliasChoices("MDHUB_UPDATE_ROOT", "update_root")
+    )
+    update_upload_dir: str = Field(
+        default="/var/lib/mdhub/uploads",
+        validation_alias=AliasChoices("MDHUB_UPDATE_UPLOAD_DIR", "update_upload_dir"),
+    )
+    update_api_url: str = Field(
+        default="http://api:8080",
+        validation_alias=AliasChoices("MDHUB_UPDATE_API_URL", "update_api_url"),
     )
 
     moex_api_key: SecretStr | None = _env("MOEX_API_KEY")
@@ -166,11 +251,26 @@ class Settings(BaseSettings):
         "cbonds_login",
         "cbonds_password",
         "otc_monitor_token",
+        "admin_domain",
+        "admin_origin",
+        "admin_allow_cidrs",
+        "admin_trusted_proxies",
+        "admin_secret_key",
+        "update_github_token",
+        "secrets_private_key",
         mode="before",
     )
     @classmethod
     def _blank_is_none(cls, value: Any) -> Any:
         if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("ntp_server", mode="before")
+    @classmethod
+    def _ntp_off(cls, value: Any) -> Any:
+        # An empty env value is ignored (env_ignore_empty), so "off" disables the clock check.
+        if isinstance(value, str) and value.strip().lower() in {"", "off", "none"}:
             return None
         return value
 
@@ -191,11 +291,24 @@ class Settings(BaseSettings):
         """Egress proxy URL (secret: may contain credentials) or ``None``."""
         return self.http_proxy.get_secret_value() if self.http_proxy else None
 
-    def api_token_list(self) -> list[str]:
-        """Read-API bearer tokens parsed from the comma-separated ``MDHUB_API_TOKENS``."""
+    def api_token_entries(self) -> list[tuple[str, str]]:
+        """``(name, token)`` per entry of the comma-separated ``MDHUB_API_TOKENS``.
+
+        An entry is either a bare token, named ``env:N`` after its 1-based position, or
+        ``name=token`` with a lower-case name (``[a-z0-9][a-z0-9._-]*``, at most 64 characters).
+        """
         if self.api_tokens is None:
             return []
-        return [t.strip() for t in self.api_tokens.get_secret_value().split(",") if t.strip()]
+        entries = [t.strip() for t in self.api_tokens.get_secret_value().split(",")]
+        out: list[tuple[str, str]] = []
+        for i, entry in enumerate((e for e in entries if e), start=1):
+            m = _NAMED_TOKEN_RE.match(entry)
+            out.append((m.group(1), m.group(2)) if m else (f"env:{i}", entry))
+        return out
+
+    def api_token_list(self) -> list[str]:
+        """Read-API bearer token values of ``MDHUB_API_TOKENS`` (names stripped)."""
+        return [token for _, token in self.api_token_entries()]
 
     def secret_values(self) -> list[str]:
         """All configured secret values, for redaction of logs and error texts.

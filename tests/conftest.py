@@ -1,7 +1,9 @@
 """Shared fixtures: a throw-away PostgreSQL 16 (pgserver) and per-test databases.
 
 * ``pg_server`` (session): PostgreSQL cluster with its data dir in a pytest tmp dir.
-* ``template_db`` (session): database ``mdhub_template`` with all migrations applied.
+* ``template_db`` (session): database ``mdhub_template`` with all migrations applied; the
+  service roles (``SERVICE_ROLES``, migration ``0800``) exist, so it carries their grants;
+  local connections are trusted, so ``make_conninfo(db_url, user=role)`` connects as one.
 * ``db_url``: a fresh database cloned from the template for each test (dropped afterwards).
 * ``empty_db_url``: a fresh database **without** migrations (for migration tests).
 * ``conn``: psycopg connection (dict rows, non-autocommit) to ``db_url``.
@@ -29,6 +31,7 @@ from mdhub.db.migrate import migrate
 from mdhub.db.pool import Database
 
 TEMPLATE_DB = "mdhub_template"
+SERVICE_ROLES = ("mdhub_api", "mdhub_admin", "mdhub_hostmon")
 
 # Never let a developer's real credentials leak into tests.
 for _name in (
@@ -94,6 +97,9 @@ def pg_server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[PgCluster]:
 def template_db(pg_server: PgCluster) -> str:
     pg_server.drop_db(TEMPLATE_DB)
     with pg_server.admin() as conn:
+        for role in SERVICE_ROLES:
+            if not conn.execute("SELECT 1 FROM pg_roles WHERE rolname = %s", (role,)).fetchone():
+                conn.execute(sql.SQL("CREATE ROLE {} LOGIN").format(sql.Identifier(role)))
         conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(TEMPLATE_DB)))
     migrate(pg_server.url(TEMPLATE_DB))
     return TEMPLATE_DB

@@ -11,6 +11,8 @@ the loaders, storage and the read API; this document adds the admin side.
 | Users | Several users with roles: `viewer`, `operator`, `admin` |
 | Second factor | Passkeys (WebAuthn) first; TOTP and one-time recovery codes as the fallback |
 | Updater targets in v1 | VPS with docker compose. Bare-metal systemd and the Windows inside instance come later behind the same interface |
+| Source credentials (added 2026-10-17) | Entered by an admin in the console, stored only on the server, never in a bundle, a seed dump or the repository (§9) |
+| Machine monitoring (added 2026-10-17) | The console shows the state of the host the hub runs on (§10) |
 
 ## 1. Goals and non-goals
 
@@ -25,7 +27,7 @@ The console must answer these questions on one screen, without SSH:
 Non-goals for v1:
 
 - Alerting (system doc 06 §9). It will read the same tables later. The console only shows state.
-- Editing source credentials from the browser. They stay in `.env`, and the console shows only "set" or "not set".
+- Reading source credentials back in the browser. The console can set, replace and remove them, but never shows a value (§9).
 - Running arbitrary SQL or shell commands from the browser.
 
 ## 2. Processes and network
@@ -174,6 +176,8 @@ tokens are random values, not signed blobs. Rotating the key re-encrypts the sec
   in `deploy/release-keys/`, and a key list allows rotation. GitHub uploads the archive, `SHA256SUMS` and
   `.minisig` to the Release.
 - **Uploaded files** go through exactly the same check. An unsigned archive or a signature from an unknown key is refused.
+  The signature is detached, so an upload is the archive plus its `market-data-hub-X.Y.Z.SHA256SUMS.minisig`.
+  Implemented in Phase C: `mdhub.release.verify_archive` and `mdhub release verify`, documented in README_DEPLOY §11.
   There is no override switch in the UI; the only override is a CLI flag on the server.
 - The version comes from git tags (`hatch-vcs`). It replaces the hard-coded `0.1.0` and shows up in `/health/ready`, the
   console and every heartbeat.
@@ -227,8 +231,125 @@ Only one update can run at a time, enforced by an advisory lock.
 | **B. Admin auth + console** | `mdhub.admin` app, users and roles, passkeys, TOTP and recovery codes, sessions, CSRF, throttling, audit log, all pages in §4, CLI `mdhub admin …`, compose service plus Caddy host with allow-list | A (for data); auth can start in parallel | the ASVS L2 checklist items for V2–V4 have tests; the login flows are tested end to end with a virtual authenticator (Playwright) |
 | **C. Release pipeline** | `make_bundle.sh --code-only`, GitHub Actions on tag (tests, bundle, minisign), key management in `deploy/release-keys/`, `mdhub release verify` | none | a test tag produces a release whose bundle verifies on a clean machine |
 | **D. Updater** | `mdhub-updater` service, state machine §6.3, worker drain flag, Updates page | B (page), C (artifacts) | update and both rollback paths rehearsed on a throw-away VPS |
+| **E. Source credentials store** | §9: write-only encrypted store, worker-side resolution and reload, console page, `mdhub secrets …`, dump exclusions | B | a credential set in the console is used by the next job run without a restart; no plaintext anywhere outside the worker's memory; seed dumps carry no `admin.*` data |
+| **F. Host monitoring** | §10: `hostmon` sampler, PostgreSQL stats, metrics storage and rollup, Machine page, Overview lights; container status from the updater | B; D for the container part | the Machine page shows live host, disk, PostgreSQL and container state on a VPS; thresholds tested |
 
-A and C can run in parallel. The authentication part of B can also start in parallel with A.
+A and C can run in parallel. The authentication part of B can also start in parallel with A. E and F can run in parallel
+with each other and with D; migrations: E in `0700`–`0749`, F in `0750`–`0799`.
+
+**Phase A status (2026-10-17):** implemented. Migrations `0600_admin_api_token` (schema `admin`,
+`admin.api_token`, `admin.restrict_access()`) and `0610_ops_observability` (`ops.api_request`,
+`ops.worker_heartbeat`, `ops.source_probe`, `ops.job_source`, `ops.v_source_status`); code in
+`mdhub.api.auth`, `mdhub.api.requestlog`, `mdhub.core.heartbeat`, `mdhub.quality.source_probe`,
+`mdhub tokens …`; new env `MDHUB_OPS_LOG_RETENTION_DAYS` (and the compose build arg
+`MDHUB_VERSION`). Deviations from §3: `ops.job_source` maps loader jobs to sources (the job run
+table has no source column); `/health/*` requests are not logged; Cbonds is probed at most hourly
+and Ratescalcs only in its service hours.
+
+**Phase B status (2026-10-17):** implemented. Migration `0620_admin_auth` (`admin.user_account`,
+`webauthn_credential`, `totp_secret`, `recovery_code`, `enrollment`, `session`, `login_attempt`,
+append-only `audit_log`; job trigger `admin`); code in `mdhub.admin` (app, auth, pages, factors,
+store, security), `mdhub.job_requests` (worker side of "run now") and `mdhub admin …` (create-user, list, reset, unlock, disable, enable,
+rotate-key); compose service `admin` (not published; Caddy reaches it on network `admin_edge`
+from a fixed address, the only trusted proxy) and the Caddy site with `remote_ip` allow-list;
+new env `MDHUB_ADMIN_DOMAIN`, `MDHUB_ADMIN_ORIGIN`, `MDHUB_ADMIN_ALLOW_CIDRS`,
+`MDHUB_ADMIN_TRUSTED_PROXIES`, `MDHUB_ADMIN_SECRET_KEY`. Deviations: the user table is
+`admin.user_account` with a lower-case `text` login (no citext); sessions carry a stage
+(anonymous login page, password done, enrolling, full) and the pending WebAuthn challenge; the
+lockout is derived from `login_attempt` per typed login (an unlock is an `unlocked` row), so it
+behaves the same for logins that do not exist; the common-password list holds the 12+ character
+entries of the NCSC top-100k list (shorter ones fail the length rule); "run a job now" inserts a
+row into `ops.job_request` (migration `0630_ops_job_request`, one open request per job) that the
+worker (`mdhub.job_requests`, polled every 5 s, `FOR UPDATE SKIP LOCKED`) runs through
+`run_job` with trigger `admin` and default parameters; running requests of a worker whose
+heartbeat stopped or went stale are requeued (2 attempts at most). The `admin` compose service
+therefore gets no `env_file`, only `MDHUB_DATABASE_URL`, `MDHUB_ADMIN_*`, `MDHUB_LOG_LEVEL` and
+`MDHUB_TZ` (no source credentials, no `MDHUB_API_TOKENS`; the Tokens page lists only named
+tokens);
+`Origin: null` (sent by browsers on form posts under `Referrer-Policy: no-referrer`) counts as
+absent, so `Sec-Fetch-Site: same-origin` must then be present; the overview's TLS light shows
+the sources' certificates (the console's own certificate is Caddy's). Login flows are tested
+end to end with a software authenticator (`tests/admin_helpers.py`), not Playwright.
+
+**Phase D status (2026-10-17):** implemented, not yet rehearsed on a VPS (README_DEPLOY §13 has
+the procedure). Migration `0640_ops_update` (`ops.release`, `ops.release_available`,
+`ops.update_request`, `ops.update_log`, `ops.worker_control`); code in `mdhub.updater`
+(`mdhub updater`), the worker side of the drain flag in `mdhub.schedule` / `mdhub.job_requests`
+(`mdhub.jobs.worker_draining`), the Updates page in `mdhub.admin.pages`; compose service
+`updater`, volume `uploads`, Caddy body limit 201 MB on `/updates/upload` only; new env
+`MDHUB_UPDATE_GITHUB_TOKEN` (in `updater.env`), `MDHUB_UPDATE_GITHUB_REPO`, `MDHUB_UPDATE_ROOT`,
+`MDHUB_UPDATE_UPLOAD_DIR`, `MDHUB_UPDATE_API_URL`. Deviations: states `draining` and `cancelled`
+(queued requests can be withdrawn); release statuses add `superseded`, and `ops.release` keeps
+the release's migrations, the version it replaced and its pre-update dump; GitHub releases are
+listed every 10 minutes into `ops.release_available` and the newest three above the running
+version are downloaded and verified ahead of time, so the console can show their migrations
+without the token (no "check now" button); uploads are verified in the console too (same
+`verify_archive`, same pinned keys) before the confirmation page, and again by the updater from
+its own copy; a rollback to the previous version does not re-verify a signature (its release
+directory and image were verified when it was installed) and, across migrations, restores the
+dump taken before the current version was installed; a restore drops and re-creates the
+database (`pg_restore --create`) and puts back `ops.update_request`, `ops.update_log`,
+`ops.release` and the missing `admin.audit_log` rows from a journal file, so the update's trail
+survives and an interrupted restore is redone; the GitHub token lives in `updater.env` because
+worker, api and migrate read all of `.env`; the updater runs as root (the docker socket is root
+anyway); it replaces itself through a one-off container of the new image; the Updates page is
+admin-only (it was a viewer page in phase B); the host layout is `releases/`, `current`,
+`archives/`, `shared/` under `MDHUB_UPDATE_ROOT`, mounted at the same path in the updater.
+
+**Phase E status (2026-10-17):** implemented. Migration `0700_admin_source_credential`
+(`admin.secret_key_public`, `admin.source_credential` with a CHECK on the registry names and a
+statement trigger `NOTIFY mdhub_credentials`); code in `mdhub.credentials` (registry, sealed
+boxes, worker store), `mdhub.admin.credentials` (page **Credentials**) and `mdhub secrets …`
+(init-key, import-env, rotate-key, list); new env `MDHUB_SECRETS_PRIVATE_KEY` (compose: worker
+only, blanked for `migrate`/`api`); `make_bundle.sh --exclude-table-data='admin.*'` plus a TOC
+check (`--check-dump FILE`). Deviations: the worker learns which names are set in `.env` and
+publishes them (names only) as `secret_key_public.env_names`, since the console cannot see the
+worker's `.env`; the latest `published_at` is the key the console seals to; resolution happens
+in `run_job` (and `calendar seed`), so every job and nested run gets the resolved copy; a
+decrypted value is redacted process-wide (`mdhub.core.redact.register_secrets`); "Check" needs
+the admin role but no step-up; `verify_result` ∈ {ok, rejected, unreachable} is written by
+`source_probe` for the stored names of a probed source (none for `MDHUB_HTTP_PROXY`, which spans
+every source; MOEX Passport has no probe); `rotate-key` re-seals in one transaction and prints
+the new key, and until the worker restarts with it, jobs fall back to `.env`.
+
+**Phase F status (2026-10-17):** implemented, including the updater side. Migration
+`0750_ops_host_metric` (`ops.host_metric`, `ops.host_metric_5m` with `ops.host_metric_rollup()`,
+`ops.v_host_status`, `ops.container_status`); code in `mdhub.hostmon` (`sampler`: psutil and
+`/host/proc`, `/host/sys`, `/rootfs` with fallback to the local `/proc`; `pgstats`; `status`:
+thresholds and states), `mdhub hostmon [--once]`, the Machine page (`mdhub.admin.machine`,
+inline SVG) and four Overview lights (Machine, Disks, PostgreSQL, Containers); compose service
+`hostmon`; new env `MDHUB_HOSTMON_MOUNTS`, `MDHUB_NTP_SERVER` and the ten `MDHUB_HOSTMON_*`
+thresholds. Deviations: `ops.v_host_status` gives the latest value per series of the last
+10 minutes; the states are computed in `mdhub.hostmon.status`, since the thresholds are settings
+(the `admin` service therefore also gets `MDHUB_HOSTMON_*` and `MDHUB_NTP_SERVER`); the rollup
+runs from hostmon every 5 minutes and from `maintenance` before retention; PostgreSQL metrics
+(`pg.*`) share `ops.host_metric`; WAL is the generation rate from `pg_stat_wal` (the size of
+`pg_wal` needs `pg_ls_waldir`, which is not `pg_stat_*`); query texts are not stored; hostmon
+runs with `network_mode: host` (so `/proc/net` is the host's) and reaches PostgreSQL on its
+published 127.0.0.1 port; the SNTP query runs every 5 minutes, not every 30 s. For phase D:
+the updater upserts one `ops.container_status` row per container every 30 s (`state` as docker
+reports it, `restart_count`, `started_at`, `image` with tag, `cpu_pct`, `mem_bytes`,
+`mem_limit_bytes`, `updated_at = now()`); rows older than 2 minutes show "updater not
+reporting"; a container restarted in the last hour (`restart_count > 0` and `started_at` within
+the hour) is a warning. The updater does this from its own thread (`mdhub.updater.ContainerReporter`:
+`docker ps` of the `mdhub` compose project without one-off `run` containers, `docker inspect`,
+`docker stats --no-stream`), idle or mid-update; `mem_limit_bytes` is the container's own limit
+(NULL without one); rows of containers that no longer exist are deleted; it pauses while a
+restore runs, since an insert during `pg_restore` would break the table's primary key.
+
+**Database roles (2026-10-17):** implemented. Migration `0800_service_roles`:
+`admin.grant_service_roles()` grants `mdhub_api`, `mdhub_admin` and `mdhub_hostmon` exactly what
+their code runs (derived statement by statement; the apps' test suites run as these roles,
+`tests/test_service_roles.py` asserts the forbidden writes), `admin.restrict_access()` calls it
+after locking schema `admin` (so every re-lock re-grants), and `ops.host_metric_rollup()` is
+security definer, executable by hostmon and the owner only. Roles and passwords come from
+`deploy/sql/service_roles.sql` (initdb, `restore_seed.sh`, README_DEPLOY §16); compose builds
+each service's `MDHUB_DATABASE_URL` from `MDHUB_<SERVICE>_DB_PASSWORD` and falls back to the
+owner, with a warning at start, while it is unset. worker, migrate and updater stay on the owner
+role. Deviations from §3: the console reads `admin.secret_key_public` but cannot write it (a
+console able to publish a key could open every credential sealed to it afterwards) and cannot
+delete users or tokens; hostmon also upserts its heartbeat; the API also reads
+`ops.row_history` (known_at reads of md/ref).
 
 ## 8. Open points
 
@@ -237,3 +358,78 @@ A and C can run in parallel. The authentication part of B can also start in para
 - The signing key policy: the protected GitHub environment (proposed) or an offline key on the owner's machine.
 - The inside Windows instance will need a console too: the same app behind IIS, or Windows Integrated Authentication
   instead of passwords (system doc 05 §6). This is decided when the inside instance is built.
+
+## 9. Source credentials store (phase E)
+
+Source credentials are `MOEX_API_KEY`, `MOEX_PASSPORT_*`, `RATESCALC_*`, `CBONDS_*`, `OTC_MONITOR_TOKEN` and
+`MDHUB_HTTP_PROXY` (its URL may carry a password). An admin enters them in the console. They live only on the server.
+Consumer API tokens are a separate thing and are already managed on the Tokens page (§3.3).
+
+**Write-only by construction.** The admin container must still never be able to read a credential (Phase B rule).
+Credentials are therefore sealed with public-key encryption:
+
+- The worker holds an X25519 private key in `MDHUB_SECRETS_PRIVATE_KEY`. It is in the worker's `.env` on the server only,
+  created by `mdhub secrets init-key`. The worker publishes the matching public key and its key id to
+  `admin.secret_key_public` when it starts.
+- The console encrypts each value to that public key as a sealed box: an ephemeral X25519 key, HKDF-SHA256 and AES-256-GCM,
+  with the credential name and key id as associated data. It stores only the ciphertext. Once the request ends, the console
+  cannot decrypt what it wrote.
+- Table `admin.source_credential`: name (from a fixed registry of known fields; free-form names are refused),
+  ciphertext, key id, set_by, set_at, verified_at, verify_result. Setting a name again replaces its row. The old ciphertext
+  is not kept. The audit log records who set or removed which name, never the value.
+- The page lists every known credential with: not set / set in console / set in `.env` (fallback) / both (the console
+  value wins), who set it and when, and the last check result. Value fields are `type=password` with
+  `autocomplete=off`; nothing is ever pre-filled. Setting, replacing and removing need the admin role and step-up.
+- **Check** queues a `source_probe` for that source through `ops.job_request`. The worker runs it, so the console still
+  makes no outbound calls to sources.
+
+**Resolution in the worker.** A database credential wins over `.env`. The worker decrypts at job start into the
+`Settings` copy that job uses, and adds the values to the log redaction list (`secret_values()`). Changes reach the worker by
+`NOTIFY mdhub_credentials` and are also picked up by a 60 s poll. No restart is needed. A ciphertext under an unknown key
+id is reported on the page as "re-enter" and is never used. `mdhub secrets import-env` moves `.env` values into the store,
+after which those lines can be deleted from `.env`. `mdhub secrets rotate-key` re-encrypts every value under a new key pair.
+
+**Never in a package.**
+
+- Bundles are `git archive` (code only); `.env` is already a forbidden path.
+- The seed dump in `make_bundle.sh` uses `--exclude-table-data` for every table in `admin.*`. A check refuses the bundle
+  if the dump's table of contents has data for any of them.
+- Backups do contain the ciphertext, which is what makes a restore keep working. The private key is not in the database,
+  so a stolen backup does not expose credentials. Back up the worker's `.env` separately (README_DEPLOY).
+- If the private key is lost, the credentials have to be entered again; data and history are unaffected.
+
+## 10. Host monitoring (phase F)
+
+**What is shown** (Machine page, plus lights on the Overview):
+
+| Area | Metrics |
+|---|---|
+| CPU | utilisation, **steal** (a noisy neighbour on the VPS), iowait, load 1/5/15 against the core count |
+| Memory | used and available, swap in use, OOM kills since boot (`/proc/vmstat oom_kill`) |
+| Disks | per mount (root, the docker volumes, the backup directory): space and inodes used, a projected date the disk fills (linear fit over 7 days), IO utilisation and latency |
+| Network | rx/tx, errors and drops per interface |
+| System | uptime with reboot detection, clock offset against NTP (SNTP query to `MDHUB_NTP_SERVER`; timestamps matter for market data), reboot required and pending security updates when the host exposes them |
+| Containers | state, health, restarts, uptime, image tag, CPU and memory per container |
+| PostgreSQL | database size and growth, connections against `max_connections`, the longest running transaction and query, waiting locks, cache hit ratio, the tables with the most dead tuples, the last autovacuum, WAL size, checkpoints |
+
+**Collection.**
+
+- A small `hostmon` service (`mdhub hostmon`, psutil) samples every 30 s. It reads the host through read-only mounts
+  (`/proc` → `/host/proc`, `/sys` → `/host/sys`, `/` → `/rootfs`), like node_exporter. It has no docker socket, no
+  credentials and no listening port.
+- Container status comes from the updater, the only process with the docker socket (§2). It writes
+  `ops.container_status` every 30 s.
+- The worker samples the PostgreSQL statistics (`pg_stat_*`) every minute.
+- psutil also runs on Windows, so the inside instance can reuse the sampler later.
+
+**Storage.** Narrow table `ops.host_metric(ts, metric, labels jsonb, value)`. Raw samples are kept 7 days. The
+`maintenance` job keeps a 5-minute rollup (min/avg/max) for 90 days. `ops.v_host_status` gives the latest value and state
+per metric.
+
+**Thresholds** are in `Settings`, overridable by `MDHUB_HOSTMON_*`. Defaults: disk 80% warning / 90% critical, or full
+within 14 days; memory available below 10%; swap in use above 50%; steal above 10% over 5 minutes; load above 2× cores;
+clock offset above 1 s; any OOM kill or container restart in the last hour; PostgreSQL connections above 80%; a
+transaction open longer than 30 minutes. The states feed the Overview and, later, alerting.
+
+**Rendering.** Sparklines and 24 h / 7 d charts are server-rendered inline SVG, so the CSP stays strict and there is no
+JavaScript chart library.

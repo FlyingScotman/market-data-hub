@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+{% block title %}Jobs{% endblock %}
+{% block content %}
+<h1>Jobs</h1>
+{% set can_run = user.at_least('operator') %}
+
+<section class="card">
+  <h2>Running now</h2>
+  <table>
+    <thead><tr><th>Run</th><th>Job</th><th>Started</th><th>Elapsed</th><th>Trigger</th><th>Host</th></tr></thead>
+    <tbody>
+    {% for r in running %}
+    <tr><td>{{ r.id }}</td><td>{{ r.job }}</td><td>{{ r.started_at|dt }}</td><td>{{ r.started_at|ago(now) }}</td><td>{{ r.trigger or '-' }}</td><td>{{ r.host or '-' }}</td></tr>
+    {% else %}
+    <tr><td colspan="6">Nothing running.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Requested runs</h2>
+  <p class="small">"Run now" queues a request; the worker runs it within a few seconds with default parameters.</p>
+  <table>
+    <thead><tr><th>Request</th><th>Job</th><th>State</th><th>By</th><th>Requested</th><th>Picked</th><th>Finished</th><th>Run</th><th>Error</th>{% if can_run %}<th></th>{% endif %}</tr></thead>
+    <tbody>
+    {% for q in requests %}
+    <tr>
+      <td>{{ q.id }}</td><td>{{ q.job }}</td>
+      <td><span class="pill {{ 'bad' if q.state == 'failed' else ('warn' if q.state in ('queued', 'running') else 'ok') }}">{{ q.state }}</span></td>
+      <td>{{ q.requested_login or '-' }}</td><td>{{ q.requested_at|dt }}</td><td>{{ q.picked_at|dt }}</td><td>{{ q.finished_at|dt }}</td>
+      <td>{% if q.job_run_id %}<a href="/jobs?job={{ q.job }}#run-{{ q.job_run_id }}">{{ q.job_run_id }}</a> {{ q.run_status or '' }}{% else %}-{% endif %}</td>
+      <td class="small">{{ (q.error or '')[:300] }}</td>
+      {% if can_run %}<td>{% if q.state == 'queued' %}
+        <form method="post" action="/jobs/requests/{{ q.id }}/cancel">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <button type="submit" class="link danger">Cancel</button>
+        </form>{% endif %}</td>{% endif %}
+    </tr>
+    {% else %}
+    <tr><td colspan="10">No requests.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Schedule and health</h2>
+  <table>
+    <thead><tr><th>Job</th><th>Health</th><th>Last run</th><th>Last success</th><th>Fails in a row</th><th>Next fire (UTC)</th><th>Cron (MSK)</th>{% if can_run %}<th></th>{% endif %}</tr></thead>
+    <tbody>
+    {% for j in jobs %}
+    <tr>
+      <td><a href="/jobs?job={{ j.h.job }}">{{ j.h.job }}</a></td>
+      <td><span class="pill {{ 'bad' if j.h.problem else ('warn' if j.h.status in ('degraded', 'not_registered') else 'ok') }}">{{ j.h.status }}</span>{% if j.h.missed_by_lock %} <span class="small">(lock busy)</span>{% endif %}</td>
+      <td>{{ j.h.last_status or '-' }} {{ j.h.last_started_at|ago(now) if j.h.last_started_at else '' }}</td>
+      <td>{{ j.h.last_success_at|ago(now) if j.h.last_success_at else 'never' }}</td>
+      <td>{{ j.h.consecutive_failures }}</td>
+      <td>{{ j.next|dt if j.next else '-' }}</td>
+      <td class="small">{{ j.crons }}</td>
+      {% if can_run %}<td>{% if j.h.job in registered %}
+        <form method="post" action="/jobs/{{ j.h.job }}/run" data-confirm="Ask the worker to run {{ j.h.job }} now with default parameters?">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <button type="submit" class="link">Run now</button>
+        </form>{% endif %}</td>{% endif %}
+    </tr>
+    {% if j.h.last_error and j.h.problem %}<tr class="detail"><td></td><td colspan="7" class="small">{{ j.h.last_error[:300] }}</td></tr>{% endif %}
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Failed and partial runs (24 h)</h2>
+  <table>
+    <thead><tr><th>Run</th><th>Job</th><th>Status</th><th>Started</th><th>Error</th></tr></thead>
+    <tbody>
+    {% for r in failures %}
+    <tr><td>{{ r.id }}</td><td>{{ r.job }}</td><td><span class="pill {{ 'bad' if r.status == 'failed' else 'warn' }}">{{ r.status }}</span></td><td>{{ r.started_at|dt }}</td><td class="small">{{ (r.error or '')[:400] }}</td></tr>
+    {% else %}
+    <tr><td colspan="5">None.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Run history</h2>
+  <form method="get" action="/jobs" class="row">
+    <label>Job <input name="job" value="{{ filter_job }}" maxlength="64"></label>
+    <label>Status <select name="status"><option value="">any</option>{% for s in statuses %}<option{% if s == filter_status %} selected{% endif %}>{{ s }}</option>{% endfor %}</select></label>
+    <button type="submit" class="secondary">Filter</button>
+  </form>
+  <table>
+    <thead><tr><th>Run</th><th>Job</th><th>Status</th><th>Trigger</th><th>Started</th><th>Finished</th><th>Rows +/~</th><th>Error</th></tr></thead>
+    <tbody>
+    {% for r in history %}
+    <tr id="run-{{ r.id }}"><td>{{ r.id }}</td><td>{{ r.job }}</td><td>{{ r.status }}</td><td>{{ r.trigger or '-' }}</td><td>{{ r.started_at|dt }}</td><td>{{ r.finished_at|dt }}</td><td>{{ r.rows_inserted|num }} / {{ r.rows_updated|num }}</td><td class="small">{{ r.error or '' }}</td></tr>
+    {% else %}
+    <tr><td colspan="8">No runs.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

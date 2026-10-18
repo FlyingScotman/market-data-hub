@@ -42,7 +42,10 @@ src/mdhub/
   core/iss.py      MOEX ISS JSON helpers (blocks, paging, converters)
   core/timeutil.py MSK/UTC clocks, business-day arithmetic
   core/decimalutil.py, core/errors.py, core/redact.py, core/bizday.py
-  jobs.py          @job registry, JobContext, run_job(), discover_jobs()
+  core/heartbeat.py Heartbeat (ops.worker_heartbeat, started by `mdhub scheduler`)
+  jobs.py          @job registry, JobContext, run_job(), running_jobs(), discover_jobs()
+  api/             app.py (read API), auth.py (tokens, scopes), requestlog.py (ops.api_request)
+  quality/         checks, gaps, backfill, job health, source_probe (job source_probe)
   schedule.py      RULES (DESIGN §6) + APScheduler worker
   cli.py           `mdhub` CLI;  cli_ext/  auto-registered sub-command groups
   sources/         pure fetch + parse per provider (no DB)
@@ -131,13 +134,29 @@ src/mdhub/
 3. Add per-host rates to `default_rate_limits()` in `core/http.py` if the default (5 rps)
    is not appropriate.
 4. Unit-test the parser against sanitized fixtures; test format drift raises.
+5. Add a lightweight request to `PROBES` in `mdhub/quality/source_probe.py` (reachability,
+   credentials, TLS expiry for the admin console) and map the loader job to the source in
+   `ops.job_source` (migration); `tests/test_observability.py` checks both cover every loader.
 
 ## Adding a migration
 
 - File `src/mdhub/db/migrations/NNNN_short_name.sql` (`^\d{4}_[a-z0-9_]+\.sql$`). Number
   ranges (DESIGN §5): **0001-0099** core/ops, **0100-0199** ref, **0200-0299** md,
-  **0300-0399** legacy, **0400+** api/views. Pick the next free number in your range; two
-  files with the same number are rejected.
+  **0300-0399** legacy, **0400-0499** api/views, **0500-0599** snapshot layer, **0600-0699**
+  admin console and observability, **0700-0799** credentials store and host monitoring,
+  **0800-0899** database roles. Pick the next free number in your range; two files with
+  the same number are rejected.
+- Schema `admin` holds secrets (tokens, later users and sessions) and must stay closed to the
+  read-only role: **end every migration that creates objects in `admin` with
+  `CALL admin.restrict_access();`** (the owner's global default privileges would otherwise grant
+  `SELECT` to `mdhub_ro`). `tests/test_observability.py::test_admin_schema_closed_to_public`
+  fails if a grant is left.
+- api, admin and hostmon run as least-privilege roles (`0800_service_roles`, README_DEPLOY
+  §16). **A table, column or function that one of them reads or writes needs a new migration
+  that `CREATE OR REPLACE`s `admin.grant_service_roles()`** with the grant added (md and ref are
+  granted to the API schema-wide). The apps' tests connect as these roles
+  (`make_conninfo(db_url, user="mdhub_admin")`), so a missing grant fails them;
+  `tests/test_service_roles.py` lists what each role must not do.
 - Each file runs in one transaction; applied files are checksummed — **never edit an applied
   migration**, add a new one. No psql meta-commands, no `CREATE INDEX CONCURRENTLY`.
 - Schema-qualify every object. Standard columns for normalized tables:
@@ -291,11 +310,24 @@ def import_cmd(path: str) -> None: ...
 
 Build `Settings()` / `Database.from_settings()` inside the command, never at import time. A
 module that fails to import is reported on stderr and skipped. Core commands: `migrate`,
-`jobs list`, `run`, `scheduler`, `db-info`.
+`jobs list`, `run`, `scheduler`, `db-info`. Read-API tokens: `mdhub tokens create NAME
+[-s read|snapshots|export ...] [--expires-days N]` (prints the token once, on stdout),
+`mdhub tokens list [--all]`, `mdhub tokens revoke NAME|ID` (DESIGN §8).
+
+## Version
+
+The version comes from git tags `vX.Y.Z` (hatch-vcs, `pyproject.toml`): an untagged commit
+reports `X.Y.(Z+1).devN+g<hash>`. `mdhub.__version__` reads the installed metadata, so it is
+fixed when the package is (re)installed - `uv sync` rebuilds the editable install when the
+commit or the tags change (`[tool.uv] cache-keys`). A `git archive` (release bundle) carries the
+version in `.git_archival.txt` (`export-subst`); a Docker build from a plain checkout reports
+`0.0.0` unless built with `--build-arg MDHUB_VERSION=X.Y.Z` (compose: `MDHUB_VERSION`). The
+version is shown by `mdhub --version`, `/health/ready` and every worker heartbeat.
 
 ## Environment
 
 DESIGN §7 plus operational knobs: `MDHUB_LOG_LEVEL` (default `INFO`), `MDHUB_HTTP_TIMEOUT`
-(seconds, default 30), `MDHUB_API_POOL_SIZE` (read-API pool, default 8), `MDHUB_BACKUP_DIR`.
+(seconds, default 30), `MDHUB_API_POOL_SIZE` (read-API pool, default 8), `MDHUB_BACKUP_DIR`,
+`MDHUB_OPS_LOG_RETENTION_DAYS` (API request log, probes, heartbeats; default 90).
 Empty values count as unset. See `mdhub/config.py`; every setting must appear in
 `deploy/env.example` (`tests/test_deploy.py`).

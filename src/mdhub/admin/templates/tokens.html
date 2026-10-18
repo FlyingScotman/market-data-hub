@@ -1,0 +1,53 @@
+{% extends "base.html" %}
+{% block title %}Tokens{% endblock %}
+{% block content %}
+<h1>API tokens</h1>
+{% if not session.stepped_up %}<p class="hint">Changes need a fresh check: <a href="/step-up?next=/tokens">confirm your identity</a>.</p>{% endif %}
+{% if created %}
+<section class="card highlight">
+  <h2>Token {{ created.name }} created</h2>
+  <p class="warn">Copy it now. It is shown only once and cannot be recovered.</p>
+  <pre class="secret" data-copy>{{ created.token }}</pre>
+</section>
+{% endif %}
+<section class="card">
+  <h2>New token</h2>
+  <form method="post" action="/tokens" class="row">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label>Name <input name="name" required maxlength="64" pattern="[a-z0-9][a-z0-9._\-]{0,63}" placeholder="tdm-backend"></label>
+    <fieldset class="row tight"><legend>Scopes</legend>
+      {% for s in scopes %}<label class="check"><input type="checkbox" name="scope" value="{{ s }}"{% if s == 'read' %} checked{% endif %}> {{ s }}</label>{% endfor %}
+    </fieldset>
+    <label>Expires after (days) <input name="expires_days" type="number" min="1" max="3650" placeholder="never"></label>
+    <button type="submit">Create</button>
+  </form>
+</section>
+<section class="card">
+  <h2>Tokens</h2>
+  <table>
+    <thead><tr><th>Id</th><th>Name</th><th>Prefix</th><th>Scopes</th><th>Created</th><th>Expires</th><th>Last used</th><th>Last IP</th><th>State</th><th></th></tr></thead>
+    <tbody>
+    {% for t in tokens %}
+    <tr>
+      <td>{{ t.id }}</td><td>{{ t.name }}</td><td><code>{{ t.prefix }}…</code></td><td>{{ t.scopes|join(', ') }}</td>
+      <td>{{ t.created_at|dt }}<br><span class="small">{{ t.created_by or '' }}</span></td><td>{{ t.expires_at|dt }}</td><td>{{ t.last_used_at|dt }}</td><td>{{ t.last_used_ip or '-' }}</td>
+      <td>{% if t.revoked_at %}<span class="pill bad">revoked</span>{% else %}<span class="pill ok">live</span>{% endif %}</td>
+      <td>{% if not t.revoked_at %}
+        <form method="post" action="/tokens/{{ t.id }}/expiry" class="row tight">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <input name="expires_days" type="number" min="1" max="3650" placeholder="days" aria-label="Expire after days">
+          <button type="submit" class="link">Set expiry</button>
+        </form>
+        <form method="post" action="/tokens/{{ t.id }}/revoke" data-confirm="Revoke token {{ t.name }}? Consumers using it stop working within 30 s.">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <button type="submit" class="link danger">Revoke</button>
+        </form>{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="10">No named tokens.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="small">Tokens from <code>MDHUB_API_TOKENS</code> are not visible here (the console does not hold them); list them with <code>mdhub tokens list</code> on the server and replace them with named tokens.</p>
+</section>
+{% endblock %}

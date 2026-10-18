@@ -28,8 +28,12 @@ the job's lock (a backfill of the same job, or a previous run, may hold it); bac
 to a waiting fire. A fire that still cannot run is recorded in ``ops.job_run`` as ``skipped``
 with an error starting ``lock_busy:``; job health reports it as ``missed`` and the ``quality``
 job re-runs it (rules with ``catch_up``). Polling rules (``_poll``: intraday snapshots,
-AlgoPack, Ratescalcs, OTC Monitor, the backfill worker) neither wait nor catch up - the next
-fire supersedes a missed one.
+AlgoPack, Ratescalcs, OTC Monitor, the backfill worker, source probes) neither wait nor catch
+up - the next fire supersedes a missed one.
+
+Drain (ADMIN_DESIGN §6.3): while ``ops.worker_control.drain`` is set the worker starts no run;
+non-polling fires are recorded as skipped with :data:`mdhub.jobs.DRAINING` (a ``lock_busy``
+reason), so the ``quality`` job catches them up after the update.
 
 The scheduler skips rules whose job is not registered (with a warning), so loaders can be
 added incrementally.
@@ -52,7 +56,15 @@ from apscheduler.triggers.cron import CronTrigger
 from mdhub.config import Settings
 from mdhub.core.bizday import DEFAULT_CALENDAR, CalendarPredicate
 from mdhub.db.pool import Database
-from mdhub.jobs import LOCK_BUSY, REGISTRY, JobRegistry, record_skipped_run, run_job
+from mdhub.jobs import (
+    DRAINING,
+    LOCK_BUSY,
+    REGISTRY,
+    JobRegistry,
+    record_skipped_run,
+    run_job,
+    worker_draining,
+)
 
 __all__ = [
     "KNOWN_JOBS",
@@ -97,6 +109,7 @@ KNOWN_JOBS: Final = (
     "quality",
     "backfill_worker",
     "maintenance",
+    "source_probe",
 )
 """All scheduled job names. Loaders must register exactly these names."""
 
@@ -246,6 +259,13 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
         Rule(cron="30 20 * * *", catch_up=False),
     ),
     "backfill_worker": (_poll("*/10 * * * *", days="all", note="DB-driven; runs on all days"),),
+    "source_probe": (
+        _poll(
+            "*/5 * * * *",
+            days="all",
+            note="reachability, credentials, TLS expiry per source (Cbonds hourly)",
+        ),
+    ),
     "maintenance": (
         _r("0 2 * * *", days="all", mode="backup", keep=14, note="pg_dump, keep 14"),
         _r("0 3 * * *", days="all", mode="retention", note="raw retention + VACUUM ANALYZE"),
@@ -350,6 +370,19 @@ class _RuleRunner:
                 )
             return
         try:
+            # Checked after the lock wait: a fire that waited must not start once draining.
+            if worker_draining(self.db):
+                log.info("%s: worker draining for an update; not starting", self.name)
+                if wait > 0:
+                    record_skipped_run(
+                        self.db,
+                        self.name,
+                        dict(self.rule.params),
+                        DRAINING,
+                        settings=self.settings,
+                        trigger="schedule",
+                    )
+                return
             outcome = run_job(
                 self.name,
                 dict(self.rule.params),

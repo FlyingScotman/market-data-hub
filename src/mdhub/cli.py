@@ -1,7 +1,7 @@
 """``mdhub`` command-line interface.
 
 Commands: ``migrate``, ``jobs list``, ``run <job> [--param k=v ...]``, ``scheduler``,
-``db-info``. Modules in :mod:`mdhub.cli_ext` exposing ``app: typer.Typer`` are added as
+``updater``, ``db-info``. Modules in :mod:`mdhub.cli_ext` exposing ``app: typer.Typer`` are added as
 sub-command groups automatically (see ``docs/DEVELOPING.md``).
 """
 
@@ -19,13 +19,16 @@ from typing import Annotated, Any
 import typer
 from psycopg.rows import tuple_row
 
-from mdhub import __version__
+from mdhub import __version__, credentials, job_requests
 from mdhub.config import ConfigError, Settings
 from mdhub.core.bizday import DbCalendar
 from mdhub.core.capture import reap_orphaned_runs
+from mdhub.core.heartbeat import Heartbeat
 from mdhub.core.redact import SecretRedactingFilter
 from mdhub.db.migrate import MigrationError, applied_migrations, discover_migrations, migrate
 from mdhub.db.pool import Database
+from mdhub.hostmon import pgstats
+from mdhub.hostmon.pgstats import PgStatsSampler
 from mdhub.jobs import (
     REGISTRY,
     JobParamError,
@@ -33,6 +36,7 @@ from mdhub.jobs import (
     discover_jobs,
     parse_param_pairs,
     run_job,
+    running_jobs,
 )
 from mdhub.schedule import RULES, build_scheduler, check_rules
 
@@ -78,6 +82,17 @@ def _database(settings: Settings, *, pool_size: int | None = None) -> Database:
     try:
         return Database.from_settings(settings, pool_size=pool_size)
     except ConfigError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(2) from None
+
+
+def _credentials(
+    settings: Settings, db: Database, *, worker: bool
+) -> credentials.CredentialStore | None:
+    try:
+        return credentials.activate(settings, db, worker=worker)
+    except ConfigError as exc:
+        db.close()
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from None
 
@@ -163,6 +178,7 @@ def run_cmd(
             typer.echo(f"import failed: {module}: {err}", err=True)
         raise typer.Exit(2)
     db = _database(settings)
+    _credentials(settings, db, worker=False)
     try:
         outcome = run_job(
             job_name,
@@ -190,7 +206,14 @@ def run_cmd(
 def scheduler_cmd(
     max_workers: Annotated[int, typer.Option(help="Concurrent job threads.")] = 8,
 ) -> None:
-    """Run the blocking scheduler (DESIGN §6) until SIGTERM/SIGINT."""
+    """Run the blocking scheduler (DESIGN §6) until SIGTERM/SIGINT.
+
+    Also writes the worker heartbeat (``ops.worker_heartbeat``, every 30 s) with the jobs
+    running in this process, and runs the job requests of the admin console
+    (``ops.job_request``, :mod:`mdhub.job_requests`). With ``MDHUB_SECRETS_PRIVATE_KEY`` it
+    publishes its public key and uses the source credentials set in the console
+    (:mod:`mdhub.credentials`). It also samples the PostgreSQL statistics for the Machine page
+    every minute (:mod:`mdhub.hostmon.pgstats`)."""
     settings = _settings()
     report = discover_jobs()
     for module, err in report.failed.items():
@@ -199,19 +222,29 @@ def scheduler_cmd(
         log.warning("schedule problem: %s", problem)
     # Jobs open nested pooled connections (e.g. DbCalendar lookups inside a data transaction):
     # two per worker plus headroom avoids PoolTimeout with all workers busy.
-    db = _database(settings, pool_size=2 * max_workers + 2)
+    db = _database(settings, pool_size=2 * (max_workers + job_requests.MAX_PARALLEL) + 3)
     try:
         reap_orphaned_runs(db)
     except Exception:  # never block the scheduler start on housekeeping
         log.exception("could not reap orphaned job runs")
+    store = _credentials(settings, db, worker=True)
     scheduler = build_scheduler(settings, db, calendar=DbCalendar(db), max_workers=max_workers)
+    scheduler.add_job(
+        PgStatsSampler(db).run_once, "interval", seconds=pgstats.INTERVAL_S, id="pgstats"
+    )
 
     def _stop(signum: int, _frame: FrameType | None) -> None:
         log.info("signal %d: shutting down scheduler", signum)
         raise SystemExit(0)
 
     signal.signal(signal.SIGTERM, _stop)
-    log.info("scheduler starting with %d trigger(s)", len(scheduler.get_jobs()))
+    heartbeat = Heartbeat(db, "worker", running=running_jobs)
+    heartbeat.start()
+    requests = job_requests.JobRequestPoller(
+        settings, db, calendar=DbCalendar(db), worker_instance=heartbeat.instance_id
+    )
+    requests.start()
+    log.info("scheduler %s starting with %d trigger(s)", __version__, len(scheduler.get_jobs()))
     try:
         scheduler.start()
     except (KeyboardInterrupt, SystemExit):
@@ -219,7 +252,39 @@ def scheduler_cmd(
     finally:
         if scheduler.running:
             scheduler.shutdown(wait=True)
+        requests.stop()
+        heartbeat.stop()
+        if store is not None:
+            store.stop()
         db.close()
+
+
+@app.command("updater")
+def updater_cmd() -> None:
+    """Run the self-update agent (ADMIN_DESIGN §6) until SIGTERM/SIGINT.
+
+    Executes the install and rollback requests of the admin console (``ops.update_request``)
+    with docker compose; see :mod:`mdhub.updater`. No listening port."""
+    import threading
+
+    from mdhub import updater
+
+    settings = _settings()
+    if settings.database_url is None:
+        typer.echo("MDHUB_DATABASE_URL is not set", err=True)
+        raise typer.Exit(2)
+    stop = threading.Event()
+
+    def _stop(signum: int, _frame: FrameType | None) -> None:
+        # A step in progress is aborted; the next start resumes it from the recorded state.
+        log.info("signal %d: stopping the updater", signum)
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _stop)
+    try:
+        updater.run(settings, stop)
+    except (KeyboardInterrupt, SystemExit):
+        stop.set()
 
 
 @app.command("db-info")

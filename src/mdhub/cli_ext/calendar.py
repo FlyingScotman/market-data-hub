@@ -19,6 +19,7 @@ from typing import Annotated
 
 import typer
 
+from mdhub import credentials
 from mdhub.config import ConfigError, Settings
 from mdhub.db.pool import Database
 
@@ -47,6 +48,7 @@ def seed(
     try:
         settings = Settings()
         db = Database.from_settings(settings)
+        credentials.activate(settings, db, worker=False)  # MDHUB_HTTP_PROXY from the store
     except ConfigError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from None

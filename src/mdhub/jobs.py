@@ -18,6 +18,9 @@ never runs twice concurrently (across processes). Parameters arriving as strings
 ``--param k=v``) are converted according to the function's type annotations
 (:func:`coerce_params`).
 
+:func:`running_jobs` lists the jobs executing in this process right now (the worker heartbeat
+reports them, :mod:`mdhub.core.heartbeat`).
+
 Job modules are found by :func:`discover_jobs`, which imports every module of the packages in
 :data:`JOB_PACKAGES` with :mod:`pkgutil` - new loader modules need no registration anywhere.
 """
@@ -29,18 +32,21 @@ import inspect
 import json
 import logging
 import pkgutil
+import threading
 import time
 import types
 import typing
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass, field
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from typing import Any, Final, TypeVar
 
+import psycopg
 from psycopg.rows import tuple_row
 
+from mdhub import credentials
 from mdhub.config import Settings
 from mdhub.core.bizday import DEFAULT_CALENDAR, CalendarPredicate, weekday_calendar
 from mdhub.core.capture import JobRun, job_run
@@ -50,6 +56,7 @@ from mdhub.core.timeutil import business_days_back, msk_today
 from mdhub.db.pool import Database, DictConnection
 
 __all__ = [
+    "DRAINING",
     "JOB_PACKAGES",
     "LOCK_BUSY",
     "REGISTRY",
@@ -61,6 +68,7 @@ __all__ = [
     "JobRegistry",
     "JobSkipped",
     "JobSpec",
+    "RunningJob",
     "UnknownJobError",
     "coerce_params",
     "discover_jobs",
@@ -68,6 +76,8 @@ __all__ = [
     "parse_param_pairs",
     "record_skipped_run",
     "run_job",
+    "running_jobs",
+    "worker_draining",
 ]
 
 log = logging.getLogger(__name__)
@@ -403,6 +413,26 @@ class JobOutcome:
     result: Any = None
 
 
+@dataclass(frozen=True, slots=True)
+class RunningJob:
+    """A job executing in this process (see :func:`running_jobs`)."""
+
+    job: str
+    run_id: int
+    started_at: datetime
+    trigger: str
+
+
+_RUNNING: dict[int, RunningJob] = {}
+_RUNNING_LOCK = threading.Lock()
+
+
+def running_jobs() -> list[RunningJob]:
+    """Jobs executing in this process right now (started by :func:`run_job`), oldest first."""
+    with _RUNNING_LOCK:
+        return sorted(_RUNNING.values(), key=lambda r: (r.started_at, r.run_id))
+
+
 LOCK_BUSY: Final = "lock_busy"
 """Prefix of the ``ops.job_run.error`` text of a run skipped because the job lock was busy
 (health treats such a run as "did not run")."""
@@ -493,6 +523,10 @@ def run_job(
     :param trigger: origin recorded in ``ops.job_run.trigger`` (``schedule``, ``catch_up``,
         ``backfill``, ``cli``, ``api``, ``other``); job health counts only ``schedule`` and
         ``catch_up`` runs as a scheduled fire that ran.
+
+    The job gets ``settings`` with the source credentials of the console store decrypted over
+    them (:func:`mdhub.credentials.resolve`; unchanged in processes without the store).
+
     :returns: outcome with the run id and final status.
     :raises UnknownJobError: job not registered.
     :raises JobParamError: invalid parameters (nothing recorded).
@@ -500,6 +534,7 @@ def run_job(
     """
     spec = registry.get(name)
     coerced = coerce_params(spec.fn, params or {})
+    settings = credentials.resolve(settings)
     logger = logging.getLogger(f"mdhub.job.{name}")
 
     lock_cm: AbstractContextManager[str | None] = (
@@ -524,7 +559,13 @@ def run_job(
                 calendar=calendar,
                 http_factory=http_factory,
             )
-            result = spec.fn(ctx, **coerced)
+            with _RUNNING_LOCK:
+                _RUNNING[run.id] = RunningJob(name, run.id, datetime.now(UTC), trigger)
+            try:
+                result = spec.fn(ctx, **coerced)
+            finally:
+                with _RUNNING_LOCK:
+                    _RUNNING.pop(run.id, None)
         status = _final_status(db, run.id)
         return JobOutcome(job=name, run_id=run.id, status=status, result=result)
 
@@ -544,6 +585,22 @@ def record_skipped_run(
         run_id = run.id
         run.mark_skipped(reason)
     return run_id
+
+
+DRAINING: Final = f"{LOCK_BUSY}: worker draining for an update"
+"""``ops.job_run.error`` of a scheduled fire skipped while draining: health reports it as missed
+and the ``quality`` job catches it up once the worker runs again."""
+
+
+def worker_draining(db: Database) -> bool:
+    """``ops.worker_control.drain`` (migration 0640): the updater asks the worker to start no new
+    job. ``False`` when the flag cannot be read (an outage must not stop the loaders)."""
+    try:
+        with db.connection() as conn, conn.cursor(row_factory=tuple_row) as cur:
+            row = cur.execute("SELECT drain FROM ops.worker_control").fetchone()
+    except psycopg.Error:
+        return False
+    return bool(row and row[0])
 
 
 @contextmanager

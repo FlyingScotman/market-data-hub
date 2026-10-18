@@ -57,7 +57,7 @@
   indices 2014→; AlgoPack last 90 days.
 - Swaps: andromeda history (RUONIA OIS, KRS, CNY OIS/xccy), otc_monitor 2026-09→ + live, ratescalcs live.
 
-## Bundle (2026-10-16; outdated by the 2026-10-17 fixing depth work — rebuild before deploying)
+## Bundle (2026-10-16; superseded by dist/market-data-hub-20261018.tar.gz, see Code above)
 - dist/market-data-hub-20261016.tar.gz (668 MB, sha256 54c17d26…) from 1c67321; seed dump 670 MB (DB 3.4 GB).
 - Restore tested into a fresh UTF8 PostgreSQL 16 (restore_seed.sh --database-url): 14 migrations, checksums
   match, seed report identical to the bundled one. 1c67321: migrate/restore refuse non-UTF8 databases.
@@ -70,7 +70,27 @@
 3. Bond static verification: accrued interest / yield recomputed from ref schedules vs MOEX EOD.
 4. Admin console, observability, self-update: design in docs/ADMIN_DESIGN.md (owner decisions 2026-10-17:
    internet + IP allow-list, roles viewer/operator/admin, passkeys + TOTP, updater v1 = docker compose).
-   Phases A (observability backend) and C (release pipeline) can start in parallel; migrations 0600+.
+   Phase A (acdebdb: named tokens, api_request log, heartbeat, source_probe, version from git; migrations
+   0600/0610) and Phase C (47b8d47: code-only signed bundle, `mdhub release verify`, CI + release workflows,
+   not yet run on GitHub) merged into main 45cb0e5. Phase B (156a5cc console + passkey/TOTP auth, migration 0620;
+   a79840a "Run now" via ops.job_request run by the worker, migration 0630, no source creds in the admin container)
+   merged e81c04b; 670 tests green. Not verified: real platform passkey, Docker/Caddy build. Next: Phase D (updater).
+   Leftover: seed-cluster copy mdhub_admin_dev (3.4 GB) from Phase B testing; drop when not needed.
+   Phase D (322f61a updater, worker drain, Updates page; 0640), E (1b397db write-only source credentials
+   sealed to the worker key; 0700) and F (23581cd hostmon, PostgreSQL stats, Machine page; 0750) merged
+   1bd00d8 / cd85ab8 / 1c480ca; 724 tests green. README_DEPLOY: §13 updater, §14 credentials, §15 machine.
+   Not verified anywhere: real Docker/Caddy, the updater rehearsal (README §13), a real passkey.
+   The updater now writes ops.container_status every 30 s (ContainerReporter thread, docker ps/inspect/stats;
+   paused during a restore). Not verified against a real Docker daemon.
+   c2cafc1 least-privilege DB roles mdhub_api / mdhub_admin / mdhub_hostmon (0800_service_roles,
+   deploy/sql/service_roles.sql, README_DEPLOY §16; owner fallback with a warning while MDHUB_*_DB_PASSWORD
+   is unset). Both merged ddfc774; 776 tests green. New tables/columns read by api/admin/hostmon need a
+   grant update in the role procedure (DEVELOPING); the snapshot layer's ops reads too.
+- 2026-10-18 first deploy prepared: origin/main (PR #1 bond static verification) merged 566a93c, 797 tests
+  green; local tag v0.1.0 (not pushed); bundle dist/market-data-hub-20261018.tar.gz (sha256 5e2b4398…,
+  seed dump without admin.* data) restore-tested into a fresh PG 16 (8 migrations 0600-0800 applied, 23/23
+  checksums match). Checklist: deploy/FIRST_DEPLOY.md. No release key pinned yet: self-update starts with
+  the first signed release after v0.1.0.
 
 ## Open items for owner
 - Cbonds API → HTTP 401 for any login (likely IP allow-list of old server); hub auto-skips.

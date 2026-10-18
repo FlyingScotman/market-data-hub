@@ -64,6 +64,7 @@ from typing import Any, Final
 import psycopg
 from psycopg.rows import tuple_row
 
+from mdhub import credentials
 from mdhub.config import Settings
 from mdhub.core.bizday import CALENDARS, weekday_calendar
 from mdhub.core.capture import job_run, record_capture
@@ -878,6 +879,7 @@ def seed_calendar(
     ``calendar_seed``). ``since`` defaults to :data:`OBSERVED_START` (TARGET:
     :data:`TARGET_RULE_START`). Load RUONIA history first (``cbr_daily``) for RU_PRODUCTION
     (and ECB history, ``ecb_fx``, for the TARGET cross-check)."""
+    settings = credentials.resolve(settings)  # not run_job: resolve as it would
     with job_run(db, "calendar_seed", {"since": since}, settings=settings, trigger="cli") as run:
         ctx = JobContext(
             settings=settings,

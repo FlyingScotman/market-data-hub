@@ -17,7 +17,7 @@ import pgserver
 import psycopg
 import pytest
 from psycopg import sql
-from pydantic import AliasChoices
+from pydantic import AliasChoices, SecretStr
 
 from mdhub.config import Settings
 from mdhub.db.migrate import MigrationError, migrate
@@ -25,7 +25,7 @@ from mdhub.loaders.maintenance import BACKUP_DIR_ENV
 
 DEPLOY = Path(__file__).resolve().parents[1] / "deploy"
 PSQL = Path(pgserver.__file__).parent / "pginstall" / "bin" / "psql"
-SERVICES = {"postgres", "migrate", "worker", "api", "caddy"}
+SERVICES = {"postgres", "migrate", "worker", "api", "admin", "updater", "hostmon", "caddy"}
 
 
 def env_names(path: Path) -> list[str]:
@@ -57,6 +57,9 @@ def test_env_example_lists_every_setting() -> None:
         "POSTGRES_PASSWORD",
         "MDHUB_RO_USER",
         "MDHUB_RO_PASSWORD",
+        "MDHUB_API_DB_PASSWORD",
+        "MDHUB_ADMIN_DB_PASSWORD",
+        "MDHUB_HOSTMON_DB_PASSWORD",
         "MDHUB_API_DOMAIN",
         "ACME_EMAIL",
     }
@@ -97,6 +100,12 @@ def _compose_text() -> str:
     return (DEPLOY / "docker-compose.yml").read_text()
 
 
+def _env_files(svc: dict[str, Any]) -> list[Any]:
+    """A service's ``env_file`` as a list (compose allows a string, a list or long syntax)."""
+    files = svc.get("env_file", [])
+    return [files] if isinstance(files, str) else list(files)
+
+
 def test_compose_structure_text() -> None:
     text = _compose_text()
     top = re.findall(r"^  ([a-z][a-z0-9_-]*):\s*$", text.split("\nservices:\n", 1)[1], re.M)
@@ -121,7 +130,11 @@ def test_compose_yaml() -> None:
     for name in ("migrate", "worker", "api"):
         svc = services[name]
         assert svc["env_file"] == ".env"
-        assert svc["build"] == {"context": "..", "dockerfile": "deploy/Dockerfile"}
+        assert svc["build"] == {
+            "context": "..",
+            "dockerfile": "deploy/Dockerfile",
+            "args": {"MDHUB_VERSION": "${MDHUB_VERSION:-}"},
+        }
         assert "MDHUB_DATABASE_URL" in svc["environment"]
         assert svc["logging"]["options"]["max-size"]
     assert services["migrate"]["restart"] == "no"
@@ -133,6 +146,114 @@ def test_compose_yaml() -> None:
     assert services["api"]["command"][:2] == ["uvicorn", "mdhub.api.app:app"]
     assert all(p.startswith("127.0.0.1:") for p in services["api"]["ports"])
     assert services["caddy"]["profiles"] == ["tls"]
+    admin = services["admin"]
+    assert admin["command"][:2] == ["uvicorn", "mdhub.admin.app:app"]
+    assert "--no-proxy-headers" in admin["command"] and "ports" not in admin
+    caddy_ip = services["caddy"]["networks"]["admin_edge"]["ipv4_address"]
+    assert admin["environment"]["MDHUB_ADMIN_TRUSTED_PROXIES"] == caddy_ip
+    assert "MDHUB_DATABASE_URL" in admin["environment"]
+
+
+def test_admin_service_gets_no_source_credentials() -> None:
+    """The console runs no job (the worker does, ops.job_request): its container must not see
+    source credentials, the egress proxy or the read-API tokens."""
+    yaml = pytest.importorskip("yaml")
+    admin = yaml.safe_load(_compose_text())["services"]["admin"]
+    assert "env_file" not in admin
+    secret_fields = {
+        str(field.validation_alias.choices[0])  # type: ignore[union-attr]
+        for name, field in Settings.model_fields.items()
+        if field.annotation == (SecretStr | None)
+    }
+    forbidden = (secret_fields - {"MDHUB_DATABASE_URL", "MDHUB_ADMIN_SECRET_KEY"}) | {
+        "MDHUB_API_TOKENS",
+        "MDHUB_HTTP_PROXY",
+    }
+    assert {"MOEX_API_KEY", "RATESCALC_PASSWORD", "CBONDS_PASSWORD"} <= forbidden
+    assert not forbidden & set(admin["environment"]), forbidden & set(admin["environment"])
+    assert {n for n in admin["environment"] if not _hostmon_setting(n)} <= {
+        "MDHUB_DATABASE_URL",
+        "MDHUB_ADMIN_DOMAIN",
+        "MDHUB_ADMIN_ORIGIN",
+        "MDHUB_ADMIN_ALLOW_CIDRS",
+        "MDHUB_ADMIN_TRUSTED_PROXIES",
+        "MDHUB_ADMIN_SECRET_KEY",
+        "MDHUB_LOG_LEVEL",
+        "MDHUB_TZ",
+    }
+
+
+def test_only_the_updater_has_the_docker_socket_and_github_token() -> None:
+    """ADMIN_DESIGN §2/§6: the updater alone gets the docker socket and the GitHub token
+    (updater.env); it reads no .env, so no source credentials or API tokens either."""
+    yaml = pytest.importorskip("yaml")
+    services = yaml.safe_load(_compose_text())["services"]
+    with_socket = sorted(
+        name
+        for name, svc in services.items()
+        if any("docker.sock" in str(v) for v in svc.get("volumes", []))
+    )
+    assert with_socket == ["updater"]
+    updater = services["updater"]
+    assert updater["command"] == ["mdhub", "updater"] and "ports" not in updater
+    assert updater["env_file"] == [{"path": "updater.env", "required": False}]
+    secret_fields = {
+        str(field.validation_alias.choices[0])  # type: ignore[union-attr]
+        for field in Settings.model_fields.values()
+        if field.annotation == (SecretStr | None)
+    }
+    forbidden = (secret_fields - {"MDHUB_DATABASE_URL", "MDHUB_HTTP_PROXY"}) | {"MDHUB_API_TOKENS"}
+    assert "MDHUB_UPDATE_GITHUB_TOKEN" in forbidden  # from updater.env, never from .env
+    assert not forbidden & set(updater["environment"]), forbidden & set(updater["environment"])
+    root = "${MDHUB_UPDATE_ROOT:-/opt/mdhub}"
+    assert f"{root}:{root}" in updater["volumes"]  # host paths = container paths for compose
+    assert "uploads:/var/lib/mdhub/uploads" in updater["volumes"]
+    assert "uploads:/var/lib/mdhub/uploads" in services["admin"]["volumes"]
+    for name, svc in services.items():
+        if name != "updater":
+            assert "updater.env" not in str(svc.get("env_file", "")), name
+            assert "MDHUB_UPDATE_GITHUB_TOKEN" not in str(svc.get("environment", "")), name
+
+
+def test_secrets_private_key_reaches_the_worker_only() -> None:
+    """MDHUB_SECRETS_PRIVATE_KEY opens the console's source credentials (ADMIN_DESIGN §9):
+    blanked for every service that reads .env except the worker; admin has no .env at all."""
+    yaml = pytest.importorskip("yaml")
+    services = yaml.safe_load(_compose_text())["services"]
+    key = "MDHUB_SECRETS_PRIVATE_KEY"
+    assert services["worker"]["environment"][key] == "${MDHUB_SECRETS_PRIVATE_KEY:-}"
+    assert "MDHUB_DATABASE_URL" in services["worker"]["environment"]  # merged, not replaced
+    for name, svc in services.items():
+        if name == "worker":
+            continue
+        if ".env" in [f if isinstance(f, str) else f["path"] for f in _env_files(svc)]:
+            assert svc["environment"][key] == "", name
+        else:
+            assert key not in svc.get("environment", {}), name
+
+
+def _hostmon_setting(name: str) -> bool:
+    return name.startswith("MDHUB_HOSTMON_") or name == "MDHUB_NTP_SERVER"
+
+
+def test_hostmon_service_has_no_docker_socket_and_no_credentials() -> None:
+    """hostmon (ADMIN_DESIGN §10) reads the host read-only; the updater alone has the socket."""
+    yaml = pytest.importorskip("yaml")
+    svc = yaml.safe_load(_compose_text())["services"]["hostmon"]
+    assert svc["command"] == ["mdhub", "hostmon"]
+    assert "env_file" not in svc and "ports" not in svc
+    assert not any("docker.sock" in v for v in svc["volumes"])
+    assert all(v.split(":")[2].split(",")[0] == "ro" for v in svc["volumes"]), svc["volumes"]
+    assert {v.split(":")[1] for v in svc["volumes"]} == {"/host/proc", "/host/sys", "/rootfs"}
+    env = set(svc["environment"])
+    assert {n for n in env if not _hostmon_setting(n)} == {"MDHUB_DATABASE_URL"}
+    hostmon_fields = {
+        str(f.validation_alias.choices[0])  # type: ignore[union-attr]
+        for name, f in Settings.model_fields.items()
+        if name.startswith("hostmon_") or name == "ntp_server"
+    }
+    assert env - {"MDHUB_DATABASE_URL"} == hostmon_fields
+    assert svc["read_only"] is True and svc["cap_drop"] == ["ALL"]
 
 
 def test_dockerfile() -> None:
@@ -140,6 +261,8 @@ def test_dockerfile() -> None:
     assert "python:3.12-slim" in text
     assert "uv sync --frozen --no-dev" in text
     assert "postgresql-client-16" in text
+    assert "docker-ce-cli docker-compose-plugin" in text  # for the updater service
+    assert "/var/lib/mdhub/uploads" in text  # upload volume owned by mdhub (console writes)
     assert re.search(r"^USER mdhub$", text, re.M)
     ignore = (DEPLOY / "Dockerfile.dockerignore").read_text()
     assert "!uv.lock" in ignore and "!src/" in ignore
@@ -197,6 +320,16 @@ def test_systemd_units() -> None:
 def test_caddyfile_and_readme() -> None:
     caddy = (DEPLOY / "Caddyfile").read_text()
     assert "{$MDHUB_API_DOMAIN}" in caddy and "reverse_proxy" in caddy
+    admin_site = caddy.split("{$MDHUB_ADMIN_DOMAIN", 1)[1]
+    assert "not remote_ip {$MDHUB_ADMIN_ALLOW_CIDRS" in admin_site
+    assert admin_site.index('respond @outside "Forbidden" 403') < admin_site.index("reverse_proxy")
+    # the 200 MB body limit applies to the upload path only
+    assert "@upload path /updates/upload" in admin_site
+    assert "@not_upload not path /updates/upload" in admin_site
+    upload = admin_site.split("request_body @upload", 1)[1].split("}", 1)[0]
+    other = admin_site.split("request_body @not_upload", 1)[1].split("}", 1)[0]
+    assert "max_size 201MB" in upload and "max_size 1MB" in other
+    assert admin_site.count("request_body") == 2
     readme = (DEPLOY / "README_DEPLOY.md").read_text()
     for needle in (
         "docker compose up -d",
@@ -207,6 +340,9 @@ def test_caddyfile_and_readme() -> None:
         "mdhub db-info",
         "coverage",
         "443",
+        "Self-update from the console",
+        "Rehearsal on a throw-away VPS",
+        "updater.env",
     ):
         assert needle in readme
 
@@ -247,6 +383,10 @@ def test_readonly_grant_scripts(db_url: str, conn: psycopg.Connection[Any]) -> N
         with pytest.raises(psycopg.errors.InsufficientPrivilege):
             conn.execute("INSERT INTO md.deploy_after VALUES (1)")
         conn.rollback()
+        conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(ro)))
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            conn.execute("SELECT count(*) FROM admin.api_token")
+        conn.rollback()
     finally:
         conn.rollback()
         conn.execute("RESET ROLE")
@@ -259,6 +399,87 @@ def test_readonly_grant_scripts(db_url: str, conn: psycopg.Connection[Any]) -> N
         conn.commit()
         conn.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(ro)))
         conn.commit()
+
+
+@pytest.mark.skipif(not PSQL.exists(), reason="pgserver psql not available")
+def test_readonly_role_cannot_read_admin(empty_db_url: str) -> None:
+    """VPS order: role + default privileges at initdb, then migrations, then the grant
+    script (and a re-run of the defaults, as after a seed restore). The read-only role must
+    not see anything in schema admin (ADMIN_DESIGN §3.1) but keeps reading ops/md/ref."""
+    ro = f"ro_{uuid.uuid4().hex[:10]}"
+    conn = psycopg.connect(empty_db_url, autocommit=True)
+    owner = conn.execute("SELECT current_user, current_database()").fetchone()
+    assert owner is not None
+    conn.execute(sql.SQL("CREATE ROLE {} NOLOGIN").format(sql.Identifier(ro)))
+
+    def psql(*args: str) -> None:
+        subprocess.run(
+            [str(PSQL), "-X", "-q", "-v", "ON_ERROR_STOP=1", "-d", empty_db_url, *args],
+            check=True,
+            capture_output=True,
+        )
+
+    defaults = (
+        "-v", f"owner={owner[0]}", "-v", f"ro_user={ro}", "-v", f"dbname={owner[1]}",
+        "-f", str(DEPLOY / "sql" / "readonly_defaults.sql"),
+    )  # fmt: skip
+    try:
+        psql(*defaults)
+        migrate(empty_db_url)
+        psql("-v", f"ro_user={ro}", "-f", str(DEPLOY / "sql" / "grant_readonly.sql"))
+        psql(*defaults)
+        privileges = conn.execute(
+            """
+            SELECT c.relname, has_table_privilege(%(ro)s, c.oid, 'SELECT') AS can_select
+            FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+            WHERE n.nspname = 'admin' AND c.relkind IN ('r', 'v', 'S', 'p')
+            """,
+            {"ro": ro},
+        ).fetchall()
+        assert ("api_token", False) in privileges and not any(p[1] for p in privileges)
+        names = {p[0] for p in privileges}
+        assert {
+            "user_account",
+            "session",
+            "webauthn_credential",
+            "totp_secret",
+            "recovery_code",
+            "enrollment",
+            "login_attempt",
+            "audit_log",
+        } <= names
+        usage = conn.execute("SELECT has_schema_privilege(%s, 'admin', 'USAGE')", (ro,)).fetchone()
+        assert usage == (False,)
+        # The owner's global default privileges do reach admin: a table created there later
+        # (e.g. by a restore) is readable until the grant script / migrate locks it again.
+        conn.execute("CREATE TABLE admin.later (x int)")
+        can = "SELECT has_table_privilege(%s, 'admin.later', 'SELECT')"
+        assert conn.execute(can, (ro,)).fetchone() == (True,)
+        psql("-v", f"ro_user={ro}", "-f", str(DEPLOY / "sql" / "grant_readonly.sql"))
+        assert conn.execute(can, (ro,)).fetchone() == (False,)
+        conn.execute("GRANT SELECT ON admin.later TO PUBLIC")
+        migrate(empty_db_url)  # nothing pending, still locks admin
+        assert conn.execute(can, (ro,)).fetchone() == (False,)
+        conn.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(ro)))
+        conn.execute("SELECT count(*) FROM ops.api_request").fetchone()
+        conn.execute("SELECT count(*) FROM ops.v_source_status").fetchone()
+        conn.execute("SELECT count(*) FROM md.fixing").fetchone()
+        for query in (
+            "SELECT count(*) FROM admin.api_token",
+            "SELECT name FROM admin.api_token",
+            "SELECT password_hash FROM admin.user_account",
+            "SELECT id_sha256 FROM admin.session",
+            "SELECT secret_enc FROM admin.totp_secret",
+            "SELECT count(*) FROM admin.audit_log",
+            "CALL admin.restrict_access()",
+        ):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege):
+                conn.execute(query)
+    finally:
+        conn.execute("RESET ROLE")
+        conn.execute(sql.SQL("DROP OWNED BY {}").format(sql.Identifier(ro)))
+        conn.execute(sql.SQL("DROP ROLE {}").format(sql.Identifier(ro)))
+        conn.close()
 
 
 def _table_counts(url: str) -> dict[str, int]:
@@ -303,6 +524,17 @@ def test_make_bundle_and_restore_roundtrip(db_url: str, empty_db_url: str, tmp_p
         c.execute(
             "INSERT INTO ref.bond (secid, bond_class, coupon_type, coupon_type_basis, status) "
             "VALUES ('B1', 'corporate', 'fixed', 'moex_label', 'active')"
+        )
+        # admin.* data must never reach a seed dump (ADMIN_DESIGN §9)
+        c.execute(
+            "INSERT INTO admin.api_token (name, token_sha256, prefix, scopes) "
+            "VALUES ('seed-test', %s, 'mdh_abcd', '{read}')",
+            (b"\x01" * 32,),
+        )
+        c.execute(
+            "INSERT INTO admin.source_credential (name, ciphertext, key_id) "
+            "VALUES ('MOEX_API_KEY', %s, '0123456789abcdef')",
+            (b"\x01" * 80,),
         )
     env = {
         **os.environ,
@@ -354,6 +586,29 @@ def test_make_bundle_and_restore_roundtrip(db_url: str, empty_db_url: str, tmp_p
     assert "| fixing | 1 |" in report
     sums = (root / "SHA256SUMS").read_text().splitlines()
     assert any(line.endswith("  db/mdhub.dump") for line in sums)
+    toc = subprocess.run(
+        [str(PSQL.parent / "pg_restore"), "-l", str(root / "db" / "mdhub.dump")],
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert "TABLE DATA md fixing" in toc and "TABLE admin source_credential" in toc
+    assert not re.search(r"TABLE DATA admin ", toc)
+
+    def check_dump(path: Path) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(DEPLOY / "make_bundle.sh"), "--check-dump", str(path)],
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+    assert check_dump(root / "db" / "mdhub.dump").returncode == 0
+    full = tmp_path / "full.dump"
+    subprocess.run([str(PSQL.parent / "pg_dump"), "-Fc", "-f", str(full), "-d", db_url], check=True)
+    refused = check_dump(full)
+    assert refused.returncode != 0 and "TABLE DATA admin source_credential" in refused.stderr
 
     restore = subprocess.run(
         [

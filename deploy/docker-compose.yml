@@ -1,11 +1,18 @@
 # market-data-hub - single-VPS deployment (DESIGN §9).
 #
 #   cd deploy && cp env.example .env && $EDITOR .env
-#   docker compose up -d --build            # postgres, migrate (one-shot), worker, api
-#   docker compose --profile tls up -d      # + Caddy TLS reverse proxy for the API
+#   docker compose up -d --build            # postgres, migrate (one-shot), worker, api, admin,
+#                                           # updater, hostmon
+#   docker compose --profile tls up -d      # + Caddy TLS reverse proxy for the API and console
 #
 # Postgres and the API are published on 127.0.0.1 only; expose the API publicly through
-# Caddy (443). See README_DEPLOY.md.
+# Caddy (443). The admin console is not published at all: only Caddy reaches it, over the
+# network admin_edge where Caddy has a fixed address (the only peer whose X-Forwarded-For the
+# console trusts). The updater is the only service with the docker socket and the GitHub token
+# (updater.env); self-update needs the release layout of README_DEPLOY §13. See README_DEPLOY.md.
+# api, admin and hostmon connect as their own least-privilege roles (mdhub_api, mdhub_admin,
+# mdhub_hostmon) once MDHUB_<SERVICE>_DB_PASSWORD is set in .env; until then they fall back to
+# the owner role and log a warning (README_DEPLOY §16). migrate, worker and updater are owner.
 
 name: mdhub
 
@@ -15,17 +22,43 @@ x-logging: &logging
     max-size: "20m"
     max-file: "5"
 
-x-mdhub: &mdhub
+# Image, build and logging shared by every mdhub service.
+x-mdhub-image: &mdhub-image
   image: mdhub:${MDHUB_IMAGE_TAG:-latest}
   build:
     context: ..
     dockerfile: deploy/Dockerfile
-  env_file: .env
-  environment:
-    MDHUB_DATABASE_URL: postgresql://${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-mdhub}
-    MDHUB_BACKUP_DIR: /var/backups/mdhub
+    args:
+      # Version override for images built from a git checkout (a bundle carries its own).
+      MDHUB_VERSION: ${MDHUB_VERSION:-}
   logging: *logging
   restart: unless-stopped
+
+# migrate, worker and api read the whole .env (source credentials included), except
+# MDHUB_SECRETS_PRIVATE_KEY: blanked here, only the worker gets it (ADMIN_DESIGN §9).
+x-mdhub: &mdhub
+  <<: *mdhub-image
+  env_file: .env
+  environment: &mdhub-env
+    MDHUB_DATABASE_URL: postgresql://${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-mdhub}
+    MDHUB_BACKUP_DIR: /var/backups/mdhub
+    MDHUB_SECRETS_PRIVATE_KEY: ""
+
+# Machine page settings (ADMIN_DESIGN §10): hostmon samples, the console classifies.
+# Empty values fall back to the defaults of mdhub.config.Settings.
+x-hostmon-env: &hostmon-env
+  MDHUB_HOSTMON_MOUNTS: ${MDHUB_HOSTMON_MOUNTS:-}
+  MDHUB_NTP_SERVER: ${MDHUB_NTP_SERVER:-}
+  MDHUB_HOSTMON_DISK_WARN_PCT: ${MDHUB_HOSTMON_DISK_WARN_PCT:-}
+  MDHUB_HOSTMON_DISK_CRIT_PCT: ${MDHUB_HOSTMON_DISK_CRIT_PCT:-}
+  MDHUB_HOSTMON_DISK_FULL_DAYS: ${MDHUB_HOSTMON_DISK_FULL_DAYS:-}
+  MDHUB_HOSTMON_MEM_AVAILABLE_MIN_PCT: ${MDHUB_HOSTMON_MEM_AVAILABLE_MIN_PCT:-}
+  MDHUB_HOSTMON_SWAP_MAX_PCT: ${MDHUB_HOSTMON_SWAP_MAX_PCT:-}
+  MDHUB_HOSTMON_STEAL_MAX_PCT: ${MDHUB_HOSTMON_STEAL_MAX_PCT:-}
+  MDHUB_HOSTMON_LOAD_PER_CORE_MAX: ${MDHUB_HOSTMON_LOAD_PER_CORE_MAX:-}
+  MDHUB_HOSTMON_CLOCK_OFFSET_MAX_S: ${MDHUB_HOSTMON_CLOCK_OFFSET_MAX_S:-}
+  MDHUB_HOSTMON_PG_CONNECTIONS_MAX_PCT: ${MDHUB_HOSTMON_PG_CONNECTIONS_MAX_PCT:-}
+  MDHUB_HOSTMON_PG_XACT_MAX_MINUTES: ${MDHUB_HOSTMON_PG_XACT_MAX_MINUTES:-}
 
 services:
   postgres:
@@ -39,6 +72,10 @@ services:
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8 --data-checksums"
       MDHUB_RO_USER: ${MDHUB_RO_USER:-mdhub_ro}
       MDHUB_RO_PASSWORD: ${MDHUB_RO_PASSWORD:-}
+      # Service role passwords, used by initdb/10-mdhub-roles.sh and sql/service_roles.sql.
+      MDHUB_API_DB_PASSWORD: ${MDHUB_API_DB_PASSWORD:-}
+      MDHUB_ADMIN_DB_PASSWORD: ${MDHUB_ADMIN_DB_PASSWORD:-}
+      MDHUB_HOSTMON_DB_PASSWORD: ${MDHUB_HOSTMON_DB_PASSWORD:-}
       TZ: UTC
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     volumes:
@@ -69,6 +106,10 @@ services:
   worker:
     <<: *mdhub
     command: ["mdhub", "scheduler"]
+    environment:
+      <<: *mdhub-env
+      # Opens the source credentials set in the console; no other service has it.
+      MDHUB_SECRETS_PRIVATE_KEY: ${MDHUB_SECRETS_PRIVATE_KEY:-}
     volumes:
       - ${MDHUB_BACKUP_HOST_DIR:-./backups}:/var/backups/mdhub
     stop_grace_period: 120s
@@ -89,6 +130,16 @@ services:
       - --proxy-headers
       - --forwarded-allow-ips=*
       - --workers=2
+    environment:
+      <<: *mdhub-env
+      # Own role when MDHUB_API_DB_PASSWORD is set, else the owner (README_DEPLOY §16). The
+      # owner's and the other roles' passwords that .env carries are blanked.
+      MDHUB_DATABASE_URL: postgresql://${MDHUB_API_DB_PASSWORD:+mdhub_api:}${MDHUB_API_DB_PASSWORD:-${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD}}@postgres:5432/${POSTGRES_DB:-mdhub}
+      POSTGRES_PASSWORD: ""
+      MDHUB_RO_PASSWORD: ""
+      MDHUB_API_DB_PASSWORD: ""
+      MDHUB_ADMIN_DB_PASSWORD: ""
+      MDHUB_HOSTMON_DB_PASSWORD: ""
     ports:
       - "127.0.0.1:${MDHUB_API_HOST_PORT:-8080}:8080"
     healthcheck:
@@ -107,6 +158,105 @@ services:
       migrate:
         condition: service_completed_successfully
 
+  admin:
+    <<: *mdhub-image
+    # mdhub.admin.app is the admin console (ADMIN_DESIGN §2): sessions, passkeys, IP allow-list.
+    # The app resolves client IPs itself (--no-proxy-headers), trusting only Caddy's address.
+    # No env_file: the console gets only what it needs, never source credentials or API tokens
+    # ("Run now" is executed by the worker via ops.job_request).
+    command:
+      - uvicorn
+      - mdhub.admin.app:app
+      - --host=0.0.0.0
+      - --port=8081
+      - --no-proxy-headers
+      - --no-server-header
+      - --workers=1
+    environment:
+      <<: *hostmon-env
+      # Own role when MDHUB_ADMIN_DB_PASSWORD is set, else the owner (README_DEPLOY §16).
+      MDHUB_DATABASE_URL: postgresql://${MDHUB_ADMIN_DB_PASSWORD:+mdhub_admin:}${MDHUB_ADMIN_DB_PASSWORD:-${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD}}@postgres:5432/${POSTGRES_DB:-mdhub}
+      MDHUB_ADMIN_DOMAIN: ${MDHUB_ADMIN_DOMAIN:-}
+      MDHUB_ADMIN_ORIGIN: ${MDHUB_ADMIN_ORIGIN:-}
+      MDHUB_ADMIN_ALLOW_CIDRS: ${MDHUB_ADMIN_ALLOW_CIDRS:-}
+      MDHUB_ADMIN_TRUSTED_PROXIES: 172.31.253.2
+      MDHUB_ADMIN_SECRET_KEY: ${MDHUB_ADMIN_SECRET_KEY:-}
+      MDHUB_LOG_LEVEL: ${MDHUB_LOG_LEVEL:-}
+      MDHUB_TZ: ${MDHUB_TZ:-}
+    volumes:
+      # Uploaded release bundles, read by the updater (ADMIN_DESIGN §6.2).
+      - uploads:/var/lib/mdhub/uploads
+    networks:
+      - default
+      - admin_edge
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8081/health/live', timeout=3).status == 200 else 1)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  updater:
+    <<: *mdhub-image
+    # mdhub updater (ADMIN_DESIGN §6): executes the console's install / rollback requests with
+    # docker compose. No port. The only service with the docker socket (root-equivalent on the
+    # host, hence user root) and the GitHub token, which lives in updater.env, never in .env.
+    # No .env either: no source credentials, no API tokens.
+    command: ["mdhub", "updater"]
+    user: "0:0"
+    env_file:
+      - path: updater.env
+        required: false
+    environment:
+      MDHUB_DATABASE_URL: postgresql://${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-mdhub}
+      MDHUB_UPDATE_ROOT: ${MDHUB_UPDATE_ROOT:-/opt/mdhub}
+      MDHUB_UPDATE_GITHUB_REPO: ${MDHUB_UPDATE_GITHUB_REPO:-FiveLimaGolf/market-data-hub}
+      MDHUB_HTTP_PROXY: ${MDHUB_HTTP_PROXY:-}
+      MDHUB_BACKUP_DIR: /var/backups/mdhub
+      MDHUB_LOG_LEVEL: ${MDHUB_LOG_LEVEL:-}
+      MDHUB_TZ: ${MDHUB_TZ:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Same path inside and out: the paths compose resolves must be host paths.
+      - ${MDHUB_UPDATE_ROOT:-/opt/mdhub}:${MDHUB_UPDATE_ROOT:-/opt/mdhub}
+      - uploads:/var/lib/mdhub/uploads
+      - ${MDHUB_BACKUP_HOST_DIR:-./backups}:/var/backups/mdhub
+    stop_grace_period: 30s
+
+  hostmon:
+    <<: *mdhub-image
+    # Host sampler for the Machine page (ADMIN_DESIGN §10): reads the host through read-only
+    # mounts like node_exporter. No docker socket, no env_file (no credentials), no port.
+    # Host network so /proc/net shows the host's interfaces (and the SNTP query leaves from
+    # the host); it reaches PostgreSQL on its published 127.0.0.1 port.
+    command: ["mdhub", "hostmon"]
+    network_mode: host
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      <<: *hostmon-env
+      # Own role when MDHUB_HOSTMON_DB_PASSWORD is set, else the owner (README_DEPLOY §16).
+      MDHUB_DATABASE_URL: postgresql://${MDHUB_HOSTMON_DB_PASSWORD:+mdhub_hostmon:}${MDHUB_HOSTMON_DB_PASSWORD:-${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD}}@127.0.0.1:${MDHUB_PG_HOST_PORT:-5432}/${POSTGRES_DB:-mdhub}
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro,rslave
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
   caddy:
     image: caddy:2
     profiles: ["tls"]
@@ -115,6 +265,14 @@ services:
       MDHUB_API_DOMAIN: ${MDHUB_API_DOMAIN:-}
       ACME_EMAIL: ${ACME_EMAIL:-}
       MDHUB_API_UPSTREAM: api:8080
+      # Empty values fall back to a name and a network nobody has: the console stays closed.
+      MDHUB_ADMIN_DOMAIN: ${MDHUB_ADMIN_DOMAIN:-admin.invalid}
+      MDHUB_ADMIN_ALLOW_CIDRS: ${MDHUB_ADMIN_ALLOW_CIDRS:-192.0.2.1/32}
+      MDHUB_ADMIN_UPSTREAM: admin:8081
+    networks:
+      default:
+      admin_edge:
+        ipv4_address: 172.31.253.2
     ports:
       - "80:80"
       - "443:443"
@@ -124,9 +282,17 @@ services:
       - caddy_config:/config
     depends_on:
       - api
+      - admin
     logging: *logging
+
+networks:
+  admin_edge:
+    ipam:
+      config:
+        - subnet: 172.31.253.0/29
 
 volumes:
   pgdata:
+  uploads:
   caddy_data:
   caddy_config:

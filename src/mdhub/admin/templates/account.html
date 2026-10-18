@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% block title %}Account{% endblock %}
+{% block content %}
+<h1>Your account</h1>
+{% if enrolled %}<p class="flash">Your passkey is registered and you are logged in. Consider adding an authenticator app and recovery codes as a fallback.</p>{% endif %}
+{% if request.query_params.get('changed') == 'password' %}<p class="flash">Password changed. Your other sessions were logged out.</p>{% endif %}
+{% if not session.stepped_up %}<p class="hint">Adding or removing factors needs a fresh check: <a href="/step-up?next=/account">confirm your identity</a>.</p>{% endif %}
+
+<section class="card">
+  <h2>Passkeys</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Added</th><th>Last used</th><th>State</th><th></th></tr></thead>
+    <tbody>
+    {% for p in passkeys %}
+    <tr>
+      <td>{{ p.name }}</td><td>{{ p.created_at|dt }}</td><td>{{ p.last_used_at|dt }}</td>
+      <td>{% if p.suspect_at %}<span class="pill bad">blocked (sign counter)</span>{% else %}<span class="pill ok">active</span>{% endif %}</td>
+      <td>
+        <form method="post" action="/account/passkeys/{{ p.id }}/delete" data-confirm="Remove passkey {{ p.name }}?">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <button type="submit" class="link danger">Remove</button>
+        </form>
+      </td>
+    </tr>
+    {% else %}
+    <tr><td colspan="5">No passkeys.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <div class="row">
+    <label>Name <input data-passkey-name value="passkey" maxlength="64"></label>
+    <button type="button" data-passkey="register">Add a passkey</button>
+  </div>
+  <p class="error" data-passkey-error hidden></p>
+  <form method="post" action="/account/passkey-only" class="row">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="enabled" value="{{ '0' if user.passkey_only else '1' }}">
+    <span>Log in with a passkey alone (no password): <strong>{{ 'on' if user.passkey_only else 'off' }}</strong></span>
+    <button type="submit" class="secondary">Turn {{ 'off' if user.passkey_only else 'on' }}</button>
+  </form>
+</section>
+
+<section class="card" id="totp">
+  <h2>Authenticator app (TOTP)</h2>
+  {% if not totp_available %}
+  <p>Not available: <code>MDHUB_ADMIN_SECRET_KEY</code> is not set on the server.</p>
+  {% elif factors.totp %}
+  <p>An authenticator app is set up.</p>
+  <form method="post" action="/account/totp/remove" data-confirm="Remove the authenticator app?">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <button type="submit" class="secondary danger">Remove</button>
+  </form>
+  {% elif totp_setup %}
+  <p>Add this account to your authenticator app, then enter the current code. The secret is shown only during setup.</p>
+  <p>Secret: <code class="secret" data-copy>{{ totp_setup.secret }}</code></p>
+  <p class="small">URI: <code class="secret" data-copy>{{ totp_setup.uri }}</code></p>
+  <form method="post" action="/account/totp/confirm" class="row">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label>Code <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required></label>
+    <button type="submit">Confirm</button>
+  </form>
+  {% else %}
+  <form method="post" action="/account/totp/begin">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <button type="submit" class="secondary">Set up an authenticator app</button>
+  </form>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Recovery codes</h2>
+  {% if recovery_codes %}
+  <p class="warn">Store these codes now; they are shown only once. Each works once.</p>
+  <pre class="secret" data-copy>{% for c in recovery_codes %}{{ c }}
+{% endfor %}</pre>
+  {% else %}
+  <p>{{ factors.recovery_left }} unused code(s).</p>
+  {% endif %}
+  <form method="post" action="/account/recovery-codes" data-confirm="Create new recovery codes? The old ones stop working.">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <button type="submit" class="secondary">Create new codes</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Password</h2>
+  <form method="post" action="/account/password">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="text" name="username" value="{{ user.login }}" autocomplete="username" hidden>
+    <label>Current password <input name="current" type="password" autocomplete="current-password" required maxlength="128"></label>
+    <label>New password <input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
+    <label>Repeat it <input name="password2" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
+    <button type="submit" class="secondary">Change password</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Sessions</h2>
+  <table>
+    <thead><tr><th>Started</th><th>Last seen</th><th>IP</th><th>Browser</th><th></th></tr></thead>
+    <tbody>
+    {% for s in sessions %}
+    <tr>
+      <td>{{ s.created_at|dt }}</td><td>{{ s.last_seen_at|ago }}</td><td>{{ s.ip or '-' }}</td>
+      <td class="small">{{ s.user_agent or '-' }}</td>
+      <td>{% if s.current %}this session{% else %}
+        <form method="post" action="/account/sessions/{{ s.ref }}/revoke">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <button type="submit" class="link danger">Log out</button>
+        </form>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block title %}Confirm identity{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>Confirm your identity</h1>
+  <p>This action needs a fresh check (valid for 5 minutes). Afterwards, repeat the action.</p>
+  {% if factors.passkeys %}
+  <button type="button" data-passkey="login" data-next="{{ next }}" autofocus>Use a passkey</button>
+  <p class="error" data-passkey-error hidden></p>
+  {% endif %}
+  {% if factors.totp %}
+  <form method="post" action="/step-up/totp">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="hidden" name="next" value="{{ next }}">
+    <label>Authenticator code <input name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="7" required></label>
+    <button type="submit" class="secondary">Verify code</button>
+  </form>
+  {% endif %}
+  {% if not factors.passkeys and not factors.totp %}
+  <p>You have no passkey or authenticator app. Ask an admin for a reset link.</p>
+  {% endif %}
+  <p><a href="{{ next }}">Back</a></p>
+</section>
+{% endblock %}

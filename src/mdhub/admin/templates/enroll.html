@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Set up your account{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>{% if purpose == 'reset' %}Reset{% else %}Set up{% endif %} account <code>{{ login }}</code></h1>
+  {% if step == 'password' %}
+  <p>Step 1 of 2: choose a password of 12 to 128 characters. A long passphrase is best; common passwords are refused.</p>
+  {% if purpose == 'reset' %}<p class="warn">This replaces your password and removes your old passkeys, authenticator app and recovery codes.</p>{% endif %}
+  <form method="post" action="/enroll/password">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <input type="text" name="username" value="{{ login }}" autocomplete="username" hidden>
+    <label>New password <input name="password" type="password" autocomplete="new-password" minlength="12" maxlength="128" required autofocus></label>
+    <label>Repeat it <input name="password2" type="password" autocomplete="new-password" minlength="12" maxlength="128" required></label>
+    <button type="submit">Set password</button>
+  </form>
+  {% else %}
+  <p>Step 2 of 2: register a passkey (Touch ID, Windows Hello, a phone or a security key).</p>
+  <label>Name for this passkey <input data-passkey-name value="passkey" maxlength="64"></label>
+  <button type="button" data-passkey="register" autofocus>Register passkey</button>
+  <p class="error" data-passkey-error hidden></p>
+  {% endif %}
+</section>
+{% endblock %}

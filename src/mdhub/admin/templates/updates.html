@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Updates{% endblock %}
+{% block content %}
+<h1>Updates</h1>
+{% if not session.stepped_up %}<p class="hint">Uploading, installing and rolling back need a fresh check: <a href="/step-up?next=/updates">confirm your identity</a>.</p>{% endif %}
+
+<section class="card">
+  <h2>Running</h2>
+  <p>Version <strong>{{ running }}</strong> (console {{ version }}).</p>
+  <table>
+    <thead><tr><th>Process</th><th>Host</th><th>Version</th><th>Started</th><th>Last beat</th></tr></thead>
+    <tbody>
+    {% for b in beats %}
+    <tr><td>{{ b.process }}</td><td>{{ b.host }}</td><td>{{ b.version }}</td><td>{{ b.started_at|dt }}</td><td>{{ b.beat_at|ago }}</td></tr>
+    {% else %}
+    <tr><td colspan="5">No running process reports a heartbeat.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if not beats|selectattr('process', 'equalto', 'updater')|list %}<p class="warn">No updater heartbeat: requests stay queued until the updater service runs.</p>{% endif %}
+</section>
+
+{% if latest %}{% set req = latest %}{% include "_update_log.html" with context %}{% endif %}
+
+<section class="card">
+  <h2>Releases on GitHub</h2>
+  <p class="small">Listed by the updater every 10 minutes; newer releases are downloaded and verified before you can install them.</p>
+  <table>
+    <thead><tr><th>Version</th><th>Published</th><th>Verification</th><th>New migrations</th><th>Notes</th><th></th></tr></thead>
+    <tbody>
+    {% for a in available %}
+    <tr>
+      <td>{% if a.html_url %}<a href="{{ a.html_url }}" rel="noreferrer">{{ a.version }}</a>{% else %}{{ a.version }}{% endif %}{% if a.prerelease %} <span class="pill warn">pre-release</span>{% endif %}</td>
+      <td>{{ a.published_at|dt }}</td>
+      <td>{% if a.verified %}<span class="pill ok">verified</span> <span class="small">key {{ a.key_id }}</span>{% elif a.verified is false %}<span class="pill bad">refused</span> <span class="small">{{ a.error }}</span>{% else %}<span class="small">not downloaded</span>{% endif %}</td>
+      <td>{% if a.verified %}{{ a.new_migrations|length }}{% else %}-{% endif %}</td>
+      <td>{% if a.notes %}<details><summary>{{ a.name or 'notes' }}</summary><pre>{{ a.notes }}</pre></details>{% endif %}</td>
+      <td>{% if a.verified and a.newer and not busy %}<a href="/updates/confirm?version={{ a.version|urlencode }}">Review and install</a>{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="6">No releases listed (the updater needs MDHUB_UPDATE_GITHUB_TOKEN).</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="card">
+  <h2>Upload a release</h2>
+  {% if session.stepped_up and not busy %}
+  <form method="post" action="/updates/upload" enctype="multipart/form-data" class="row">
+    <input type="hidden" name="csrf_token" value="{{ csrf }}">
+    <label>Archive <input type="file" name="archive" accept=".tar.gz,.gz" required></label>
+    <label>Signature <input type="file" name="signature" accept=".minisig"></label>
+    <button type="submit">Upload and verify</button>
+  </form>
+  <p class="small">market-data-hub-X.Y.Z.tar.gz (at most {{ max_mb }} MB) and its market-data-hub-X.Y.Z.SHA256SUMS.minisig. Unsigned archives and unknown keys are refused. You confirm the install on the next page.</p>
+  {% elif busy %}
+  <p class="small">An update is in progress.</p>
+  {% else %}
+  <p class="small"><a href="/step-up?next=/updates">Confirm your identity</a> to upload.</p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Installed versions</h2>
+  <table>
+    <thead><tr><th>Version</th><th>Status</th><th>Source</th><th>Installed</th><th>By</th><th>Replaced</th><th>Key</th></tr></thead>
+    <tbody>
+    {% for r in releases %}
+    <tr><td>{{ r.version }}</td><td><span class="pill {{ 'ok' if r.status == 'active' else ('bad' if r.status in ('failed', 'rolled_back') else 'warn') }}">{{ r.status }}</span></td><td>{{ r.source }}</td><td>{{ r.installed_at|dt }}</td><td>{{ r.installed_by or '-' }}</td><td>{{ r.previous_version or '-' }}</td><td class="small">{{ r.key_id or '-' }}</td></tr>
+    {% else %}
+    <tr><td colspan="7">No update installed yet through the console.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if rollback_to and not busy %}<p><a href="/updates/confirm?rollback=1">Roll back to {{ rollback_to }}</a></p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Requests</h2>
+  <table>
+    <thead><tr><th>Id</th><th>Kind</th><th>Version</th><th>Source</th><th>State</th><th>By</th><th>Requested</th><th>Finished</th><th>Error</th><th></th></tr></thead>
+    <tbody>
+    {% for q in requests %}
+    <tr>
+      <td>{{ q.id }}</td><td>{{ q.kind }}</td><td>{{ q.version }}</td><td>{{ q.source }}</td>
+      <td><span class="pill {{ 'ok' if q.state == 'done' else ('bad' if q.state in ('failed', 'rolled_back') else 'warn') }}">{{ q.state }}</span></td>
+      <td>{{ q.requested_login or '-' }}</td><td>{{ q.requested_at|dt }}</td><td>{{ q.finished_at|dt }}</td>
+      <td class="small">{{ (q.error or '')[:300] }}</td>
+      <td>{% if q.state == 'queued' %}
+        <form method="post" action="/updates/requests/{{ q.id }}/cancel">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <button type="submit" class="link danger">Cancel</button>
+        </form>{% endif %}</td>
+    </tr>
+    {% else %}
+    <tr><td colspan="10">No requests.</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

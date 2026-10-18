@@ -53,9 +53,9 @@ log = logging.getLogger(__name__)
 
 MAX_ERROR_CHARS = 4000
 
-JOB_TRIGGERS: Final = ("schedule", "catch_up", "backfill", "cli", "api", "other")
-"""Values of ``ops.job_run.trigger`` (0421): scheduler fire, quality catch-up of a fire skipped
-with ``lock_busy``, backfill task run, CLI, read API, anything else."""
+JOB_TRIGGERS: Final = ("schedule", "catch_up", "backfill", "cli", "api", "admin", "other")
+"""Values of ``ops.job_run.trigger`` (0421, ``admin`` 0620): scheduler fire, quality catch-up of a
+fire skipped with ``lock_busy``, backfill task run, CLI, read API, admin console, anything else."""
 
 SCHEDULED_TRIGGERS: Final = ("schedule", "catch_up")
 """Runs that count as "the scheduled fire ran" for job health (``NULL`` = recorded before 0421
