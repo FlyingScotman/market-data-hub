@@ -57,7 +57,7 @@
   indices 2014→; AlgoPack last 90 days.
 - Swaps: andromeda history (RUONIA OIS, KRS, CNY OIS/xccy), otc_monitor 2026-09→ + live, ratescalcs live.
 
-## Bundle (2026-10-16; outdated by the 2026-10-17 fixing depth work — rebuild before deploying)
+## Bundle (2026-10-16; superseded by dist/market-data-hub-20261018.tar.gz, see Code above)
 - dist/market-data-hub-20261016.tar.gz (668 MB, sha256 54c17d26…) from 1c67321; seed dump 670 MB (DB 3.4 GB).
 - Restore tested into a fresh UTF8 PostgreSQL 16 (restore_seed.sh --database-url): 14 migrations, checksums
   match, seed report identical to the bundled one. 1c67321: migrate/restore refuse non-UTF8 databases.
@@ -86,6 +86,11 @@
    deploy/sql/service_roles.sql, README_DEPLOY §16; owner fallback with a warning while MDHUB_*_DB_PASSWORD
    is unset). Both merged ddfc774; 776 tests green. New tables/columns read by api/admin/hostmon need a
    grant update in the role procedure (DEVELOPING); the snapshot layer's ops reads too.
+- 2026-10-18 first deploy prepared: origin/main (PR #1 bond static verification) merged 566a93c, 797 tests
+  green; local tag v0.1.0 (not pushed); bundle dist/market-data-hub-20261018.tar.gz (sha256 5e2b4398…,
+  seed dump without admin.* data) restore-tested into a fresh PG 16 (8 migrations 0600-0800 applied, 23/23
+  checksums match). Checklist: deploy/FIRST_DEPLOY.md. No release key pinned yet: self-update starts with
+  the first signed release after v0.1.0.
 
 ## Open items for owner
 - Cbonds API → HTTP 401 for any login (likely IP allow-list of old server); hub auto-skips.
