@@ -198,12 +198,13 @@ class Settings(BaseSettings):
 
     update_github_token: SecretStr | None = _env("MDHUB_UPDATE_GITHUB_TOKEN")
     update_github_repo: str = Field(
-        default="FiveLimaGolf/market-data-hub",
+        default="FlyingScotman/market-data-hub",
         validation_alias=AliasChoices("MDHUB_UPDATE_GITHUB_REPO", "update_github_repo"),
     )
     update_root: str = Field(
         default="/opt/mdhub", validation_alias=AliasChoices("MDHUB_UPDATE_ROOT", "update_root")
     )
+    update_compose_override: str | None = _env("MDHUB_UPDATE_COMPOSE_OVERRIDE")
     update_upload_dir: str = Field(
         default="/var/lib/mdhub/uploads",
         validation_alias=AliasChoices("MDHUB_UPDATE_UPLOAD_DIR", "update_upload_dir"),

@@ -219,7 +219,8 @@ services:
     environment:
       MDHUB_DATABASE_URL: postgresql://${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-mdhub}
       MDHUB_UPDATE_ROOT: ${MDHUB_UPDATE_ROOT:-/opt/mdhub}
-      MDHUB_UPDATE_GITHUB_REPO: ${MDHUB_UPDATE_GITHUB_REPO:-FiveLimaGolf/market-data-hub}
+      MDHUB_UPDATE_GITHUB_REPO: ${MDHUB_UPDATE_GITHUB_REPO:-FlyingScotman/market-data-hub}
+      MDHUB_UPDATE_COMPOSE_OVERRIDE: ${MDHUB_UPDATE_COMPOSE_OVERRIDE:-}
       MDHUB_HTTP_PROXY: ${MDHUB_HTTP_PROXY:-}
       MDHUB_BACKUP_DIR: /var/backups/mdhub
       MDHUB_LOG_LEVEL: ${MDHUB_LOG_LEVEL:-}

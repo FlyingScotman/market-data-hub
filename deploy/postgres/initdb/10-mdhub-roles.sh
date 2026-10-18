@@ -12,10 +12,10 @@
 set -euo pipefail
 
 ro_user="${MDHUB_RO_USER:-mdhub_ro}"
-ro_password="${MDHUB_RO_PASSWORD:-}"
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
-    -v ro_user="$ro_user" -v ro_password="$ro_password" <<'SQL'
+    -v ro_user="$ro_user" <<'SQL'
+\getenv ro_password MDHUB_RO_PASSWORD
 SELECT format('CREATE ROLE %I %s', :'ro_user',
               CASE WHEN :'ro_password' = '' THEN 'NOLOGIN'
                    ELSE format('LOGIN PASSWORD %L', :'ro_password') END)
@@ -31,7 +31,5 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
     -f /mdhub-sql/readonly_defaults.sql
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" \
-    -v dbname="$POSTGRES_DB" -v api_password="${MDHUB_API_DB_PASSWORD:-}" \
-    -v admin_password="${MDHUB_ADMIN_DB_PASSWORD:-}" \
-    -v hostmon_password="${MDHUB_HOSTMON_DB_PASSWORD:-}" \
+    -v dbname="$POSTGRES_DB" \
     -f /mdhub-sql/service_roles.sql

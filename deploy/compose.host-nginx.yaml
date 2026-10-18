@@ -1,0 +1,36 @@
+# Host nginx terminates HTTPS for marketdatahub.cc. Container ports stay on loopback.
+# Set MDHUB_ADMIN_DOMAIN=marketdatahub.cc and MDHUB_ADMIN_ORIGIN=https://marketdatahub.cc.
+services:
+  admin:
+    # Enrollment URLs contain secrets; nginx logs only safe request metadata.
+    command:
+      - uvicorn
+      - mdhub.admin.app:app
+      - --host=0.0.0.0
+      - --port=8081
+      - --no-proxy-headers
+      - --no-server-header
+      - --no-access-log
+      - --workers=1
+    ports:
+      - "127.0.0.1:8081:8081"
+    networks: !override
+      - default
+    environment:
+      MDHUB_ADMIN_TRUSTED_PROXIES: "172.31.252.1/32"
+
+  updater:
+    environment:
+      MDHUB_UPDATE_GITHUB_REPO: "FlyingScotman/market-data-hub"
+      MDHUB_UPDATE_COMPOSE_OVERRIDE: "/opt/mdhub/shared/compose.local.yaml"
+    # The shared env is a symlink into this protected directory. Atomic tag updates
+    # require the directory, rather than a single-file mount, at the same host path.
+    volumes:
+      - /root/.config/lima/secrets/market-data-hub:/root/.config/lima/secrets/market-data-hub
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.31.252.0/24
+          gateway: 172.31.252.1

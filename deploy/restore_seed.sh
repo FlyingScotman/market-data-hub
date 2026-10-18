@@ -200,9 +200,7 @@ in_pg sh -c 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
 
 log "re-applying service roles and their grants"
 in_pg sh -c 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
-    -v dbname="$POSTGRES_DB" -v api_password="${MDHUB_API_DB_PASSWORD:-}" \
-    -v admin_password="${MDHUB_ADMIN_DB_PASSWORD:-}" \
-    -v hostmon_password="${MDHUB_HOSTMON_DB_PASSWORD:-}" \
+    -v dbname="$POSTGRES_DB" \
     -f /mdhub-sql/service_roles.sql' >/dev/null
 
 log "analyzing"

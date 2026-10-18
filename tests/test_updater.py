@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import shutil
+import subprocess
 import tarfile
 import threading
 import uuid
@@ -31,6 +32,7 @@ from mdhub.jobs import DRAINING, JobContext, JobRegistry
 from mdhub.release import build_manifest, default_signature_path
 from mdhub.schedule import Rule, _RuleRunner
 from mdhub.updater import (
+    ComposeHost,
     ContainerReporter,
     GitHub,
     Layout,
@@ -639,6 +641,52 @@ def test_drain_waits_for_running_jobs_then_stops_the_worker(
 # -------------------------------------------------------------------------------- github
 
 
+def test_compose_preserves_site_override_without_forwarding_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    override = tmp_path / "compose.local.yaml"
+    override.write_text("services: {}\n")
+    calls: list[tuple[list[str], dict[str, Any]]] = []
+
+    def run(argv: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append((argv, kwargs))
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setenv("MDHUB_UPDATE_GITHUB_TOKEN", "test-only-placeholder")
+    monkeypatch.setattr(subprocess, "run", run)
+    host = ComposeHost("dbname=test", compose_override=override)
+    compose = tmp_path / "deploy/docker-compose.yml"
+    host.compose(compose, ["up", "-d", "admin"], tag="1.1.0", timeout=5)
+    argv, options = calls[0]
+    assert argv == [
+        "docker",
+        "compose",
+        "-f",
+        str(compose),
+        "-f",
+        str(override),
+        "up",
+        "-d",
+        "admin",
+    ]
+    assert "MDHUB_UPDATE_GITHUB_TOKEN" not in options["env"]
+    override.unlink()
+    with pytest.raises(UpdateError, match=r"override.*not found"):
+        host.compose(compose, ["up", "-d", "admin"], tag="1.1.0", timeout=5)
+    assert len(calls) == 1
+
+
+def test_updater_replacement_keeps_site_override(
+    db_url: str, conn: Conn, host: FakeHost, layout: Layout, tmp_path: Path, keys_dir: Path
+) -> None:
+    override = tmp_path / "compose.local.yaml"
+    override.write_text("services: {}\n")
+    up = make(db_url, host, layout, tmp_path, keys_dir, compose_override=override)
+    up._replace_self(queue(conn, "1.1.0"), "1.1.0")
+    assert f"-f {override} up -d --no-deps updater" in host.calls[-1]
+
+
+@pytest.mark.parametrize("token", ["github_pat_secret", None])
 def test_github_listing_download_and_install(
     db_url: str,
     conn: Conn,
@@ -647,6 +695,7 @@ def test_github_listing_download_and_install(
     tmp_path: Path,
     keys_dir: Path,
     key: SigningKey,
+    token: str | None,
 ) -> None:
     archive = bundle(tmp_path, key, extra=True)
     files = {
@@ -689,7 +738,7 @@ def test_github_listing_download_and_install(
             return httpx.Response(200, content=files[url.rsplit("/", 1)[1]])
         return httpx.Response(404)
 
-    gh = GitHub("o/r", "github_pat_secret", transport=httpx.MockTransport(handler))
+    gh = GitHub("o/r", token, transport=httpx.MockTransport(handler))
     up = make(db_url, host, layout, tmp_path, keys_dir, github=gh)
     up.refresh_releases()
     rows = {r["version"]: r for r in conn.execute("SELECT * FROM ops.release_available").fetchall()}
@@ -700,8 +749,9 @@ def test_github_listing_download_and_install(
     assert rows["0.9.0"]["verified"] is None  # older than the running version: not fetched
     for r in seen:
         on_api = r.url.host == "api.github.com"
-        assert ("authorization" in r.headers) == on_api, r.url  # token never leaves the API
-    assert seen[0].headers["authorization"] == "Bearer github_pat_secret"
+        assert ("authorization" in r.headers) == (on_api and token is not None), r.url
+    if token is not None:
+        assert seen[0].headers["authorization"] == f"Bearer {token}"
     n_requests = len(seen)
     up.refresh_releases()  # verified and present: not downloaded again
     assert len(seen) == n_requests + 1

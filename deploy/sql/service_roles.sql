@@ -7,6 +7,9 @@
 -- it); an empty one leaves an existing role as it is. The grants themselves come from
 -- admin.grant_service_roles() (migration 0800), which admin.restrict_access() calls: run here
 -- when the schema exists, and by `mdhub migrate` and grant_readonly.sql every time.
+\getenv api_password MDHUB_API_DB_PASSWORD
+\getenv admin_password MDHUB_ADMIN_DB_PASSWORD
+\getenv hostmon_password MDHUB_HOSTMON_DB_PASSWORD
 SELECT format('CREATE ROLE %I NOLOGIN', r)
 FROM unnest(ARRAY['mdhub_api', 'mdhub_admin', 'mdhub_hostmon']) r
 WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = r)

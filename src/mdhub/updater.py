@@ -242,8 +242,10 @@ def write_env_value(path: Path, name: str, value: str) -> None:
         out.append(f"{name}={value}")
     st = real.stat()
     tmp = real.with_name(real.name + ".tmp")
-    tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
-    os.chmod(tmp, st.st_mode & 0o777)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, st.st_mode & 0o777)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        os.fchmod(stream.fileno(), st.st_mode & 0o777)
+        stream.write("\n".join(out) + "\n")
     if os.geteuid() == 0:
         os.chown(tmp, st.st_uid, st.st_gid)
     os.replace(tmp, real)
@@ -268,19 +270,35 @@ class Host(Protocol):
         """GET ``url``: ``(status, parsed JSON or None)``; status 0 when unreachable."""
 
 
+def _compose_files(compose_file: Path, override: Path | None) -> list[str]:
+    args = ["-f", str(compose_file)]
+    if override is not None:
+        if not override.is_file():
+            raise UpdateError(f"Compose override {override} not found")
+        args.extend(["-f", str(override)])
+    return args
+
+
 class ComposeHost:
     """The real host: docker compose and the PostgreSQL client tools in the updater image."""
 
-    def __init__(self, conninfo: str, secrets: Sequence[str] = ()) -> None:
+    def __init__(
+        self,
+        conninfo: str,
+        secrets: Sequence[str] = (),
+        *,
+        compose_override: Path | None = None,
+    ) -> None:
         self.conninfo = conninfo
         self.secrets = list(secrets)
+        self.compose_override = compose_override
 
     def compose(self, compose_file: Path, args: Sequence[str], *, tag: str, timeout: float) -> None:
         # A minimal environment: compose reads everything else from the project's .env, and
         # the GitHub token never reaches it.
         env = {k: os.environ[k] for k in ("PATH", "HOME", "DOCKER_HOST") if k in os.environ}
         env.update(MDHUB_IMAGE_TAG=tag, MDHUB_VERSION=tag)
-        argv = ["docker", "compose", "-f", str(compose_file), *args]
+        argv = ["docker", "compose", *_compose_files(compose_file, self.compose_override), *args]
         try:
             proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
                 argv, env=env, capture_output=True, text=True, timeout=timeout, check=False
@@ -492,14 +510,14 @@ class ContainerReporter:
 
 
 class GitHub:
-    """Release listing and asset download with a fine-grained token (``contents:read``),
+    """Public releases, or private releases with a fine-grained token (``contents:read``),
     through ``MDHUB_HTTP_PROXY`` when set. The token goes only to ``api.github.com``: httpx
     drops ``Authorization`` on the redirect to the asset storage host."""
 
     def __init__(
         self,
         repo: str,
-        token: str,
+        token: str | None = None,
         *,
         proxy: str | None = None,
         transport: httpx.BaseTransport | None = None,
@@ -510,7 +528,7 @@ class GitHub:
         self.client = httpx.Client(
             base_url=_GITHUB_API,
             headers={
-                "Authorization": f"Bearer {token}",
+                **({"Authorization": f"Bearer {token}"} if token else {}),
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
                 "User-Agent": f"mdhub-updater/{__version__}",
@@ -591,6 +609,7 @@ class Updater:
         backup_dir: Path,
         api_url: str,
         github: GitHub | None = None,
+        compose_override: Path | None = None,
         version: str = __version__,
         secrets: Sequence[str] = (),
         drain_timeout_s: float = DRAIN_TIMEOUT_S,
@@ -607,6 +626,7 @@ class Updater:
         self.backup_dir = backup_dir
         self.api_url = api_url.rstrip("/")
         self.github = github
+        self.compose_override = compose_override
         self.version = version
         self.secrets = list(secrets)
         self.drain_timeout_s = drain_timeout_s
@@ -1205,8 +1225,7 @@ class Updater:
                     "docker",
                     "updater",
                     "compose",
-                    "-f",
-                    compose,
+                    *_compose_files(Path(compose), self.compose_override),
                     "up",
                     "-d",
                     "--no-deps",
@@ -1451,24 +1470,24 @@ def run(settings: Settings, stop: threading.Event) -> None:
     loop."""
     db = Database.from_settings(settings)
     secrets = settings.secret_values()
-    github = None
-    if settings.update_github_token is not None:
-        github = GitHub(
-            settings.update_github_repo,
-            settings.update_github_token.get_secret_value(),
-            proxy=settings.proxy_url(),
-        )
-    else:
-        log.info("MDHUB_UPDATE_GITHUB_TOKEN not set: GitHub releases are not listed")
+    github = GitHub(
+        settings.update_github_repo,
+        settings.update_github_token.get_secret_value() if settings.update_github_token else None,
+        proxy=settings.proxy_url(),
+    )
+    compose_override = (
+        Path(settings.update_compose_override) if settings.update_compose_override else None
+    )
     updater = Updater(
         db,
-        ComposeHost(db.conninfo, secrets),
+        ComposeHost(db.conninfo, secrets, compose_override=compose_override),
         Layout(Path(settings.update_root)),
         keys_dir=default_keys_dir(),
         upload_dir=Path(settings.update_upload_dir),
         backup_dir=backup_dir(settings.backup_dir),
         api_url=settings.update_api_url,
         github=github,
+        compose_override=compose_override,
         secrets=secrets,
     )
     updater.heartbeat = Heartbeat(db, "updater")
