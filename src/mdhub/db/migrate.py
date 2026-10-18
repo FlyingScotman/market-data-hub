@@ -13,7 +13,8 @@ per DESIGN §5: 0001-0099 core/ops, 0100-0199 ref, 0200-0299 md, 0300-0399 legac
 * serialises concurrent runners with a PostgreSQL session advisory lock,
 * finally calls ``admin.restrict_access()`` when it exists (also when nothing was pending), so
   the ``admin`` schema stays closed to read-only roles after a seed restore too (the owner's
-  global default privileges apply to restored objects; ADMIN_DESIGN §3.1).
+  global default privileges apply to restored objects; ADMIN_DESIGN §3.1), and the service
+  roles get their grants back (migration ``0800``).
 
 Files are executed as one multi-statement batch through the simple query protocol: no psql
 meta-commands, no ``CREATE INDEX CONCURRENTLY`` (it cannot run inside a transaction).
@@ -45,6 +46,7 @@ __all__ = [
     "discover_migrations",
     "migrate",
     "pending_migrations",
+    "restrict_admin",
 ]
 
 log = logging.getLogger(__name__)
@@ -193,7 +195,7 @@ def migrate(
                     continue
                 _apply(conn, m)
                 report.applied.append(m.version)
-            _restrict_admin(conn)
+            restrict_admin(conn)
         finally:
             conn.execute("SELECT pg_advisory_unlock(hashtextextended(%s, 0))", (_LOCK_NAME,))
     return report
@@ -218,7 +220,9 @@ def _require_utf8(conn: psycopg.Connection[Any]) -> None:
         )
 
 
-def _restrict_admin(conn: psycopg.Connection[Any]) -> None:
+def restrict_admin(conn: psycopg.Connection[Any]) -> None:
+    """``CALL admin.restrict_access()`` when it exists: locks schema admin and re-grants the
+    service roles (migration ``0800``). Logs instead of raising when not the owner."""
     with conn.cursor(row_factory=tuple_row) as cur:
         row = cur.execute(
             "SELECT to_regprocedure('admin.restrict_access()') IS NOT NULL"
@@ -226,7 +230,8 @@ def _restrict_admin(conn: psycopg.Connection[Any]) -> None:
         if not row or not row[0]:
             return
         try:
-            cur.execute("CALL admin.restrict_access()")
+            with conn.transaction():  # a savepoint inside the caller's transaction
+                cur.execute("CALL admin.restrict_access()")
         except psycopg.Error as exc:  # not the schema owner: the grant scripts still apply it
             log.warning("admin.restrict_access() failed: %s", type(exc).__name__)
 

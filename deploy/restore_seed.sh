@@ -8,7 +8,10 @@
 # checked when present. Both modes: pg_restore --no-owner --no-privileges --single-transaction,
 # then `mdhub migrate` (applies newer migrations, refuses if an applied one's checksum differs),
 # then ops.schema_migration is compared with the code's migration files (all applied, checksums
-# equal), read-only grants are re-applied, ANALYZE, `mdhub db-info`.
+# equal), read-only grants are re-applied, ANALYZE, `mdhub db-info`. The service roles
+# (mdhub_api, mdhub_admin, mdhub_hostmon) get their grants back from `mdhub migrate` and the
+# read-only grant script (both call admin.restrict_access(), migration 0800); compose also
+# re-runs sql/service_roles.sql (creates missing roles, README_DEPLOY §16).
 #
 # compose: starts postgres, stops worker/api, DROPS and re-creates the database (all data in it
 # is lost; asks unless --yes), restores, starts everything again.
@@ -32,7 +35,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -y|--yes) assume_yes=1; shift ;;
         --database-url) [[ $# -ge 2 ]] || die "--database-url needs a value"; url="$2"; shift 2 ;;
-        -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
+        -h|--help) sed -n '2,22p' "$0"; exit 0 ;;
         -*) die "unknown option: $1" ;;
         *) dump="$1"; shift ;;
     esac
@@ -194,6 +197,13 @@ verify_migrations "$(in_pg sh -c 'psql -X -q -A -t -v ON_ERROR_STOP=1 -U "$POSTG
 log "re-applying read-only grants"
 in_pg sh -c 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
     -v ro_user="${MDHUB_RO_USER:-mdhub_ro}" -f /mdhub-sql/grant_readonly.sql' >/dev/null
+
+log "re-applying service roles and their grants"
+in_pg sh -c 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+    -v dbname="$POSTGRES_DB" -v api_password="${MDHUB_API_DB_PASSWORD:-}" \
+    -v admin_password="${MDHUB_ADMIN_DB_PASSWORD:-}" \
+    -v hostmon_password="${MDHUB_HOSTMON_DB_PASSWORD:-}" \
+    -f /mdhub-sql/service_roles.sql' >/dev/null
 
 log "analyzing"
 in_pg sh -c 'vacuumdb -U "$POSTGRES_USER" -d "$POSTGRES_DB" --analyze-only --quiet'

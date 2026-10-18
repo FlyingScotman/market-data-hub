@@ -337,6 +337,20 @@ the hour) is a warning. The updater does this from its own thread (`mdhub.update
 (NULL without one); rows of containers that no longer exist are deleted; it pauses while a
 restore runs, since an insert during `pg_restore` would break the table's primary key.
 
+**Database roles (2026-10-17):** implemented. Migration `0800_service_roles`:
+`admin.grant_service_roles()` grants `mdhub_api`, `mdhub_admin` and `mdhub_hostmon` exactly what
+their code runs (derived statement by statement; the apps' test suites run as these roles,
+`tests/test_service_roles.py` asserts the forbidden writes), `admin.restrict_access()` calls it
+after locking schema `admin` (so every re-lock re-grants), and `ops.host_metric_rollup()` is
+security definer, executable by hostmon and the owner only. Roles and passwords come from
+`deploy/sql/service_roles.sql` (initdb, `restore_seed.sh`, README_DEPLOY §16); compose builds
+each service's `MDHUB_DATABASE_URL` from `MDHUB_<SERVICE>_DB_PASSWORD` and falls back to the
+owner, with a warning at start, while it is unset. worker, migrate and updater stay on the owner
+role. Deviations from §3: the console reads `admin.secret_key_public` but cannot write it (a
+console able to publish a key could open every credential sealed to it afterwards) and cannot
+delete users or tokens; hostmon also upserts its heartbeat; the API also reads
+`ops.row_history` (known_at reads of md/ref).
+
 ## 8. Open points
 
 - The admin host name and the initial allow-list: the owner's office or home IPs. A dynamic home IP needs either a wider

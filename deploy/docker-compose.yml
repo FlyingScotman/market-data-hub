@@ -10,6 +10,9 @@
 # network admin_edge where Caddy has a fixed address (the only peer whose X-Forwarded-For the
 # console trusts). The updater is the only service with the docker socket and the GitHub token
 # (updater.env); self-update needs the release layout of README_DEPLOY §13. See README_DEPLOY.md.
+# api, admin and hostmon connect as their own least-privilege roles (mdhub_api, mdhub_admin,
+# mdhub_hostmon) once MDHUB_<SERVICE>_DB_PASSWORD is set in .env; until then they fall back to
+# the owner role and log a warning (README_DEPLOY §16). migrate, worker and updater are owner.
 
 name: mdhub
 
@@ -69,6 +72,10 @@ services:
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8 --data-checksums"
       MDHUB_RO_USER: ${MDHUB_RO_USER:-mdhub_ro}
       MDHUB_RO_PASSWORD: ${MDHUB_RO_PASSWORD:-}
+      # Service role passwords, used by initdb/10-mdhub-roles.sh and sql/service_roles.sql.
+      MDHUB_API_DB_PASSWORD: ${MDHUB_API_DB_PASSWORD:-}
+      MDHUB_ADMIN_DB_PASSWORD: ${MDHUB_ADMIN_DB_PASSWORD:-}
+      MDHUB_HOSTMON_DB_PASSWORD: ${MDHUB_HOSTMON_DB_PASSWORD:-}
       TZ: UTC
     command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
     volumes:
@@ -123,6 +130,16 @@ services:
       - --proxy-headers
       - --forwarded-allow-ips=*
       - --workers=2
+    environment:
+      <<: *mdhub-env
+      # Own role when MDHUB_API_DB_PASSWORD is set, else the owner (README_DEPLOY §16). The
+      # owner's and the other roles' passwords that .env carries are blanked.
+      MDHUB_DATABASE_URL: postgresql://${MDHUB_API_DB_PASSWORD:+mdhub_api:}${MDHUB_API_DB_PASSWORD:-${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD}}@postgres:5432/${POSTGRES_DB:-mdhub}
+      POSTGRES_PASSWORD: ""
+      MDHUB_RO_PASSWORD: ""
+      MDHUB_API_DB_PASSWORD: ""
+      MDHUB_ADMIN_DB_PASSWORD: ""
+      MDHUB_HOSTMON_DB_PASSWORD: ""
     ports:
       - "127.0.0.1:${MDHUB_API_HOST_PORT:-8080}:8080"
     healthcheck:
@@ -157,7 +174,8 @@ services:
       - --workers=1
     environment:
       <<: *hostmon-env
-      MDHUB_DATABASE_URL: postgresql://${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-mdhub}
+      # Own role when MDHUB_ADMIN_DB_PASSWORD is set, else the owner (README_DEPLOY §16).
+      MDHUB_DATABASE_URL: postgresql://${MDHUB_ADMIN_DB_PASSWORD:+mdhub_admin:}${MDHUB_ADMIN_DB_PASSWORD:-${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD}}@postgres:5432/${POSTGRES_DB:-mdhub}
       MDHUB_ADMIN_DOMAIN: ${MDHUB_ADMIN_DOMAIN:-}
       MDHUB_ADMIN_ORIGIN: ${MDHUB_ADMIN_ORIGIN:-}
       MDHUB_ADMIN_ALLOW_CIDRS: ${MDHUB_ADMIN_ALLOW_CIDRS:-}
@@ -227,7 +245,8 @@ services:
     security_opt: ["no-new-privileges:true"]
     environment:
       <<: *hostmon-env
-      MDHUB_DATABASE_URL: postgresql://${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@127.0.0.1:${MDHUB_PG_HOST_PORT:-5432}/${POSTGRES_DB:-mdhub}
+      # Own role when MDHUB_HOSTMON_DB_PASSWORD is set, else the owner (README_DEPLOY §16).
+      MDHUB_DATABASE_URL: postgresql://${MDHUB_HOSTMON_DB_PASSWORD:+mdhub_hostmon:}${MDHUB_HOSTMON_DB_PASSWORD:-${POSTGRES_USER:-mdhub}:${POSTGRES_PASSWORD}}@127.0.0.1:${MDHUB_PG_HOST_PORT:-5432}/${POSTGRES_DB:-mdhub}
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro

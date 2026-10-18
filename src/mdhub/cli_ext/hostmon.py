@@ -19,7 +19,7 @@ import typer
 
 from mdhub.config import ConfigError, Settings
 from mdhub.core.heartbeat import Heartbeat
-from mdhub.db.pool import Database
+from mdhub.db.pool import Database, warn_if_owner
 from mdhub.hostmon.sampler import HostPaths, Sampler, run_forever
 
 name = "hostmon"
@@ -54,6 +54,7 @@ def hostmon(
     except ConfigError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(2) from None
+    warn_if_owner(db.conninfo, "hostmon", "MDHUB_HOSTMON_DB_PASSWORD")
     stop = threading.Event()
 
     def _stop(_signum: int, _frame: FrameType | None) -> None:

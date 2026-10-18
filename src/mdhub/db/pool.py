@@ -17,6 +17,7 @@ Usage::
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from contextlib import contextmanager, suppress
 from types import TracebackType
@@ -30,7 +31,9 @@ from psycopg_pool import ConnectionPool
 if TYPE_CHECKING:
     from mdhub.config import Settings
 
-__all__ = ["Database", "DictConnection", "redact_conninfo"]
+__all__ = ["Database", "DictConnection", "redact_conninfo", "warn_if_owner"]
+
+log = logging.getLogger(__name__)
 
 type DictConnection = psycopg.Connection[DictRow]
 """A psycopg connection whose rows are ``dict[str, Any]``."""
@@ -44,6 +47,30 @@ def redact_conninfo(conninfo: str) -> str:
         return "<invalid conninfo>"
     params.pop("password", None)
     return make_conninfo(**{k: str(v) for k, v in params.items() if v is not None})
+
+
+def warn_if_owner(conninfo: str, service: str, password_env: str) -> bool:
+    """Warn (and return ``True``) when ``service`` connects as a superuser or the owner of the
+    schemas instead of its own role (migration ``0800``): docker compose falls back to the owner
+    until ``password_env`` is set (README_DEPLOY §16). Never raises."""
+    try:
+        with psycopg.connect(conninfo, connect_timeout=5) as conn:
+            row = conn.execute(
+                "SELECT current_user::text, r.rolsuper OR r.oid = n.nspowner FROM pg_roles r "
+                "LEFT JOIN pg_namespace n ON n.nspname = 'ops' WHERE r.rolname = current_user"
+            ).fetchone()
+    except psycopg.Error:
+        return False
+    if not row or not row[1]:
+        return False
+    log.warning(
+        "%s connects to PostgreSQL as %s, the owner role: it can write every table. Set %s in "
+        ".env and create the service roles (README_DEPLOY §16)",
+        service,
+        row[0],
+        password_env,
+    )
+    return True
 
 
 def _configure(conn: psycopg.Connection[Any]) -> None:

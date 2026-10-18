@@ -48,7 +48,7 @@ from mdhub.api.routes import bonds, export, market, ops
 from mdhub.config import Settings
 from mdhub.core.redact import SecretRedactingFilter, sanitize_text
 from mdhub.db.migrate import applied_migrations, discover_migrations
-from mdhub.db.pool import Database
+from mdhub.db.pool import Database, warn_if_owner
 
 __all__ = ["app", "create_app"]
 
@@ -139,6 +139,8 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
             app.state.database = None
         if settings is None:
             _configure_logging(cfg)
+        if app.state.database is not None:
+            warn_if_owner(app.state.database.conninfo, "api", "MDHUB_API_DB_PASSWORD")
         app.state.token_store = TokenStore(cfg.api_token_entries(), app.state.database)
         if not app.state.token_store.configured:
             log.warning("no MDHUB_API_TOKENS and no database: every /v1 request will be rejected")

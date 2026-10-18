@@ -143,13 +143,20 @@ src/mdhub/
 - File `src/mdhub/db/migrations/NNNN_short_name.sql` (`^\d{4}_[a-z0-9_]+\.sql$`). Number
   ranges (DESIGN §5): **0001-0099** core/ops, **0100-0199** ref, **0200-0299** md,
   **0300-0399** legacy, **0400-0499** api/views, **0500-0599** snapshot layer, **0600-0699**
-  admin console and observability. Pick the next free number in your range; two files with
+  admin console and observability, **0700-0799** credentials store and host monitoring,
+  **0800-0899** database roles. Pick the next free number in your range; two files with
   the same number are rejected.
 - Schema `admin` holds secrets (tokens, later users and sessions) and must stay closed to the
   read-only role: **end every migration that creates objects in `admin` with
   `CALL admin.restrict_access();`** (the owner's global default privileges would otherwise grant
   `SELECT` to `mdhub_ro`). `tests/test_observability.py::test_admin_schema_closed_to_public`
   fails if a grant is left.
+- api, admin and hostmon run as least-privilege roles (`0800_service_roles`, README_DEPLOY
+  §16). **A table, column or function that one of them reads or writes needs a new migration
+  that `CREATE OR REPLACE`s `admin.grant_service_roles()`** with the grant added (md and ref are
+  granted to the API schema-wide). The apps' tests connect as these roles
+  (`make_conninfo(db_url, user="mdhub_admin")`), so a missing grant fails them;
+  `tests/test_service_roles.py` lists what each role must not do.
 - Each file runs in one transaction; applied files are checksummed — **never edit an applied
   migration**, add a new one. No psql meta-commands, no `CREATE INDEX CONCURRENTLY`.
 - Schema-qualify every object. Standard columns for normalized tables:

@@ -305,4 +305,5 @@ def test_admin_schema_closed_to_public(conn: Conn) -> None:
         if text is None:
             continue
         grantees = {e.split("=", 1)[0] for e in text.strip("{}").split(",")}
-        assert grantees <= {owner["u"]}, text
+        # the console and the API (token lookup) are granted by admin.grant_service_roles()
+        assert grantees <= {owner["u"], "mdhub_admin", "mdhub_api"}, text

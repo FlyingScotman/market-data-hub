@@ -10,8 +10,9 @@ the read API. Two variants: **docker compose** (recommended) and **bare metal** 
 | `docker-compose.yml` | `postgres` (16, tuned, healthcheck), `migrate` (one-shot), `worker`, `api`, `admin` (console, not published), `updater` (self-update, §13), `hostmon` (host sampler, §15), optional `caddy` (profile `tls`) |
 | `env.example` | every environment variable, documented, no values |
 | `postgres/postgresql.conf` | tuning for 4 GB RAM |
-| `postgres/initdb/10-mdhub-roles.sh` | first start: read-only role + default privileges |
+| `postgres/initdb/10-mdhub-roles.sh` | first start: read-only role + default privileges, service roles (§16) |
 | `sql/readonly_defaults.sql`, `sql/grant_readonly.sql` | read-only consumer role setup / re-grant |
+| `sql/service_roles.sql` | login roles of api, admin, hostmon (§16) |
 | `make_bundle.sh` | build machine: `dist/market-data-hub-<YYYYMMDD>.tar.gz` = code + seed dump + report + manifest; `--code-only`: the signed release bundle (§11) |
 | `release-keys/` | pinned minisign public keys that `mdhub release verify` accepts (§11) |
 | `restore_seed.sh` | restore the bundle's seed dump into the compose database, or any PostgreSQL 16 (`--database-url`) |
@@ -171,6 +172,9 @@ docker compose run --rm --no-deps worker mdhub db-info
 
 With the release layout of §13 the console does all of this (Updates page): verify, backup,
 build, drain, migrate, restart, check and automatic rollback.
+
+Upgrading to a release with migration `0800` changes nothing until you set the service role
+passwords (§16): api, admin and hostmon keep the owner role and log a warning.
 
 Check a release before unpacking it: `mdhub release verify market-data-hub-X.Y.Z.tar.gz` (§11).
 Migrations are forward-only and checksummed; a failed migration stops `migrate` and the
@@ -655,3 +659,53 @@ Reboot-required and pending security updates are read from `/run/reboot-required
 `/var/lib/update-notifier/updates-available` (Debian/Ubuntu with `update-notifier-common`);
 on other hosts those rows are absent. Bare metal: run `mdhub hostmon` under systemd with the
 same minimal environment; it then reads `/proc` and `/` directly.
+
+## 16. Database roles
+
+The services that face the internet or only sample do not connect as the owner role: a
+compromised console, API or sampler can then write only what its code writes (migration
+`0800_service_roles`, `admin.grant_service_roles()`). migrate, worker and updater stay on the
+owner role (migrations, every loader, `pg_dump`/`pg_restore`).
+
+| role | service | may |
+|---|---|---|
+| `mdhub_api` | `api` | read `md.*`, `ref.*`, `ops.row_history` (known_at reads), `ops.v_coverage`, `ops.v_job_health`, `ops.v_open_gaps`, `ops.job_run`, `ops.schema_migration`; insert `ops.api_request`; read `admin.api_token` and update its `last_used_at`/`last_used_ip` |
+| `mdhub_admin` | `admin` | the `admin` tables the console uses (`audit_log` insert-only; `secret_key_public` read-only; `source_credential` set/replace/remove; no deletes of users or tokens); read the `ops` tables behind its pages and `ref.calendar_day`/`ref.weekend_session`; insert `ops.job_request` and `ops.update_request` and cancel them (`state`, `state_at`, `finished_at`); retry a backfill task (`status`, `attempts`, `not_before`, `done_at`); mark a gap (`status`, `note`). No `md.*` |
+| `mdhub_hostmon` | `hostmon` | insert `ops.host_metric`; run `ops.host_metric_rollup()` (security definer: no other right on the metric tables); upsert its `ops.worker_heartbeat` row |
+
+The grants are re-applied, exactly, every time schema `admin` is locked: by `mdhub migrate`
+(each start of the `migrate` service), `sql/grant_readonly.sql` / `readonly_defaults.sql`,
+`restore_seed.sh` and the updater's restore. Anything granted to these roles by hand is taken
+back then. The roles themselves (LOGIN, password, `CONNECT`) come from `sql/service_roles.sql`,
+run as the owner (a superuser in compose).
+
+Compose gives each of the three services `MDHUB_DATABASE_URL` with its own role once its
+password is set in `.env`: `MDHUB_API_DB_PASSWORD`, `MDHUB_ADMIN_DB_PASSWORD`,
+`MDHUB_HOSTMON_DB_PASSWORD` (long random URL-safe values, `openssl rand -hex 24`). **Until a
+password is set, that service falls back to the owner role** and logs at every start:
+`<service> connects to PostgreSQL as <owner>, the owner role: it can write every table`. An
+install that has not set them keeps working as before, including after a self-update. The `api`
+reads `.env` (`env_file`), so compose blanks `POSTGRES_PASSWORD`, `MDHUB_RO_PASSWORD` and the
+three role passwords in its environment; `admin` and `hostmon` never see them.
+
+**New install:** set the three passwords in `.env` before the first `docker compose up -d`;
+`initdb/10-mdhub-roles.sh` creates the roles, `migrate` grants them.
+
+**Existing install** (or to rotate a password): set the passwords in `.env`, then
+
+```bash
+docker compose up -d postgres            # recreated with the new passwords in its environment
+docker compose exec postgres sh -c 'psql -q -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+    -v dbname="$POSTGRES_DB" -v api_password="$MDHUB_API_DB_PASSWORD" \
+    -v admin_password="$MDHUB_ADMIN_DB_PASSWORD" -v hostmon_password="$MDHUB_HOSTMON_DB_PASSWORD" \
+    -f /mdhub-sql/service_roles.sql'
+docker compose up -d                     # api, admin, hostmon reconnect with their roles
+docker compose logs api admin hostmon | grep 'owner role' || echo "all on their own roles"
+```
+
+Setting a password without running `service_roles.sql` makes that service fail to connect
+(`password authentication failed for user "mdhub_admin"`); run it and restart the service.
+`restore_seed.sh` (compose) re-runs it after a restore.
+
+Bare metal (§9) runs only the worker and the API, both as `mdhub` over peer authentication;
+the service roles are not set up there.
