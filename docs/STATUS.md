@@ -82,6 +82,10 @@
    Not verified anywhere: real Docker/Caddy, the updater rehearsal (README §13), a real passkey.
    The updater now writes ops.container_status every 30 s (ContainerReporter thread, docker ps/inspect/stats;
    paused during a restore). Not verified against a real Docker daemon.
+   c2cafc1 least-privilege DB roles mdhub_api / mdhub_admin / mdhub_hostmon (0800_service_roles,
+   deploy/sql/service_roles.sql, README_DEPLOY §16; owner fallback with a warning while MDHUB_*_DB_PASSWORD
+   is unset). Both merged ddfc774; 776 tests green. New tables/columns read by api/admin/hostmon need a
+   grant update in the role procedure (DEVELOPING); the snapshot layer's ops reads too.
 
 ## Open items for owner
 - Cbonds API → HTTP 401 for any login (likely IP allow-list of old server); hub auto-skips.
