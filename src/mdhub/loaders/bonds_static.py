@@ -81,6 +81,11 @@ EP_DESCRIPTION: Final = "bond_description"
 EP_BONDIZATION: Final = "bonds_bondization"
 EP_BONDIZATION_ONE: Final = "bond_bondization"
 
+CONFLICT_SCHEDULE: Final = "moex_schedule"
+CONFLICT_LABEL: Final = "moex_label"
+CONFLICT_KEY: Final = ("secid", "field", "source_a", "source_b")
+"""``ref.static_conflict`` sources of the label-vs-schedule ``coupon_type`` conflict."""
+
 register_dataset(
     DatasetSpec(
         name="ref_bond_static",
@@ -624,6 +629,8 @@ class BondFacts:
     face_indexed: bool
     face_unit: str | None
     options: OptionDates
+    coupon_type_conflict: dict[str, Any] | None = None
+    """``ref.static_conflict`` row when the schedule overrides a fixed MOEX label."""
 
 
 def build_bond_row(
@@ -703,6 +710,14 @@ def build_bond_row(
         lab("SHORTNAME"), d.get("shortname") if d else None, pm.get("SHORTNAME") if pm else None
     )
     struct_flag = _flag("STRUCTBOND", c, e)
+    in_market = bool(mrows)
+    is_traded = _first(d.get("is_traded") if d else None, c.get("IS_TRADED") if c else None)
+    if is_matured:
+        status = "matured"
+    elif is_traded or in_market:
+        status = "active"
+    else:
+        status = "delisted"
     inp = ClassifyInput(
         secid=secid,
         name=name,
@@ -719,6 +734,7 @@ def build_bond_row(
         struct_flag=struct_flag,
         has_description=has_description,
         is_matured=is_matured,
+        is_active=status == "active",
         coupon_values=summary.coupon_values if summary else (),
         coupon_rates=summary.coupon_rates if summary else (),
         has_formula=secid in formula_secids,
@@ -736,14 +752,6 @@ def build_bond_row(
         is_amortizing = False
     else:
         is_amortizing = None
-    in_market = bool(mrows)
-    is_traded = _first(d.get("is_traded") if d else None, c.get("IS_TRADED") if c else None)
-    if is_matured:
-        status = "matured"
-    elif is_traded or in_market:
-        status = "active"
-    else:
-        status = "delisted"
     issuer_id = _first(d.get("emitent_id") if d else None, e.get("EMITTER_ID") if e else None)
     capture_id = _first(
         u.captures.get((EP_COLLECTION, secid)),
@@ -832,8 +840,40 @@ def build_bond_row(
             buyback=pm.get("BUYBACKDATE") if pm else None,
             bond_subtype=bond_subtype,
         ),
+        coupon_type_conflict=_coupon_type_conflict(inp, coupon_type, basis, run_id, capture_id),
     )
     return row, facts
+
+
+def _coupon_type_conflict(
+    inp: ClassifyInput, coupon_type: str, basis: str, run_id: int, capture_id: int | None
+) -> dict[str, Any] | None:
+    """``ref.static_conflict`` row for a fixed MOEX label overridden by the schedule
+    (``variable_known`` / ``schedule``, :func:`mdhub.sources.moex_static.unknown_future_coupons`).
+    """
+    label = ms.fixed_known_label(inp)
+    unknown = ms.unknown_future_coupons(inp)
+    if label is None or not unknown or (coupon_type, basis) != ("variable_known", "schedule"):
+        return None
+    assert inp.today is not None  # unknown_future_coupons is empty without today
+    future = sum(1 for r in inp.coupon_rates if r.pay_date > inp.today)
+    first = inp.coupon_rates[unknown[0] - 1]
+    return {
+        "secid": inp.secid,
+        "field": "coupon_type",
+        "source_a": CONFLICT_SCHEDULE,
+        "source_b": CONFLICT_LABEL,
+        "value_a": coupon_type,
+        "value_b": f"fixed ({label})",
+        "selected_source": CONFLICT_SCHEDULE,
+        "reason": (
+            f"active bond: {len(unknown)} of {future} future coupons without amount or rate"
+            f" (first #{unknown[0]} paying {first.pay_date.isoformat()})"
+        ),
+        "resolved": False,
+        "run_id": run_id,
+        "capture_id": capture_id,
+    }
 
 
 def _issuer_rows(u: Universe, scope: set[str], run_id: int) -> list[dict[str, Any]]:
@@ -1152,6 +1192,27 @@ def _upsert(
     return result
 
 
+def _resolve_coupon_type_conflicts(
+    ctx: JobContext, conn: psycopg.Connection[Any], secids: Iterable[str]
+) -> None:
+    """Resolve open label-vs-schedule ``coupon_type`` conflicts of rebuilt bonds that no
+    longer have one (future coupons published, or the bond is no longer active)."""
+    secid_list = sorted(set(secids))
+    if not secid_list:
+        return
+    _set_run(conn, ctx.run.id)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE ref.static_conflict SET resolved = true, run_id = %s, updated_at = now()
+            WHERE field = 'coupon_type' AND source_a = %s AND source_b = %s AND NOT resolved
+              AND secid = ANY(%s)
+            """,
+            (ctx.run.id, CONFLICT_SCHEDULE, CONFLICT_LABEL, secid_list),
+        )
+        ctx.run.add_counts(UpsertResult(updated=max(cur.rowcount, 0)))
+
+
 def _set_run(conn: psycopg.Connection[Any], run_id: int) -> None:
     conn.execute("SELECT set_config('mdhub.run_id', %s, true)", (str(run_id),))
 
@@ -1227,6 +1288,9 @@ def write_universe(
         facts[secid] = f
     _upsert(ctx, conn, "ref.bond", bonds, ["secid"])
     touch_last_seen(conn, "ref.bond", ["secid"], [(b["secid"],) for b in bonds], run_id)
+    conflicts = [f.coupon_type_conflict for f in facts.values() if f.coupon_type_conflict]
+    _upsert(ctx, conn, "ref.static_conflict", conflicts, CONFLICT_KEY)
+    _resolve_coupon_type_conflicts(ctx, conn, scope - {c["secid"] for c in conflicts})
     issuer_ids = {(b["issuer_id"],) for b in bonds if b["issuer_id"] is not None}
     touch_last_seen(conn, "ref.issuer", ["issuer_id"], issuer_ids, run_id)
     by_secid = {b["secid"]: b for b in bonds}
