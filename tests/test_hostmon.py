@@ -32,6 +32,8 @@ from mdhub.hostmon.sampler import (
 )
 from mdhub.hostmon.status import above, machine_status, project_full, worst
 from mdhub.loaders.maintenance import purge_host_metrics
+from mdhub.updater import ContainerReporter
+from test_updater import FakeDocker
 
 Conn = psycopg.Connection[DictRow]
 
@@ -487,6 +489,27 @@ def test_machine_page_containers_from_updater(viewer: Console, conn: Conn) -> No
     conn.execute("UPDATE ops.container_status SET updated_at = now() - interval '5 minutes'")
     conn.commit()
     assert "Updater not reporting" in viewer.get("/machine").text
+
+
+def test_machine_page_renders_the_updaters_report(viewer: Console, conn: Conn, db_url: str) -> None:
+    """Rows written by the updater's ContainerReporter (fake docker) render with their states."""
+    reporter = ContainerReporter(Database(db_url), docker=FakeDocker())
+    reporter.write(reporter.sample())
+    text = viewer.get("/machine").text
+    assert "Updater not reporting" not in text
+    for name in ("mdhub-worker-1", "mdhub-api-1", "mdhub-admin-1", "mdhub-postgres-1"):
+        assert name in text
+    assert "mdhub:1.2.0" in text and "postgres:16" in text
+    assert "120.5 MB / 512.0 MB" in text and "2.5 %" in text
+    conn.rollback()
+    m = machine_status(conn, Settings())
+    assert m.containers_reporting
+    assert m.container_states == {
+        "mdhub-admin-1": "crit",  # exited
+        "mdhub-api-1": "warn",  # restarted 10 minutes ago
+        "mdhub-postgres-1": "warn",  # health starting
+        "mdhub-worker-1": "ok",
+    }
 
 
 def test_svg_chart_breaks_gaps_and_escapes() -> None:

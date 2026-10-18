@@ -39,12 +39,17 @@ loaded again afterwards; a journal found at start-up means a restore was interru
 redone. An updater that stops mid-way resumes the open request from its recorded state (every
 step can run again).
 
+Being the only process with the docker socket, the updater also reports the containers to
+``ops.container_status`` every 30 s from its own thread (:class:`ContainerReporter`, the Machine
+page of ADMIN_DESIGN §10), idle or mid-update; it pauses only while a restore runs.
+
 Host layout under ``MDHUB_UPDATE_ROOT``, mounted at the same path in the updater container so
 the paths compose resolves are host paths (see :class:`Layout`).
 """
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import logging
@@ -100,12 +105,16 @@ __all__ = [
     "LOCK_NAME",
     "STEPS",
     "ComposeHost",
+    "ContainerReporter",
     "GitHub",
     "Host",
     "Layout",
     "UpdateError",
     "Updater",
     "archive_name",
+    "docker",
+    "parse_pct",
+    "parse_size",
     "read_env_value",
     "run",
     "write_env_value",
@@ -120,6 +129,10 @@ DRAIN_TIMEOUT_S: Final = 600.0
 CHECK_TIMEOUT_S: Final = 180.0
 BUILD_TIMEOUT_S: Final = 3600.0
 COMPOSE_TIMEOUT_S: Final = 600.0
+CONTAINER_INTERVAL_S: Final = 30.0
+DOCKER_TIMEOUT_S: Final = 20.0
+COMPOSE_PROJECT: Final = "mdhub"
+"""``name:`` of deploy/docker-compose.yml."""
 PREFETCH: Final = 3
 """Newer GitHub releases downloaded and verified ahead of an install (newest first)."""
 
@@ -319,6 +332,162 @@ class ComposeHost:
             return r.status_code, None
 
 
+# ----------------------------------------------------------------------------- containers
+
+
+def docker(args: Sequence[str]) -> str:
+    """Stdout of ``docker args`` (same minimal environment as :meth:`ComposeHost.compose`)."""
+    env = {k: os.environ[k] for k in ("PATH", "HOME", "DOCKER_HOST") if k in os.environ}
+    argv = ["docker", *args]
+    try:
+        proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
+            argv, env=env, capture_output=True, text=True, timeout=DOCKER_TIMEOUT_S, check=False
+        )
+    except FileNotFoundError:
+        raise UpdateError("docker CLI not found in the updater image") from None
+    except subprocess.TimeoutExpired:
+        raise UpdateError(f"docker {args[0]} timed out after {DOCKER_TIMEOUT_S:.0f} s") from None
+    if proc.returncode != 0:
+        tail = (proc.stderr or proc.stdout or "").strip()[-500:]
+        raise UpdateError(f"docker {args[0]} exited with {proc.returncode}: {tail}")
+    return proc.stdout
+
+
+_SIZE_RE: Final = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z]*)")
+_UNITS: Final = {
+    "b": 1,
+    "kb": 10**3,
+    "mb": 10**6,
+    "gb": 10**9,
+    "tb": 10**12,
+    "kib": 2**10,
+    "mib": 2**20,
+    "gib": 2**30,
+    "tib": 2**40,
+}
+
+
+def parse_size(text: str) -> int | None:
+    """Bytes of a ``docker stats`` size (``12.5MiB``, ``1.2GB``, ``0B``); ``None`` for ``--``."""
+    m = _SIZE_RE.fullmatch(text.strip())
+    factor = _UNITS.get((m.group(2) or "b").lower()) if m else None
+    return round(float(m.group(1)) * factor) if m and factor else None
+
+
+def parse_pct(text: str) -> float | None:
+    try:
+        return float(text.strip().rstrip("%"))
+    except ValueError:
+        return None
+
+
+class ContainerReporter:
+    """Upserts one ``ops.container_status`` row per container of the compose project every
+    ``interval_s`` (ADMIN_DESIGN §10; the console reads the rows) and deletes rows of containers
+    that are gone. One-off ``compose run`` containers are left out. Runs in its own thread, so
+    it reports while an update runs or the loop is idle; a failed round is logged and retried.
+
+    :param docker: runs ``docker args`` and returns stdout (a fake in tests).
+    """
+
+    def __init__(
+        self,
+        db: Database,
+        *,
+        project: str = COMPOSE_PROJECT,
+        docker: Callable[[Sequence[str]], str] = docker,
+        interval_s: float = CONTAINER_INTERVAL_S,
+    ) -> None:
+        self.db = db
+        self.project = project
+        self.docker = docker
+        self.interval_s = interval_s
+        self.pause = threading.Lock()
+        """Held during a database restore: an insert then could break ``pg_restore``."""
+
+    def sample(self) -> list[dict[str, Any]]:
+        ids = self.docker(
+            [
+                "ps",
+                "--all",
+                "--quiet",
+                "--no-trunc",
+                "--filter",
+                f"label=com.docker.compose.project={self.project}",
+                "--filter",
+                "label=com.docker.compose.oneoff=False",
+            ]
+        ).split()
+        if not ids:
+            return []
+        rows: list[dict[str, Any]] = []
+        for c in json.loads(self.docker(["inspect", *ids])):
+            state = c.get("State") or {}
+            started = str(state.get("StartedAt") or "")
+            rows.append(
+                {
+                    "name": str(c["Name"]).lstrip("/"),
+                    "service": ((c.get("Config") or {}).get("Labels") or {}).get(
+                        "com.docker.compose.service"
+                    ),
+                    "image": (c.get("Config") or {}).get("Image"),
+                    "state": str(state.get("Status") or "unknown"),
+                    "health": (state.get("Health") or {}).get("Status"),
+                    "restart_count": int(c.get("RestartCount") or 0),
+                    # docker reports 0001-01-01 for a container that never started
+                    "started_at": started if started and not started.startswith("0001-") else None,
+                    "cpu_pct": None,
+                    "mem_bytes": None,
+                    "mem_limit_bytes": int((c.get("HostConfig") or {}).get("Memory") or 0) or None,
+                }
+            )
+        running = [r["name"] for r in rows if r["state"] == "running"]
+        if running:
+            by_name = {r["name"]: r for r in rows}
+            out = self.docker(["stats", "--no-stream", "--format", "{{json .}}", *running])
+            for line in out.splitlines():
+                s = json.loads(line) if line.strip() else {}
+                row = by_name.get(str(s.get("Name", "")).lstrip("/"))
+                if row is not None:
+                    row["cpu_pct"] = parse_pct(str(s.get("CPUPerc", "")))
+                    row["mem_bytes"] = parse_size(str(s.get("MemUsage", "")).split("/")[0])
+        return rows
+
+    def write(self, rows: Sequence[Mapping[str, Any]]) -> None:
+        with self.pause, self.db.connection() as conn:
+            for row in rows:
+                conn.execute(
+                    """
+                    INSERT INTO ops.container_status (name, service, image, state, health,
+                        restart_count, started_at, cpu_pct, mem_bytes, mem_limit_bytes,
+                        updated_at)
+                    VALUES (%(name)s, %(service)s, %(image)s, %(state)s, %(health)s,
+                        %(restart_count)s, %(started_at)s::timestamptz, %(cpu_pct)s,
+                        %(mem_bytes)s, %(mem_limit_bytes)s, now())
+                    ON CONFLICT (name) DO UPDATE SET service = EXCLUDED.service,
+                        image = EXCLUDED.image, state = EXCLUDED.state, health = EXCLUDED.health,
+                        restart_count = EXCLUDED.restart_count, started_at = EXCLUDED.started_at,
+                        cpu_pct = EXCLUDED.cpu_pct, mem_bytes = EXCLUDED.mem_bytes,
+                        mem_limit_bytes = EXCLUDED.mem_limit_bytes, updated_at = now()
+                    """,
+                    row,
+                )
+            conn.execute(
+                "DELETE FROM ops.container_status WHERE name <> ALL(%s)",
+                ([r["name"] for r in rows],),
+            )
+
+    def serve(self, stop: threading.Event) -> None:
+        """Report now and then every ``interval_s`` until ``stop`` is set."""
+        while True:
+            try:
+                self.write(self.sample())
+            except Exception as exc:
+                log.warning("container status failed: %s: %s", type(exc).__name__, exc)
+            if stop.wait(self.interval_s):
+                return
+
+
 # --------------------------------------------------------------------------------- github
 
 
@@ -446,6 +615,7 @@ class Updater:
         self.sleep = sleep
         self.clock = clock
         self.heartbeat: Heartbeat | None = None
+        self.containers: ContainerReporter | None = None
         self._lock_conn: DictConnection | None = None
 
     # ------------------------------------------------------------------ lock and loop
@@ -1149,8 +1319,10 @@ class Updater:
             self.heartbeat.stop()
         had_lock = self._lock_conn is not None
         self.release_lock()
+        pause = self.containers.pause if self.containers is not None else contextlib.nullcontext()
         try:
-            self.host.restore(Path(journal["dump"]))
+            with pause:
+                self.host.restore(Path(journal["dump"]))
             with self.db.connection() as conn:
                 _reload(conn, journal["tables"])
             self.layout.journal.unlink()
@@ -1274,7 +1446,8 @@ def _reload(conn: DictConnection, tables: Mapping[str, list[Any]]) -> None:
 
 
 def run(settings: Settings, stop: threading.Event) -> None:
-    """``mdhub updater``: heartbeat (process ``updater``) and the request loop."""
+    """``mdhub updater``: heartbeat (process ``updater``), container status and the request
+    loop."""
     db = Database.from_settings(settings)
     secrets = settings.secret_values()
     github = None
@@ -1299,6 +1472,10 @@ def run(settings: Settings, stop: threading.Event) -> None:
     )
     updater.heartbeat = Heartbeat(db, "updater")
     updater.heartbeat.start()
+    updater.containers = ContainerReporter(db)
+    threading.Thread(
+        target=updater.containers.serve, args=(stop,), name="mdhub-containers", daemon=True
+    ).start()
     log.info("updater %s started (root %s)", __version__, settings.update_root)
     try:
         updater.serve(stop)

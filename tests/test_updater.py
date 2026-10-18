@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import shutil
 import tarfile
 import threading
 import uuid
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +30,17 @@ from mdhub.job_requests import JobRequestPoller
 from mdhub.jobs import DRAINING, JobContext, JobRegistry
 from mdhub.release import build_manifest, default_signature_path
 from mdhub.schedule import Rule, _RuleRunner
-from mdhub.updater import GitHub, Layout, Updater, _reload, read_env_value
+from mdhub.updater import (
+    ContainerReporter,
+    GitHub,
+    Layout,
+    UpdateError,
+    Updater,
+    _reload,
+    parse_pct,
+    parse_size,
+    read_env_value,
+)
 from test_release import COMMIT, SigningKey, _sums
 
 Conn = psycopg.Connection[DictRow]
@@ -794,3 +806,162 @@ def test_reload_appends_missing_audit_rows_with_their_ids(conn: Conn) -> None:
     store.audit(conn, "update.next", login="updater")
     nxt = conn.execute("SELECT id FROM admin.audit_log WHERE action = 'update.next'").fetchone()
     assert nxt is not None and nxt["id"] > top + 5
+
+
+# ----------------------------------------------------------------------- container status
+
+
+def _docker_time(ago: timedelta) -> str:
+    return f"{datetime.now(UTC) - ago:%Y-%m-%dT%H:%M:%S}.123456789Z"
+
+
+class FakeDocker:
+    """``docker ps / inspect / stats`` of a compose project with four containers."""
+
+    def __init__(self) -> None:
+        self.calls: list[list[str]] = []
+        self.fail = False
+        self.inspect: list[dict[str, Any]] = [
+            self._container("worker", "running", None, 0, timedelta(days=3), 0),
+            self._container("api", "running", "healthy", 2, timedelta(minutes=10), 512 << 20),
+            self._container("admin", "exited", None, 0, None, 0),
+            self._container("postgres", "running", "starting", 0, timedelta(seconds=30), 0),
+        ]
+        self.stats = {
+            "mdhub-worker-1": ("2.50%", "300MiB / 1.94GiB"),
+            "mdhub-api-1": ("1.00%", "120.5MiB / 512MiB"),
+            "mdhub-postgres-1": ("--", "-- / --"),
+        }
+
+    @staticmethod
+    def _container(
+        service: str,
+        state: str,
+        health: str | None,
+        restarts: int,
+        up: timedelta | None,
+        memory: int,
+    ) -> dict[str, Any]:
+        return {
+            "Id": f"id-{service}",
+            "Name": f"/mdhub-{service}-1",
+            "RestartCount": restarts,
+            "State": {
+                "Status": state,
+                "StartedAt": _docker_time(up) if up else "0001-01-01T00:00:00Z",
+                **({"Health": {"Status": health}} if health else {}),
+            },
+            "Config": {
+                "Image": "mdhub:1.2.0" if service != "postgres" else "postgres:16",
+                "Labels": {"com.docker.compose.service": service},
+            },
+            "HostConfig": {"Memory": memory},
+        }
+
+    def __call__(self, args: Any) -> str:
+        args = list(args)
+        self.calls.append(args)
+        if self.fail:
+            raise UpdateError("docker ps exited with 1: Cannot connect to the Docker daemon")
+        if args[0] == "ps":
+            return "".join(f"{c['Id']}\n" for c in self.inspect)
+        if args[0] == "inspect":
+            return json.dumps([c for c in self.inspect if c["Id"] in args[1:]])
+        assert args[:4] == ["stats", "--no-stream", "--format", "{{json .}}"]
+        return "".join(
+            json.dumps({"Name": n, "CPUPerc": cpu, "MemUsage": mem}) + "\n"
+            for n, (cpu, mem) in self.stats.items()
+            if n in args[4:]
+        )
+
+
+def test_parse_docker_sizes_and_percentages() -> None:
+    assert parse_size("0B") == 0
+    assert parse_size("120.5MiB ") == round(120.5 * 2**20)
+    assert parse_size("1.2GB") == 1_200_000_000
+    assert parse_size("--") is None and parse_size("3 parsecs") is None and not parse_size("1.2.3B")
+    assert parse_pct("2.50%") == 2.5 and parse_pct("--") is None
+
+
+def test_container_reporter_upserts_and_drops_gone_containers(db_url: str, conn: Conn) -> None:
+    conn.execute(
+        "INSERT INTO ops.container_status (name, state, updated_at) "
+        "VALUES ('mdhub-old-1', 'running', now() - interval '1 day')"
+    )
+    conn.commit()
+    docker = FakeDocker()
+    reporter = ContainerReporter(Database(db_url), docker=docker)
+    reporter.write(reporter.sample())
+    ps = docker.calls[0]
+    assert "label=com.docker.compose.project=mdhub" in ps
+    assert "label=com.docker.compose.oneoff=False" in ps  # no `compose run` one-offs
+    assert docker.calls[2][4:] == ["mdhub-worker-1", "mdhub-api-1", "mdhub-postgres-1"]
+    rows = {
+        r["name"]: r
+        for r in conn.execute(
+            "SELECT *, updated_at > now() - interval '1 minute' AS fresh FROM ops.container_status"
+        )
+    }
+    assert set(rows) == {"mdhub-worker-1", "mdhub-api-1", "mdhub-admin-1", "mdhub-postgres-1"}
+    api = rows["mdhub-api-1"]
+    assert (api["service"], api["image"], api["state"], api["health"]) == (
+        "api",
+        "mdhub:1.2.0",
+        "running",
+        "healthy",
+    )
+    assert api["restart_count"] == 2 and api["cpu_pct"] == 1.0
+    assert api["mem_bytes"] == round(120.5 * 2**20) and api["mem_limit_bytes"] == 512 << 20
+    assert datetime.now(UTC) - api["started_at"] < timedelta(minutes=11)
+    worker, admin = rows["mdhub-worker-1"], rows["mdhub-admin-1"]
+    assert worker["mem_limit_bytes"] is None and worker["health"] is None
+    assert admin["started_at"] is None and admin["cpu_pct"] is None
+    assert rows["mdhub-postgres-1"]["mem_bytes"] is None
+    assert all(r["fresh"] for r in rows.values())
+
+    # a container that stopped existing is dropped; the rest are updated in place
+    docker.inspect = docker.inspect[:1]
+    reporter.write(reporter.sample())
+    conn.rollback()
+    names = [r["name"] for r in conn.execute("SELECT name FROM ops.container_status")]
+    assert names == ["mdhub-worker-1"]
+
+
+def test_container_reporter_failure_is_logged_not_raised(
+    db_url: str, conn: Conn, caplog: pytest.LogCaptureFixture
+) -> None:
+    docker = FakeDocker()
+    reporter = ContainerReporter(Database(db_url), docker=docker)
+    reporter.write(reporter.sample())
+    docker.fail = True
+    stop = threading.Event()
+    stop.set()
+    with caplog.at_level(logging.WARNING, logger="mdhub.updater"):
+        reporter.serve(stop)  # one round, then stop
+    assert "container status failed: UpdateError: docker ps exited with 1" in caplog.text
+    conn.rollback()
+    row = conn.execute("SELECT count(*) AS n FROM ops.container_status").fetchone()
+    assert row == {"n": 4}  # the last good report stays (and ages into "not reporting")
+
+
+def test_container_reporter_paused_during_a_restore(
+    db_url: str,
+    host: FakeHost,
+    layout: Layout,
+    tmp_path: Path,
+    keys_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An insert while pg_restore re-creates the table would break its primary key."""
+    u = make(db_url, host, layout, tmp_path, keys_dir)
+    reporter = u.containers = ContainerReporter(Database(db_url), docker=FakeDocker())
+    held: list[bool] = []
+
+    def restore(dump: Path) -> None:
+        held.append(reporter.pause.locked())
+        FakeHost.restore(host, dump)
+
+    monkeypatch.setattr(host, "restore", restore)
+    layout.journal.write_text("{}", encoding="utf-8")
+    u._restore_journal({"dump": str(tmp_path / "x.dump"), "tables": {}})
+    assert held == [True] and not reporter.pause.locked()

@@ -80,7 +80,8 @@
    sealed to the worker key; 0700) and F (23581cd hostmon, PostgreSQL stats, Machine page; 0750) merged
    1bd00d8 / cd85ab8 / 1c480ca; 724 tests green. README_DEPLOY: §13 updater, §14 credentials, §15 machine.
    Not verified anywhere: real Docker/Caddy, the updater rehearsal (README §13), a real passkey.
-   Open: updater does not yet write ops.container_status (Machine page shows "updater not reporting").
+   The updater now writes ops.container_status every 30 s (ContainerReporter thread, docker ps/inspect/stats;
+   paused during a restore). Not verified against a real Docker daemon.
 
 ## Open items for owner
 - Cbonds API → HTTP 401 for any login (likely IP allow-list of old server); hub auto-skips.
