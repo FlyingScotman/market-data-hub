@@ -55,7 +55,7 @@ from psycopg.rows import tuple_row
 
 from mdhub.core.capture import reap_orphaned_runs
 from mdhub.core.redact import sanitize_text
-from mdhub.core.timeutil import MSK
+from mdhub.core.timeutil import MSK, utc_now
 from mdhub.datasets import rolling_window_start
 from mdhub.db.pool import Database
 from mdhub.jobs import JobContext, JobParamError, job
@@ -64,6 +64,7 @@ from mdhub.loaders.futures import (
     ALGOPACK_RAW_ENDPOINTS,
     ALGOPACK_RETENTION_TABLES,
 )
+from mdhub.snapshot.publish import purge_intraday_snapshots
 
 __all__ = [
     "BACKUP_DIR_ENV",
@@ -496,6 +497,7 @@ def maintenance(
     reread_retention_days: int | None = None,
     algopack_retention_days: int | None = None,
     ops_log_retention_days: int | None = None,
+    snapshot_retention_days: int | None = None,
     vacuum: bool = True,
     vacuum_min_mb: int = 64,
 ) -> dict[str, Any]:
@@ -509,6 +511,8 @@ def maintenance(
         rolling window, calendar days).
     :param ops_log_retention_days: override ``MDHUB_OPS_LOG_RETENTION_DAYS`` (api requests,
         source probes, heartbeats).
+    :param snapshot_retention_days: override ``MDHUB_SNAPSHOT_RETENTION_DAYS_INTRADAY``
+        (intraday market snapshots; static and EOD snapshots are kept forever).
     :param vacuum: run ``VACUUM (ANALYZE)`` after retention.
     """
     secrets = ctx.settings.secret_values()
@@ -557,6 +561,17 @@ def maintenance(
             "raw retention: deleted %s intraday capture(s); algopack window %s",
             result["raw_deleted"],
             result.get("algopack"),
+        )
+        snap_days = snapshot_retention_days or ctx.settings.snapshot_retention_days_intraday
+        with ctx.connection() as conn:
+            result["intraday_snapshots_deleted"] = purge_intraday_snapshots(
+                conn, snap_days, now=utc_now()
+            )
+        result["snapshot_retention_days"] = snap_days
+        ctx.logger.info(
+            "snapshot retention: deleted %d intraday snapshot(s) older than %d days",
+            result["intraday_snapshots_deleted"],
+            snap_days,
         )
         if vacuum:
             result["vacuumed"] = vacuum_tables(ctx.db, min_mb=vacuum_min_mb)

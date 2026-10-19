@@ -45,7 +45,7 @@ from mdhub.release import (
     verify_archive,
     version_key,
 )
-from mdhub.schedule import RULES, Rule, rule_applies
+from mdhub.schedule import Rule, effective_rules, rule_applies
 
 __all__ = ["router"]
 
@@ -112,7 +112,13 @@ def overview_data(ctx: Ctx) -> dict[str, Any]:
         coverage = conn.execute(
             "SELECT dataset, is_stale, open_gaps, unfillable_gaps, problem FROM ops.v_coverage"
         ).fetchall()
-        health = job_health(conn, now=now.astimezone(tz), calendar=DbCalendar(ctx.db), tz=tz)
+        health = job_health(
+            conn,
+            now=now.astimezone(tz),
+            calendar=DbCalendar(ctx.db),
+            tz=tz,
+            rules=effective_rules(ctx.settings),
+        )
         failed_tasks = _one(
             conn, "SELECT count(*) AS v FROM ops.backfill_task WHERE status = 'failed'"
         )
@@ -290,7 +296,8 @@ def jobs_page(
     calendar = DbCalendar(ctx.db)
     with ctx.db.connection() as conn:
         now: datetime = _one(conn, "SELECT now() AS v").astimezone(tz)
-        health = job_health(conn, now=now, calendar=calendar, tz=tz)
+        schedule = effective_rules(ctx.settings)
+        health = job_health(conn, now=now, calendar=calendar, tz=tz, rules=schedule)
         running = conn.execute(
             "SELECT id, job, started_at, trigger, host FROM ops.job_run "
             "WHERE status = 'running' ORDER BY started_at"
@@ -323,7 +330,7 @@ def jobs_page(
         ).fetchall()
     rows = []
     for h in health:
-        rules = RULES.get(h.job, ())
+        rules = schedule.get(h.job, ())
         rows.append(
             {
                 "h": h,

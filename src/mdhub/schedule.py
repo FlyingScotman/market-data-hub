@@ -53,7 +53,7 @@ from apscheduler.executors.pool import ThreadPoolExecutor
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from mdhub.config import Settings
+from mdhub.config import Settings, parse_hhmm, parse_window
 from mdhub.core.bizday import DEFAULT_CALENDAR, CalendarPredicate
 from mdhub.db.pool import Database
 from mdhub.jobs import (
@@ -74,7 +74,9 @@ __all__ = [
     "Rule",
     "build_scheduler",
     "check_rules",
+    "effective_rules",
     "rule_applies",
+    "snapshot_rules",
 ]
 
 log = logging.getLogger(__name__)
@@ -110,6 +112,8 @@ KNOWN_JOBS: Final = (
     "backfill_worker",
     "maintenance",
     "source_probe",
+    "snapshot_static",
+    "snapshot_market",
 )
 """All scheduled job names. Loaders must register exactly these names."""
 
@@ -162,6 +166,58 @@ def _poll(
         lock_wait_s=0,
         catch_up=False,
     )
+
+
+def _at(hhmm: str) -> str:
+    h, m = parse_hhmm(hhmm)
+    return f"{m} {h} * * *"
+
+
+def snapshot_rules(settings: Settings | None = None) -> dict[str, tuple[Rule, ...]]:
+    """Rules of the snapshot jobs from the cut-time settings (DESIGN §11; owner decision
+    DEC04, so configurable): daily static, market ``eod_preliminary`` (D, evening),
+    ``eod_final`` (next morning, D-1) and ``intraday`` every N minutes inside the window.
+    Without ``settings``: the defaults (the environment is not read)."""
+    cfg = settings or Settings.model_construct()
+    intraday: tuple[Rule, ...] = ()
+    every = cfg.snapshot_intraday_minutes
+    if every:
+        first, last = parse_window(cfg.snapshot_intraday_window)
+        minutes = "0" if every == 60 else f"*/{every}"
+        intraday = (
+            _poll(
+                f"{minutes} {first}-{last - 1} * * *",
+                mode="intraday",
+                note=f"every {every} min {first:02d}:00-{last:02d}:00",
+            ),
+            _poll(f"0 {last} * * *", mode="intraday"),
+        )
+    return {
+        "snapshot_static": (
+            _r(
+                _at(cfg.snapshot_static_time),
+                mode="daily",
+                note="after bonds_static / cbonds_enrich; changes also at each market cut",
+            ),
+        ),
+        "snapshot_market": (
+            _r(
+                _at(cfg.snapshot_eod_preliminary_time),
+                mode="eod_preliminary",
+                days_back=[0],
+                cut=cfg.snapshot_eod_preliminary_time,
+                note="EOD preliminary for D (after the 19:05-19:30 EOD loads)",
+            ),
+            _r(
+                _at(cfg.snapshot_eod_final_time),
+                mode="eod_final",
+                days_back=[1],
+                cut=cfg.snapshot_eod_final_time,
+                note="EOD final for D-1 (after the 07:10-07:25 final loads)",
+            ),
+            *intraday,
+        ),
+    }
 
 
 RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
@@ -270,8 +326,15 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
         _r("0 2 * * *", days="all", mode="backup", keep=14, note="pg_dump, keep 14"),
         _r("0 3 * * *", days="all", mode="retention", note="raw retention + VACUUM ANALYZE"),
     ),
+    **snapshot_rules(),
 }
-"""Job name -> cron rules (DESIGN §6)."""
+"""Job name -> cron rules (DESIGN §6); snapshot jobs with the default cut times
+(:func:`effective_rules` applies the configured ones)."""
+
+
+def effective_rules(settings: Settings) -> dict[str, tuple[Rule, ...]]:
+    """:data:`RULES` with the snapshot cut times of ``settings``."""
+    return {**RULES, **snapshot_rules(settings)}
 
 
 # ----------------------------------------------------------------------------- gating

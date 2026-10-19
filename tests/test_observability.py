@@ -26,7 +26,10 @@ from mdhub.jobs import JobContext, JobRegistry, run_job, running_jobs
 from mdhub.schedule import KNOWN_JOBS, RULES
 
 Conn = psycopg.Connection[DictRow]
-NOT_LOADERS = {"quality", "backfill_worker", "maintenance", "source_probe"}
+NOT_LOADERS = {
+    "quality", "backfill_worker", "maintenance", "source_probe", "snapshot_static",
+    "snapshot_market",
+}  # fmt: skip
 
 
 def _http_factory(**kw: Any) -> HttpClient:

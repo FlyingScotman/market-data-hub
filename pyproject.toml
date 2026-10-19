@@ -24,6 +24,7 @@ dependencies = [
   "webauthn>=2.2,<3",
   "python-multipart>=0.0.9",
   "psutil>=6,<8",
+  "jsonschema>=4.23,<5",
 ]
 
 [project.scripts]
@@ -38,6 +39,7 @@ dev = [
   "ruff>=0.6,<1",
   "mypy>=1.11,<2",
   "pyyaml>=6.0.3",
+  "types-jsonschema>=4.26.0.20261006",
 ]
 
 [build-system]
@@ -59,8 +61,14 @@ cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true 
 [tool.hatch.build.targets.wheel]
 packages = ["src/mdhub"]
 
+[tool.hatch.build.targets.wheel.force-include]
+# Market Snapshot Contract v1 schemas (owned by the hub, kept at the repository root)
+"schemas" = "mdhub/schemas"
+
 [tool.hatch.build.targets.sdist]
-include = ["/src/mdhub", "/tests", "/docs", "/README.md", "/pyproject.toml", "/uv.lock"]
+include = [
+  "/src/mdhub", "/schemas", "/tests", "/docs", "/README.md", "/pyproject.toml", "/uv.lock",
+]
 
 [tool.mdhub.release]
 # The oldest installed version a release of this tree can be installed over directly

@@ -19,6 +19,7 @@ EXPECTED_JOBS = {
     "algopack_fx_futures", "indices_eod", "zcyc", "cbr_daily", "cbr_meetings", "ecb_fx",
     "rosstat_cpi", "swaps_ratescalcs", "swaps_otc_monitor", "quality", "backfill_worker",
     "maintenance", "source_probe",
+    "snapshot_static", "snapshot_market",
 }  # fmt: skip
 
 

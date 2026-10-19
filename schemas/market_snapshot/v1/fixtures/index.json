@@ -1,0 +1,31 @@
+{
+ "fixtures": {
+  "market_eod_final": {
+   "business_date": "2026-10-15",
+   "cut_type": "eod_final",
+   "file": "market_eod_final.json",
+   "kind": "market",
+   "snapshot_id": "d6c6d35a8db9adcb5aac161b98adb29cf3f9dc2fccfff4ab80227a007ae6d9df"
+  },
+  "static_daily": {
+   "business_date": "2026-10-15",
+   "cut_type": "daily",
+   "file": "static_daily.json",
+   "kind": "static",
+   "snapshot_id": "4f173275220b492c558acad982351bac01fe73baea6d50dcb0fcc38400953c4a"
+  }
+ },
+ "instruments": {
+  "RU000A0JXQ44": "corporate fixed with a scheduled put offer (RZD)",
+  "RU000A100GW5": "perpetual subordinated (Alfa-Bank)",
+  "RU000A1034P7": "perpetual subordinated (VTB)",
+  "RU000A109XR1": "corporate floater on the CBR key rate",
+  "RU000A10BRM5": "corporate fixed amortizer",
+  "RU000A10GCT1": "corporate with coupon_type unknown",
+  "SU26238RMFS4": "OFZ-PD, fixed bullet (2041)",
+  "SU29008RMFS8": "OFZ-PK, floater on RUONIA",
+  "SU46020RMFS2": "OFZ-AD, fixed amortizer",
+  "SU52005RMFS4": "OFZ-IN, inflation-indexed face"
+ },
+ "schema_version": "market_snapshot/1.0"
+}

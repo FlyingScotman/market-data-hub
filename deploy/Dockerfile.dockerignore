@@ -1,5 +1,6 @@
 # Build context = repository root; only pyproject.toml, uv.lock, README.md,
-# .git_archival.txt (version of a git-archive bundle), src/ and deploy/release-keys/ are used.
+# .git_archival.txt (version of a git-archive bundle), src/, schemas/ (snapshot
+# contract, packaged into the wheel) and deploy/release-keys/ are used.
 **
 !pyproject.toml
 !uv.lock
@@ -7,5 +8,6 @@
 !.git_archival.txt
 !src/
 !deploy/release-keys/
+!schemas/
 src/**/__pycache__
 src/**/*.pyc
