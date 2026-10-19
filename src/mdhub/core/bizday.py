@@ -111,7 +111,8 @@ class DbCalendar(CalendarPredicate):
                 if not exists or exists[0] is None:
                     return False
                 row = cur.execute(
-                    "SELECT 1 FROM ref.weekend_session WHERE calendar = %s AND day = %s LIMIT 1",
+                    "SELECT 1 FROM ref.weekend_session "
+                    "WHERE calendar = %s AND day = %s AND NOT is_deleted LIMIT 1",
                     (calendar, day),
                 ).fetchone()
         except psycopg.Error as exc:
@@ -128,7 +129,7 @@ class DbCalendar(CalendarPredicate):
                 row = cur.execute(
                     """
                     SELECT is_business_day FROM ref.calendar_day
-                    WHERE calendar = %s AND day = %s
+                    WHERE calendar = %s AND day = %s AND NOT is_deleted
                     ORDER BY ref.calendar_source_rank(source), known_at DESC NULLS LAST
                     LIMIT 1
                     """,

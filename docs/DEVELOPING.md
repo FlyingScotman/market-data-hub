@@ -142,10 +142,10 @@ src/mdhub/
 
 - File `src/mdhub/db/migrations/NNNN_short_name.sql` (`^\d{4}_[a-z0-9_]+\.sql$`). Number
   ranges (DESIGN §5): **0001-0099** core/ops, **0100-0199** ref, **0200-0299** md,
-  **0300-0399** legacy, **0400-0499** api/views, **0500-0599** snapshot layer, **0600-0699**
-  admin console and observability, **0700-0799** credentials store and host monitoring,
-  **0800-0899** database roles. Pick the next free number in your range; two files with
-  the same number are rejected.
+  **0300-0399** legacy, **0400-0499** api/views, **0500-0599** snapshot layer (as-known-at
+  readers, published snapshots), **0600-0699** admin console and observability, **0700-0799**
+  credentials store and host monitoring, **0800-0899** database roles. Pick the next free
+  number in your range; two files with the same number are rejected.
 - Schema `admin` holds secrets (tokens, later users and sessions) and must stay closed to the
   read-only role: **end every migration that creates objects in `admin` with
   `CALL admin.restrict_access();`** (the owner's global default privileges would otherwise grant
@@ -290,6 +290,26 @@ highest-priority source: observed > MOEX ISS calendar > curated > rule > curated
 Monday–Friday. `uv run mdhub scheduler` runs it; rules of
 jobs that are not registered are skipped with a warning. `uv run mdhub jobs list` shows the
 registry, cron rules, import failures and schedule problems.
+
+## Published snapshots (contract changes)
+
+The hub owns the Market Snapshot Contract (`schemas/market_snapshot/v1/`, DESIGN §11).
+
+- Builders read only through the as-known-at readers (`ref.*_known_at`, `md.*_known_at`), never
+  the live tables, so a cut replays. A new revisable table needs `ops.enable_history` and, if a
+  snapshot reads it, `CALL ops.create_known_at_function(...)` in a migration.
+- Never delete rows of a table a snapshot reads: soft-delete (`is_deleted`) so the change is a
+  version in `ops.row_history`.
+- Arrays are sorted by their natural key; values are `Decimal`/`date`/aware `datetime` (no
+  floats: `mdhub.snapshot.canonical` rejects them). `jsonb` numbers are read as `::text` and
+  parsed with `json_decimal`.
+- A record is in `data` (with labels) or in `excluded` with a reason, never dropped.
+- Changing an object (field, enum value, unit) is a contract change: bump `schema_version`
+  (`mdhub.snapshot.schema.SCHEMA_VERSION`, the `const` in the schemas), regenerate the golden
+  fixtures in the same reviewed change (`MDHUB_REGEN_GOLDEN=1 uv run pytest
+  tests/test_snapshot_golden.py`; new source rows: `uv run python tests/snapshot_golden.py
+  extract <seed conninfo>`), and update the interface catalogue in
+  `trading_desk_monitor/docs/architecture/README.md`.
 
 ## Adding CLI commands
 

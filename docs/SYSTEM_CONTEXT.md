@@ -27,6 +27,9 @@ The full system architecture lives in the sibling repository **trading_desk_moni
 
 Details: `trading_desk_monitor/docs/architecture/02_MARKET_DATA_AND_CORE_CONTRACT.md` (§3 contract outline, §6 work list), `adr/ADR-001`, `adr/ADR-002`, and `06_DEPLOYMENT_AND_OPERATIONS.md`.
 
+Status in this repository (16 October 2026): items 1–6 are implemented (see the last column
+and [DESIGN.md](DESIGN.md) §11); 7–10 are open.
+
 | # | Item | Notes |
 |---|---|---|
 | 1 | **Market Snapshot Contract v1.** JSON Schema in `schemas/market_snapshot/v1/` plus golden fixtures from public data: about 10 OFZ and corporates covering bullet, amortizer, put, floater and perpetual | The hub **owns** this contract. Object outline in system doc 02 §3: Instrument, CouponPeriod (with status), Redemption, Offer, FloaterFormula, Issuer, Calendar (with `valid_from`/`valid_to`; working weekends from `calendar_effective`, **not** `weekend_session`), IdMap; BondQuote (all price bases labelled), CurveQuoteSet (`dataset` code, tenors, % values), ZcycParams, Fixing (with source), RUB FxRate, non-RUB cross rates (ECB), CbrMeeting |
@@ -41,6 +44,17 @@ Details: `trading_desk_monitor/docs/architecture/02_MARKET_DATA_AND_CORE_CONTRAC
 | 10 | Later | Intraday bond and FX data in snapshots; internal bank sources as inside collectors; SOFR/€STR/CPI series as needed by core product packages |
 
 The TDM CSV export (`/v1/export/tdm`) stays for compatibility until the backend reads snapshots, then it is retired.
+
+### What the hub ships for items 1–6 (M1)
+
+| # | Where |
+|---|---|
+| 1 | `schemas/market_snapshot/v1/` (`snapshot`, `static`, `market`, `manifest`, `common` schemas, README) and `fixtures/` (static + EOD-final market bundles for ten public bonds of 2026-10-15: OFZ-PD bullet, OFZ-PK RUONIA floater, OFZ-IN linker, OFZ-AD amortizer, corporate key-rate floater, put offer, corporate amortizer, two perpetuals, unknown coupon type), validated and rebuilt byte for byte in hub CI |
+| 2 | `dataset`/tenor codes, units, coupon `status`, every price basis published as stored; MOEX analytics under `source_analytics`; RUB FX per 1 unit, ECB crosses separate |
+| 3 | `ref.*_known_at(T)` readers (bond, board, coupon, amortization, offer, formula resolved, issuer, calendar, weekend session, CBR meetings) over `ops.row_history` (migration 0500); `ref.calendar_day` / `ref.weekend_session` are soft-deleted (versioned) instead of hard-deleted, so past calendars replay |
+| 4 | `ops.published_snapshot` (0510): id = sha256 of the canonical bundle, gzip payload, manifest (schema version, kind, cut type, business date, cut ts, known_at, static snapshot id, supersedes, sources, datasets with counts/sha/coverage/stale flags, excluded with reasons). Jobs `snapshot_static` (daily 07:45) and `snapshot_market` (`eod_preliminary` 19:45, `eod_final` 08:00 for D-1, `intraday` every 30 min 10:00–19:00) — **default cut times pending DEC04**, set by `MDHUB_SNAPSHOT_*`. Intraday snapshots kept 30 days, static/EOD forever |
+| 5 | `GET /v1/snapshots?kind&cut_type&business_date&latest`, `/v1/snapshots/{id}/manifest`, `/v1/snapshots/{id}/bundle` (gzip, `ETag` = id), behind the bearer token |
+| 6 | Unknown coupon types and perpetuals are published with labels; market snapshots quote only instruments of their `static_snapshot_id` (others listed in `excluded`); floater benchmarks verbatim with formula status; one calendar version + fingerprint per snapshot from `ref.calendar_effective` |
 
 ## Relevant system documents
 

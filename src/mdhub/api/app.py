@@ -44,7 +44,7 @@ from mdhub.api.requestlog import (
     route_template,
     truncate_user_agent,
 )
-from mdhub.api.routes import bonds, export, market, ops
+from mdhub.api.routes import bonds, export, market, ops, snapshots
 from mdhub.config import Settings
 from mdhub.core.redact import SecretRedactingFilter, sanitize_text
 from mdhub.db.migrate import applied_migrations, discover_migrations
@@ -259,6 +259,7 @@ def create_app(settings: Settings | None = None, database: Database | None = Non
     v1.include_router(bonds.router)
     v1.include_router(market.router)
     v1.include_router(export.router)
+    v1.include_router(snapshots.router)
 
     @v1.get("/openapi.json", include_in_schema=False)
     def openapi() -> dict[str, Any]:

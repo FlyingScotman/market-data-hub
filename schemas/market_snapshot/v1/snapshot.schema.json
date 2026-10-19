@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.market-data-hub.invalid/market_snapshot/v1/snapshot.schema.json",
+  "title": "Market Snapshot Contract v1: any snapshot bundle",
+  "oneOf": [
+    {
+      "$ref": "static.schema.json"
+    },
+    {
+      "$ref": "market.schema.json"
+    }
+  ]
+}

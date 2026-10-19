@@ -183,6 +183,12 @@ services:
       MDHUB_ADMIN_SECRET_KEY: ${MDHUB_ADMIN_SECRET_KEY:-}
       MDHUB_LOG_LEVEL: ${MDHUB_LOG_LEVEL:-}
       MDHUB_TZ: ${MDHUB_TZ:-}
+      # snapshot cut times: the jobs page shows the schedule the worker runs
+      MDHUB_SNAPSHOT_STATIC_TIME: ${MDHUB_SNAPSHOT_STATIC_TIME:-}
+      MDHUB_SNAPSHOT_EOD_PRELIMINARY_TIME: ${MDHUB_SNAPSHOT_EOD_PRELIMINARY_TIME:-}
+      MDHUB_SNAPSHOT_EOD_FINAL_TIME: ${MDHUB_SNAPSHOT_EOD_FINAL_TIME:-}
+      MDHUB_SNAPSHOT_INTRADAY_MINUTES: ${MDHUB_SNAPSHOT_INTRADAY_MINUTES:-}
+      MDHUB_SNAPSHOT_INTRADAY_WINDOW: ${MDHUB_SNAPSHOT_INTRADAY_WINDOW:-}
     volumes:
       # Uploaded release bundles, read by the updater (ADMIN_DESIGN §6.2).
       - uploads:/var/lib/mdhub/uploads

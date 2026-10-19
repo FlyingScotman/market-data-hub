@@ -1,0 +1,1040 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.market-data-hub.invalid/market_snapshot/v1/static.schema.json",
+  "title": "Market Snapshot Contract v1: static snapshot bundle",
+  "description": "The canonical bundle document: envelope (manifest.schema.json) plus data. snapshot_id = sha256 of its canonical JSON.",
+  "$defs": {
+    "instrument": {
+      "description": "Instrument terms (ref.bond, ref.bond_board) as known at known_at",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "secid",
+        "isin",
+        "regnumber",
+        "issuer_id",
+        "name",
+        "short_name",
+        "sec_type",
+        "bond_type",
+        "bond_subtype",
+        "coupon_details",
+        "bond_class",
+        "coupon_type",
+        "coupon_type_basis",
+        "coupon_benchmark",
+        "coupon_benchmark_spread_pct",
+        "face_unit",
+        "currency_id",
+        "face_value",
+        "initial_face_value",
+        "issue_date",
+        "maturity_date",
+        "is_perpetual",
+        "is_amortizing",
+        "is_subordinated",
+        "is_structured",
+        "is_face_indexed",
+        "is_fx_face",
+        "qualified_only",
+        "high_risk",
+        "coupon_frequency",
+        "coupon_period_days",
+        "day_count",
+        "day_count_source",
+        "listing_level",
+        "issue_size",
+        "primary_board",
+        "status",
+        "calendar",
+        "boards",
+        "labels"
+      ],
+      "properties": {
+        "secid": {
+          "$ref": "common.schema.json#/$defs/secid"
+        },
+        "isin": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "regnumber": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "issuer_id": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "short_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sec_type": {
+          "description": "MOEX TYPE verbatim",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bond_type": {
+          "description": "MOEX BOND_TYPE label verbatim",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bond_subtype": {
+          "description": "MOEX BOND_SUBTYPE label verbatim",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "coupon_details": {
+          "description": "MOEX COUPON_DETAILS label verbatim",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "bond_class": {
+          "enum": [
+            "ofz_pd",
+            "ofz_pk",
+            "ofz_in",
+            "ofz_ad",
+            "ofz_n",
+            "sovereign_fx",
+            "sovereign_other",
+            "foreign_sovereign",
+            "cbr_bond",
+            "ifi",
+            "subfederal",
+            "municipal",
+            "structured",
+            "mbs",
+            "securitization",
+            "corporate",
+            "unknown"
+          ]
+        },
+        "coupon_type": {
+          "enum": [
+            "fixed",
+            "floating",
+            "indexed_face",
+            "zero",
+            "variable_known",
+            "unknown"
+          ]
+        },
+        "coupon_type_basis": {
+          "type": "string"
+        },
+        "coupon_benchmark": {
+          "description": "MOEX COUPON_BENCHMARK code verbatim",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "coupon_benchmark_spread_pct": {
+          "description": "MOEX COUPON_BENCHMARK_SPREAD (percentage points) verbatim",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "face_unit": {
+          "description": "Face (nominal) currency",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "currency_id": {
+          "description": "Settlement currency on the primary board",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "face_value": {
+          "description": "Current face per bond (after amortization / indexation), face_unit",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "initial_face_value": {
+          "description": "Initial face per bond, face_unit",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "issue_date": {
+          "$ref": "common.schema.json#/$defs/date_or_null"
+        },
+        "maturity_date": {
+          "description": "null for perpetuals",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date_or_null"
+            }
+          ]
+        },
+        "is_perpetual": {
+          "type": "boolean"
+        },
+        "is_amortizing": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "is_subordinated": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "is_structured": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "is_face_indexed": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "is_fx_face": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "qualified_only": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "high_risk": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "coupon_frequency": {
+          "description": "Coupons per year",
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "coupon_period_days": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "day_count": {
+          "description": "null = not published by any source",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "day_count_source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "listing_level": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "issue_size": {
+          "description": "Number of bonds",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "primary_board": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "active",
+            "matured",
+            "delisted"
+          ]
+        },
+        "calendar": {
+          "description": "Settlement calendar of the instrument (a code in data.calendars)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/calendar_code"
+            }
+          ]
+        },
+        "boards": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "board",
+              "is_primary",
+              "listed",
+              "listing_source",
+              "lot_size",
+              "min_step",
+              "decimals",
+              "currency_id",
+              "face_unit",
+              "settle_code",
+              "settle_lag_days",
+              "listed_from",
+              "listed_till"
+            ],
+            "properties": {
+              "board": {
+                "type": "string"
+              },
+              "is_primary": {
+                "type": "boolean"
+              },
+              "listed": {
+                "type": "boolean"
+              },
+              "listing_source": {
+                "enum": [
+                  "market",
+                  "description"
+                ]
+              },
+              "lot_size": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "min_step": {
+                "$ref": "common.schema.json#/$defs/decimal_or_null"
+              },
+              "decimals": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "currency_id": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "face_unit": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "settle_code": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "settle_lag_days": {
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
+              "listed_from": {
+                "$ref": "common.schema.json#/$defs/date_or_null"
+              },
+              "listed_till": {
+                "$ref": "common.schema.json#/$defs/date_or_null"
+              }
+            }
+          }
+        },
+        "labels": {
+          "description": "Coverage labels, e.g. coupon_type_unknown, perpetual, perpetual_no_call_date, day_count_not_published, floater_formula_missing, floater_formula_partial, coupon_schedule_empty, no_issuer, structured, matured",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/labels"
+            }
+          ]
+        }
+      }
+    },
+    "coupon_period": {
+      "description": "CouponPeriod (ref.bond_coupon, non-deleted)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "secid",
+        "coupon_no",
+        "start_date",
+        "pay_date",
+        "record_date",
+        "amount_per_bond",
+        "amount_rub_per_bond",
+        "rate_pct",
+        "face_value",
+        "face_unit",
+        "status"
+      ],
+      "properties": {
+        "secid": {
+          "$ref": "common.schema.json#/$defs/secid"
+        },
+        "coupon_no": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "start_date": {
+          "$ref": "common.schema.json#/$defs/date_or_null"
+        },
+        "pay_date": {
+          "$ref": "common.schema.json#/$defs/date"
+        },
+        "record_date": {
+          "$ref": "common.schema.json#/$defs/date_or_null"
+        },
+        "amount_per_bond": {
+          "description": "Coupon per bond in face_unit (MOEX value)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "amount_rub_per_bond": {
+          "description": "MOEX value_rub; null for future coupons of FX-face bonds",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "rate_pct": {
+          "description": "Coupon rate % p.a. (MOEX valueprc)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "face_value": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "face_unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "description": "known = a fact (fixed published amount or paid coupon); current_published = current floater period as MOEX shows it; projected_by_moex = MOEX projection; unknown = no value",
+          "enum": [
+            "known",
+            "current_published",
+            "projected_by_moex",
+            "unknown"
+          ]
+        }
+      }
+    },
+    "redemption": {
+      "description": "Redemption (ref.bond_amortization, non-deleted)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "secid",
+        "date",
+        "kind",
+        "value_pct_of_initial",
+        "value_per_bond",
+        "value_rub_per_bond",
+        "face_value",
+        "initial_face_value",
+        "face_unit"
+      ],
+      "properties": {
+        "secid": {
+          "$ref": "common.schema.json#/$defs/secid"
+        },
+        "date": {
+          "$ref": "common.schema.json#/$defs/date"
+        },
+        "kind": {
+          "enum": [
+            "amortization",
+            "maturity"
+          ]
+        },
+        "value_pct_of_initial": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "value_per_bond": {
+          "description": "face_unit",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "value_rub_per_bond": {
+          "description": "null for future rows of FX-face bonds",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "face_value": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "initial_face_value": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "face_unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "offer": {
+      "description": "Offer (ref.bond_offer, non-deleted, every source)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "secid",
+        "source",
+        "offer_key",
+        "offer_date",
+        "type",
+        "type_basis",
+        "type_raw",
+        "status",
+        "is_offer_or_redemption",
+        "window_start",
+        "window_end",
+        "price_pct",
+        "value_per_bond",
+        "face_value",
+        "face_unit",
+        "agent",
+        "labels"
+      ],
+      "properties": {
+        "secid": {
+          "$ref": "common.schema.json#/$defs/secid"
+        },
+        "source": {
+          "type": "string"
+        },
+        "offer_key": {
+          "type": "string"
+        },
+        "offer_date": {
+          "description": "null when the source date is missing (label date_missing)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date_or_null"
+            }
+          ]
+        },
+        "type": {
+          "enum": [
+            "put",
+            "call",
+            "buyback",
+            "unknown"
+          ]
+        },
+        "type_basis": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type_raw": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "scheduled",
+            "completed",
+            "cancelled",
+            "default",
+            "technical_default",
+            "past",
+            "undated"
+          ]
+        },
+        "is_offer_or_redemption": {
+          "type": "boolean"
+        },
+        "window_start": {
+          "$ref": "common.schema.json#/$defs/date_or_null"
+        },
+        "window_end": {
+          "$ref": "common.schema.json#/$defs/date_or_null"
+        },
+        "price_pct": {
+          "description": "% of face",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "value_per_bond": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "face_value": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "face_unit": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "agent": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "labels": {
+          "$ref": "common.schema.json#/$defs/labels"
+        }
+      }
+    },
+    "floater_formula": {
+      "description": "FloaterFormula (ref.bond_rate_formula_resolved as known at known_at)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "secid",
+        "benchmark",
+        "benchmark_raw",
+        "benchmark_source",
+        "spread_bp",
+        "multiplier",
+        "lag_days",
+        "averaging",
+        "floor_pct",
+        "cap_pct",
+        "variable_rate_type",
+        "fixing_day",
+        "status",
+        "sources"
+      ],
+      "properties": {
+        "secid": {
+          "$ref": "common.schema.json#/$defs/secid"
+        },
+        "benchmark": {
+          "description": "Hub benchmark code (KEY_RATE, RUONIA, RUONIA_3M, ZCYC, CPI, OTHER, ...), verbatim",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "benchmark_raw": {
+          "description": "Benchmark as the selected source states it, verbatim",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "benchmark_source": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "spread_bp": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "multiplier": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "lag_days": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "averaging": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "floor_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "cap_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "variable_rate_type": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "fixing_day": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "status": {
+          "enum": [
+            "curated",
+            "inferred",
+            "partial"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "issuer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "issuer_id",
+        "inn",
+        "ogrn",
+        "name",
+        "short_name",
+        "sector",
+        "country",
+        "is_sovereign"
+      ],
+      "properties": {
+        "issuer_id": {
+          "type": "integer"
+        },
+        "inn": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ogrn": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "short_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sector": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "country": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "is_sovereign": {
+          "type": "boolean"
+        }
+      }
+    },
+    "calendar": {
+      "description": "Business-day calendar from ref.calendar_effective as known at known_at (not ref.weekend_session)",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "calendar",
+        "valid_from",
+        "valid_to",
+        "provisional_from",
+        "holidays",
+        "working_weekends",
+        "sources",
+        "version",
+        "fingerprint"
+      ],
+      "properties": {
+        "calendar": {
+          "$ref": "common.schema.json#/$defs/calendar_code"
+        },
+        "valid_from": {
+          "description": "First day of the covered range",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date"
+            }
+          ]
+        },
+        "valid_to": {
+          "description": "Last day of the covered range; outside [valid_from, valid_to] the calendar is unknown",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date"
+            }
+          ]
+        },
+        "provisional_from": {
+          "description": "First day whose flag comes from an unverified source (curated_unverified); null if none",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date_or_null"
+            }
+          ]
+        },
+        "holidays": {
+          "description": "Weekdays that are not business days",
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/date"
+          },
+          "uniqueItems": true
+        },
+        "working_weekends": {
+          "description": "Saturdays/Sundays that are business days (transferred working days; never MOEX weekend sessions)",
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/date"
+          },
+          "uniqueItems": true
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "version": {
+          "description": "Latest change time of this calendar's rows as known at known_at",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/utc_instant"
+            }
+          ]
+        },
+        "fingerprint": {
+          "description": "sha256 of the canonical {calendar, valid_from, valid_to, provisional_from, holidays, working_weekends}",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/sha256"
+            }
+          ]
+        }
+      }
+    },
+    "id_map": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "secid",
+        "isin",
+        "regnumber",
+        "isin_shared_with"
+      ],
+      "properties": {
+        "secid": {
+          "$ref": "common.schema.json#/$defs/secid"
+        },
+        "isin": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "regnumber": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "isin_shared_with": {
+          "description": "Other SECIDs (any status) with the same ISIN: an ISIN join is ambiguous when non-empty",
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/secid"
+          }
+        }
+      }
+    }
+  },
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "kind",
+    "cut_type",
+    "business_date",
+    "cut_ts",
+    "known_at",
+    "static_snapshot_id",
+    "supersedes",
+    "producer",
+    "parameters",
+    "calendar",
+    "sources",
+    "datasets",
+    "excluded",
+    "data"
+  ],
+  "allOf": [
+    {
+      "$ref": "manifest.schema.json#/$defs/envelope_properties"
+    }
+  ],
+  "properties": {
+    "schema_version": true,
+    "kind": {
+      "const": "static"
+    },
+    "cut_type": {
+      "enum": [
+        "daily",
+        "change"
+      ]
+    },
+    "business_date": true,
+    "cut_ts": true,
+    "known_at": true,
+    "static_snapshot_id": {
+      "type": "null"
+    },
+    "supersedes": true,
+    "producer": true,
+    "parameters": true,
+    "calendar": true,
+    "sources": true,
+    "datasets": true,
+    "excluded": true,
+    "data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "instruments",
+        "coupon_periods",
+        "redemptions",
+        "offers",
+        "floater_formulas",
+        "issuers",
+        "calendars",
+        "id_map"
+      ],
+      "properties": {
+        "instruments": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/instrument"
+          }
+        },
+        "coupon_periods": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/coupon_period"
+          }
+        },
+        "redemptions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/redemption"
+          }
+        },
+        "offers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/offer"
+          }
+        },
+        "floater_formulas": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/floater_formula"
+          }
+        },
+        "issuers": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/issuer"
+          }
+        },
+        "calendars": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/calendar"
+          }
+        },
+        "id_map": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/id_map"
+          }
+        }
+      }
+    }
+  }
+}

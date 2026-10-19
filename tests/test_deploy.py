@@ -180,6 +180,12 @@ def test_admin_service_gets_no_source_credentials() -> None:
         "MDHUB_ADMIN_SECRET_KEY",
         "MDHUB_LOG_LEVEL",
         "MDHUB_TZ",
+        # snapshot cut times: the jobs page shows the schedule the worker runs
+        "MDHUB_SNAPSHOT_STATIC_TIME",
+        "MDHUB_SNAPSHOT_EOD_PRELIMINARY_TIME",
+        "MDHUB_SNAPSHOT_EOD_FINAL_TIME",
+        "MDHUB_SNAPSHOT_INTRADAY_MINUTES",
+        "MDHUB_SNAPSHOT_INTRADAY_WINDOW",
     }
 
 

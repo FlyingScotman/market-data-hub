@@ -55,10 +55,12 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 
 # 2) the project itself (non-editable, so /app/src is not needed at runtime). Its version comes
 #    from the git tags (hatch-vcs): .git_archival.txt when building from a `git archive` bundle,
-#    else the MDHUB_VERSION build arg, else 0.0.0.
+#    else the MDHUB_VERSION build arg, else 0.0.0. The wheel carries the snapshot contract schemas as
+#    mdhub/schemas.
 ARG MDHUB_VERSION=
 COPY README.md .git_archival.txt ./
 COPY src ./src
+COPY schemas ./schemas
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ -n "${MDHUB_VERSION}" ]; then export SETUPTOOLS_SCM_PRETEND_VERSION="${MDHUB_VERSION}"; fi; \
     uv sync --frozen --no-dev --no-editable

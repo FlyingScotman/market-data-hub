@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.market-data-hub.invalid/market_snapshot/v1/common.schema.json",
+  "title": "Market Snapshot Contract v1: shared definitions",
+  "$defs": {
+    "decimal": {
+      "description": "Exact stored numeric digits as a string (never float-rounded, no exponent): '14.500', '-0.25', '100'",
+      "type": "string",
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+    },
+    "decimal_or_null": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/decimal"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "date": {
+      "description": "ISO business date (Moscow business date unless stated otherwise)",
+      "type": "string",
+      "format": "date",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "date_or_null": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/date"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "utc_instant": {
+      "description": "UTC instant with a Z suffix; fractional seconds only when non-zero",
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    },
+    "utc_instant_or_null": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/utc_instant"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "sha256_or_null": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/sha256"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "secid": {
+      "description": "MOEX SECID (case-sensitive, primary instrument id)",
+      "type": "string",
+      "minLength": 1
+    },
+    "ccy": {
+      "type": "string",
+      "pattern": "^[A-Z]{3}$"
+    },
+    "label": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "labels": {
+      "description": "Quality / coverage labels, sorted, unique",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/label"
+      },
+      "uniqueItems": true
+    },
+    "calendar_code": {
+      "enum": [
+        "MOEX_STOCK",
+        "MOEX_FX",
+        "MOEX_FORTS",
+        "RU_PRODUCTION",
+        "TARGET"
+      ]
+    },
+    "key_value": {
+      "type": [
+        "string",
+        "integer",
+        "boolean",
+        "null"
+      ]
+    }
+  }
+}
