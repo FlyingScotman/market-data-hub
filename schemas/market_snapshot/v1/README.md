@@ -28,6 +28,9 @@ an older version fails its conformance tests instead of silently ignoring it.
   `sha256(gunzip(body)) == snapshot_id`; replicas can serve the bytes unchanged.
 * Snapshots are immutable. A correction is a new snapshot of the same cut
   (`kind`, `cut_type`, `business_date`, `cut_ts`) whose `supersedes` names the earlier one.
+  For `daily`, `eod_preliminary` and `eod_final`, `cut_ts` depends only on the business date
+  (the configured cut time; `eod_final`: on the next business day), so at most one snapshot
+  per such cut and business date is not superseded; `intraday` and `change` can have several.
 
 ## Envelope
 

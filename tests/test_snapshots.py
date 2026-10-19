@@ -383,6 +383,66 @@ def test_market_snapshot_job_and_static_job(
     assert row["cut_ts"] == datetime(2026, 10, 16, 8, 0, tzinfo=MSK)
 
 
+def test_eod_final_rebuild_on_a_later_day_corrects_the_same_cut(
+    seeded: Conn, settings: Settings, db: Database, today_is: Any
+) -> None:
+    """cut_ts depends on the business date, not the run day: a later rebuild of eod_final
+    for D supersedes the scheduled one (or publishes nothing when the content is the same)."""
+    today_is(date(2026, 10, 16))
+    first = run_job(
+        "snapshot_market", {"mode": "eod_final", "cut": "08:00"}, settings=settings, db=db
+    ).result["market"]
+    assert first["status"] == "published" and first["business_date"] == "2026-10-15"
+
+    today_is(date(2026, 10, 20))  # a manual run four days later, with and without cut=
+    for params in ({}, {"cut": "08:00"}):
+        same = run_job(
+            "snapshot_market",
+            {"mode": "eod_final", "day": "2026-10-15", **params},
+            settings=settings,
+            db=db,
+        ).result["market"]
+        assert same["status"] == "unchanged" and same["id"] == first["id"]
+
+    seeded.execute("UPDATE md.bond_eod SET close = close + 1 WHERE trade_date = %s", (DAY,))
+    seeded.commit()
+    fixed = run_job(
+        "snapshot_market", {"mode": "eod_final", "day": "2026-10-15"}, settings=settings, db=db
+    ).result["market"]
+    assert fixed["status"] == "published" and fixed["supersedes"] == first["id"]
+    live = seeded.execute(
+        """
+        SELECT p.id, p.cut_ts FROM ops.published_snapshot p
+        WHERE p.kind = 'market' AND p.cut_type = 'eod_final' AND p.business_date = %s
+          AND NOT EXISTS (SELECT 1 FROM ops.published_snapshot n WHERE n.supersedes = p.id)
+        """,
+        (DAY,),
+    ).fetchall()
+    assert [r["id"] for r in live] == [fixed["id"]]
+    assert live[0]["cut_ts"] == datetime(2026, 10, 16, 8, 0, tzinfo=MSK)  # next business day
+
+
+def test_static_daily_and_eod_preliminary_cut_on_the_business_date(
+    seeded: Conn, settings: Settings, db: Database, today_is: Any
+) -> None:
+    today_is(date(2026, 10, 20))
+    run_job("snapshot_static", {"day": "2026-10-15"}, settings=settings, db=db)
+    run_job(
+        "snapshot_market",
+        {"mode": "eod_preliminary", "day": "2026-10-15"},
+        settings=settings,
+        db=db,
+    )
+    rows = seeded.execute(
+        "SELECT cut_type, cut_ts FROM ops.published_snapshot WHERE business_date = %s",
+        (DAY,),
+    ).fetchall()
+    assert {r["cut_type"]: r["cut_ts"] for r in rows} == {
+        "daily": _cut_ts(DAY, 7, 45),
+        "eod_preliminary": _cut_ts(DAY, 19, 45),
+    }
+
+
 # ------------------------------------------------------------------------ retention
 
 

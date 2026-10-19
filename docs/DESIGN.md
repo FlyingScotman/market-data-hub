@@ -432,8 +432,10 @@ forward fill.
 
 Rules are built from the settings by `mdhub.schedule.snapshot_rules`
 (`effective_rules(settings)` is what the scheduler and job health use). `cut_ts` = the nominal
-cut (rule parameter `cut`; intraday: the fire minute); `known_at` = the run's start (replay:
-`-p known_at=...`). Manual: `mdhub run snapshot_market -p mode=eod_final -p day=2026-10-15`.
+cut: `cut` (default: the configured time of `daily` / `eod_preliminary` / `eod_final`) MSK on
+the business date (`eod_final`: on the next business day), whatever the run day, so a later
+rebuild of D corrects the same cut; `intraday` / `change` without `cut`: the fire minute.
+`known_at` = the run's start (replay: `-p known_at=...`). Manual: `mdhub run snapshot_market -p mode=eod_final -p day=2026-10-15`.
 
 **Retention.** Static and EOD snapshots are kept forever (daily static ≈ 2.2 MB gzip). Intraday
 market snapshots are deleted after `MDHUB_SNAPSHOT_RETENTION_DAYS_INTRADAY` (30) days by
