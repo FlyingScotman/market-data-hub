@@ -23,7 +23,8 @@ the §6.3 state machine. Every state change and step writes ``ops.update_log`` a
     ``docker compose run migrate`` with the new tag. A rollback across migrations first restores
     the dump taken before the running version was installed.
 ``starting``
-    ``MDHUB_IMAGE_TAG`` in ``.env`` and the ``current`` symlink, then ``up -d`` worker, api, admin.
+    ``MDHUB_IMAGE_TAG`` in ``.env`` and the ``current`` symlink, then ``up -d`` worker, api, admin,
+    hostmon.
 ``checking``
     within 3 minutes: ``/health/ready`` reports the new version, a worker heartbeat reports it
     and a smoke request with a short-lived read token succeeds.
@@ -146,7 +147,7 @@ STEPS: Final = (
     "checking",
 )
 FINAL_STATES: Final = ("done", "failed", "rolled_back", "cancelled")
-SERVICES: Final = ("worker", "api", "admin")
+SERVICES: Final = ("worker", "api", "admin", "hostmon")
 KEPT_TABLES: Final = ("ops.update_request", "ops.update_log", "ops.release", "admin.audit_log")
 """Saved before a restore and loaded again after it: the update's own trail survives."""
 
@@ -1067,7 +1068,7 @@ class Updater:
             if set(applied) - set(self._release_migrations(version)):
                 self.host.compose(
                     self.layout.compose_file(self.layout.current),
-                    ["stop", "api", "admin"],
+                    ["stop", "api", "admin", "hostmon"],
                     tag=str(request["from_tag"]),
                     timeout=COMPOSE_TIMEOUT_S,
                 )

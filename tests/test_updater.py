@@ -276,8 +276,8 @@ def applied(conn: Conn) -> set[str]:
     return {r["version"] for r in conn.execute("SELECT version FROM ops.schema_migration")}
 
 
-UP_NEW = "up -d --no-deps worker api admin @1.1.0"
-UP_OLD = "up -d --no-deps worker api admin @1.0.0"
+UP_NEW = "up -d --no-deps worker api admin hostmon @1.1.0"
+UP_OLD = "up -d --no-deps worker api admin hostmon @1.0.0"
 
 
 # ------------------------------------------------------------------------------ success
@@ -429,7 +429,7 @@ def test_rollback_restores_dump_when_migrations_ran(
     host.unhealthy.add("1.1.0")
     assert make(db_url, host, layout, tmp_path, keys_dir).process(rid) == "rolled_back"
     r = req(conn, rid)
-    i = host.calls.index("stop worker api admin @1.0.0")
+    i = host.calls.index("stop worker api admin hostmon @1.0.0")
     assert host.calls[i + 1] == f"restore {Path(r['backup_path']).name}"
     assert host.calls[-1] == UP_OLD
     assert EXTRA not in applied(conn)
@@ -487,7 +487,7 @@ def test_admin_rollback_to_previous_restores_pre_update_dump(
     assert r["restore_path"] == str(install_dump) and r["from_version"] == "1.1.0"
     assert f"restore {install_dump.name}" in host.calls
     assert "build @1.0.0" in host.calls and "run --rm --no-deps migrate @1.0.0" in host.calls
-    assert host.calls.index("stop api admin @1.1.0") < host.calls.index(
+    assert host.calls.index("stop api admin hostmon @1.1.0") < host.calls.index(
         f"restore {install_dump.name}"
     )
     assert EXTRA not in applied(conn)

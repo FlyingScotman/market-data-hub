@@ -499,7 +499,7 @@ runs, logging each step on the page (refreshed every 2 s) and in `admin.audit_lo
    Skipped scheduled fires are recorded as `lock_busy` and caught up by `quality`;
 5. **migrating**: `docker compose run --rm migrate` with the new image;
 6. **starting**: `MDHUB_IMAGE_TAG=X.Y.Z` in `shared/.env`, `current` -> `releases/X.Y.Z`,
-   `docker compose up -d --no-deps worker api admin`;
+   `docker compose up -d --no-deps worker api admin hostmon`;
 7. **checking** (3 minutes at most): `/health/ready` reports X.Y.Z, a worker heartbeat reports
    X.Y.Z and `/v1/coverage` answers a short-lived read token;
 8. **done**: the updater starts its successor (a one-off container recreates the `updater`
@@ -549,7 +549,7 @@ the production server, and never with the production signing key.
    data (`mdhub run cbr`, `mdhub run quality`), create an admin (§12), allow-list your IP.
 3. **Install with a migration**: upload B; the confirmation shows `0690_rehearsal`; install.
    Expect `done`; `ops.release`: 9.1.0 active, 9.0.0 previous; `docker compose ps` shows
-   `mdhub:9.1.0` for worker, api, admin and (after a few seconds) updater; the Overview shows
+   `mdhub:9.1.0` for worker, api, admin, hostmon and (after a few seconds) updater; the Overview shows
    no version mismatch.
 4. **Drain**: before step 3, start a long job from the Jobs page ("Run now"); the update log
    must show "waiting for running jobs" and continue only after it finished.

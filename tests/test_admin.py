@@ -511,6 +511,37 @@ def test_roles_viewer_operator_admin(
     assert op.post("/jobs/no_such_job/run").status_code == 404
 
 
+def test_run_now_snapshot_market_params(
+    console: Console, conn: Conn, fake_job: list[dict[str, Any]]
+) -> None:
+    """Run now passes an allow-listed cut mode and business date to snapshot_market only."""
+    _enrolled(console, conn, "otto", "operator")
+    assert 'name="mode"' in console.get("/jobs").text
+    bad = (
+        ("snapshot_market", {"mode": "intraday"}),
+        ("snapshot_market", {"day": "2026-01-05"}),
+        ("snapshot_market", {"mode": "eod_final", "day": "05.01.2026"}),
+        ("snapshot_market", {"mode": "eod_final", "day": "2999-01-01"}),
+        ("admin_test_job", {"mode": "eod_final"}),
+    )
+    for job, data in bad:
+        assert console.post(f"/jobs/{job}/run", data).status_code == 400, data
+    conn.rollback()
+    assert conn.execute("SELECT count(*) AS n FROM ops.job_request").fetchone() == {"n": 0}
+    r = console.post("/jobs/snapshot_market/run", {"mode": "eod_final", "day": "2026-01-05"})
+    assert r.status_code == 200 and "day=2026-01-05" in r.text
+    conn.rollback()
+    req = conn.execute("SELECT id, job, params FROM ops.job_request").fetchone()
+    assert req is not None and req["job"] == "snapshot_market"
+    assert req["params"] == {"mode": "eod_final", "day": "2026-01-05"}
+    assert _audit(conn, "job.request")[-1]["details"]["params"] == req["params"]
+    console.post(f"/jobs/requests/{req['id']}/cancel")
+    assert console.post("/jobs/snapshot_market/run", {"mode": "eod_preliminary"}).status_code == 200
+    conn.rollback()
+    row = conn.execute("SELECT params FROM ops.job_request WHERE state = 'queued'").fetchone()
+    assert row == {"params": {"mode": "eod_preliminary"}}
+
+
 def test_operator_retries_task_and_marks_gap(console: Console, conn: Conn) -> None:
     _enrolled(console, conn, "otto", "operator")
     task = conn.execute(

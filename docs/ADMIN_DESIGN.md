@@ -199,7 +199,7 @@ tokens are random values, not signed blobs. Rotating the key re-encrypts the sec
 4. **drain.** Tell the worker to finish its running jobs and start no new ones: set the flag `ops.worker_control.drain`.
    Wait at most 10 minutes. After that, stop the worker anyway; the job locks and catch-up recover it.
 5. **migrate.** Run `docker compose run migrate` with the new tag.
-6. **start.** Switch `MDHUB_IMAGE_TAG` and the `current` symlink, then run `docker compose up -d worker api admin`. The updater
+6. **start.** Switch `MDHUB_IMAGE_TAG` and the `current` symlink, then run `docker compose up -d worker api admin hostmon`. The updater
    updates itself last: it starts its successor and exits.
 7. **check.** Within 3 minutes: `/health/ready` is 200, the worker heartbeat reports the new version, and a smoke
    request with an internal token succeeds.
