@@ -1,5 +1,8 @@
 # One-time manual upgrade 0.1.0 -> 0.1.3 (production VPS)
 
+Completed 19 October 2026: see [verified production result](UPGRADE_0.1.3_RESULT.md).
+The procedure below is retained as a reference; do not repeat seed/bootstrap steps on the upgraded VPS.
+
 Production was installed on 2026-10-18 from the 0.1.0 bundle (FIRST_DEPLOY.md), before the repository
 moved to `FlyingScotman/market-data-hub`. The Updates page cannot install 0.1.3 itself, because the
 0.1.0 updater:
