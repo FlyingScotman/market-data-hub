@@ -1,5 +1,9 @@
 # STATUS — 2026-10-17 (orchestrator checkpoint)
 
+> Historical checkpoints below. For the current deployment state and actionable open work,
+> use [ROADMAP.md](../ROADMAP.md), updated 19 October 2026. Earlier "Remaining steps" and
+> source-access assumptions below may have been superseded; recheck before acting.
+
 ## Decisions (owner)
 - GitHub: FlyingScotman/market-data-hub (public). Release defaults point to this repository;
   GitHub release artifacts contain code only. Production HTTPS is marketdatahub.cc behind host nginx.
