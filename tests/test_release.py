@@ -561,7 +561,8 @@ def test_minisign_interop(tmp_path: Path, key: SigningKey) -> None:
 
     # We parse minisign's public key with the id it prints; minisign verifies our format.
     pub = parse_public_key((tmp_path / "k.pub").read_bytes())
-    assert pub.key_id_hex in (tmp_path / "k.pub").read_text()
+    # minisign prints the id with %X, dropping leading zeros (1 key in 16)
+    assert pub.key_id_hex.lstrip("0") in (tmp_path / "k.pub").read_text()
     data = b"payload\n"
     (tmp_path / "ours.pub").write_bytes(key.public_file())
     (tmp_path / "payload").write_bytes(data)
