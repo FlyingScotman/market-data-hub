@@ -20,13 +20,13 @@
 
 <section class="card">
   <h2>Requested runs</h2>
-  <p class="small">"Run now" queues a request; the worker runs it within a few seconds with default parameters.</p>
+  <p class="small">"Run now" queues a request; the worker runs it within a few seconds with default parameters (snapshot_market: the chosen cut and business date).</p>
   <table>
     <thead><tr><th>Request</th><th>Job</th><th>State</th><th>By</th><th>Requested</th><th>Picked</th><th>Finished</th><th>Run</th><th>Error</th>{% if can_run %}<th></th>{% endif %}</tr></thead>
     <tbody>
     {% for q in requests %}
     <tr>
-      <td>{{ q.id }}</td><td>{{ q.job }}</td>
+      <td>{{ q.id }}</td><td>{{ q.job }}{% for k, v in (q.params or {}).items() %} <span class="small">{{ k }}={{ v }}</span>{% endfor %}</td>
       <td><span class="pill {{ 'bad' if q.state == 'failed' else ('warn' if q.state in ('queued', 'running') else 'ok') }}">{{ q.state }}</span></td>
       <td>{{ q.requested_login or '-' }}</td><td>{{ q.requested_at|dt }}</td><td>{{ q.picked_at|dt }}</td><td>{{ q.finished_at|dt }}</td>
       <td>{% if q.job_run_id %}<a href="/jobs?job={{ q.job }}#run-{{ q.job_run_id }}">{{ q.job_run_id }}</a> {{ q.run_status or '' }}{% else %}-{% endif %}</td>
@@ -58,7 +58,13 @@
       <td>{{ j.h.consecutive_failures }}</td>
       <td>{{ j.next|dt if j.next else '-' }}</td>
       <td class="small">{{ j.crons }}</td>
-      {% if can_run %}<td>{% if j.h.job in registered %}
+      {% if can_run %}<td>{% if j.h.job == 'snapshot_market' and j.h.job in registered %}
+        <form method="post" action="/jobs/{{ j.h.job }}/run" class="row tight" data-confirm="Ask the worker to publish this snapshot_market cut now?">
+          <input type="hidden" name="csrf_token" value="{{ csrf }}">
+          <select name="mode" aria-label="Cut">{% for m in snapshot_modes %}<option>{{ m }}</option>{% endfor %}</select>
+          <input type="date" name="day" max="{{ now.date().isoformat() }}" aria-label="Business date (default: per cut)" title="Business date; empty: today (eod_preliminary) or the previous business day (eod_final)">
+          <button type="submit" class="link">Run now</button>
+        </form>{% elif j.h.job in registered %}
         <form method="post" action="/jobs/{{ j.h.job }}/run" data-confirm="Ask the worker to run {{ j.h.job }} now with default parameters?">
           <input type="hidden" name="csrf_token" value="{{ csrf }}">
           <button type="submit" class="link">Run now</button>

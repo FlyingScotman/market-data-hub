@@ -25,6 +25,7 @@ import psycopg
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
 from fastapi.responses import RedirectResponse, Response
+from psycopg.types.json import Jsonb
 
 from mdhub import __version__
 from mdhub.admin import store
@@ -55,6 +56,9 @@ viewer = require("viewer")
 operator = require("operator")
 admin = require("admin")
 admin_step_up = require("admin", step_up=True)
+
+SNAPSHOT_RUN_MODES: Final = ("eod_preliminary", "eod_final")
+"""Cut modes "Run now" may pass to ``snapshot_market`` (intraday cuts stay scheduled)."""
 
 MESSAGES: Final = {
     "job_requested": "The run is queued; the worker starts it within a few seconds.",
@@ -311,7 +315,7 @@ def jobs_page(
         ).fetchall()
         requests = conn.execute(
             """
-            SELECT q.id, q.job, q.state, q.requested_login, q.requested_at, q.picked_at,
+            SELECT q.id, q.job, q.params, q.state, q.requested_login, q.requested_at, q.picked_at,
                    q.finished_at, q.attempts, q.job_run_id, q.error, r.status AS run_status
             FROM ops.job_request q LEFT JOIN ops.job_run r ON r.id = q.job_run_id
             ORDER BY q.requested_at DESC, q.id DESC LIMIT 50
@@ -351,29 +355,58 @@ def jobs_page(
         filter_status=status or "",
         flash=_flash(done),
         registered=set(REGISTRY.names()),
+        snapshot_modes=SNAPSHOT_RUN_MODES,
         statuses=("running", "succeeded", "partial", "failed", "skipped"),
     )
 
 
+def _run_params(ctx: Ctx, name: str, mode: str, day: str) -> dict[str, str]:
+    """Run-now parameters: only ``snapshot_market`` takes any, a cut mode from
+    :data:`SNAPSHOT_RUN_MODES` and an optional business date (not in the future)."""
+    if not (mode or day):
+        return {}
+    if name != "snapshot_market" or mode not in SNAPSHOT_RUN_MODES:
+        raise Denied(400, "These parameters are not accepted for this job.")
+    params = {"mode": mode}
+    if day:
+        try:
+            business_date = date.fromisoformat(day)
+        except ValueError:
+            raise Denied(400, "The business date must be YYYY-MM-DD.") from None
+        if business_date > datetime.now(ctx.settings.zone).date():
+            raise Denied(400, "The business date is in the future.")
+        params["day"] = business_date.isoformat()
+    return params
+
+
 @router.post("/jobs/{name}/run")
-def job_run_now(ctx: Annotated[Ctx, Depends(operator)], name: str) -> Response:
+def job_run_now(
+    ctx: Annotated[Ctx, Depends(operator)],
+    name: str,
+    mode: Annotated[str, Form(max_length=32)] = "",
+    day: Annotated[str, Form(max_length=10)] = "",
+) -> Response:
     """Queue a run for the worker (``ops.job_request``); the console runs no job itself."""
     if name not in REGISTRY:
         raise Denied(404, "Unknown job.")
+    params = _run_params(ctx, name, mode, day)
     with ctx.db.connection() as conn:
         try:
             with conn.transaction():
                 row = conn.execute(
                     """
-                    INSERT INTO ops.job_request (job, requested_by, requested_login)
-                    VALUES (%s, %s, %s) RETURNING id
+                    INSERT INTO ops.job_request (job, params, requested_by, requested_login)
+                    VALUES (%s, %s, %s, %s) RETURNING id
                     """,
-                    (name, ctx.user.id, ctx.user.login),
+                    (name, Jsonb(params), ctx.user.id, ctx.user.login),
                 ).fetchone()
         except psycopg.errors.UniqueViolation:
             raise Denied(409, "A run of this job is already queued or running.") from None
         assert row is not None
-        ctx.audit(conn, "job.request", target=f"job:{name}", details={"request_id": row["id"]})
+        details: dict[str, Any] = {"request_id": row["id"]}
+        if params:
+            details["params"] = params
+        ctx.audit(conn, "job.request", target=f"job:{name}", details=details)
     return _done("/jobs", "job_requested")
 
 

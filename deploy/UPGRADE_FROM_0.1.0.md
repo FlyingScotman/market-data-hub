@@ -244,8 +244,8 @@ grep '^MDHUB_IMAGE_TAG=' /opt/mdhub/shared/.env                     # MDHUB_IMAG
 ln -sfn releases/0.1.3 /opt/mdhub/current && readlink /opt/mdhub/current
 ```
 
-Start the new version with the override. The updater runs `up -d --no-deps worker api admin` and then
-replaces itself. Here hostmon is included too, because the updater never restarts it. `--no-deps`
+Start the new version with the override. A panel update runs `up -d --no-deps worker api admin` (the
+updaters after 0.1.3 add hostmon) and then replaces itself; here all of them start by hand. `--no-deps`
 leaves the `postgres` container (and `mdhub_pgdata`) alone:
 
 ```bash
@@ -361,8 +361,9 @@ If `/opt/mdhub/shared/updater.env` holds an old FiveLimaGolf token, remove it. A
 the listing fail. If you remove it, delete the `deploy/updater.env` link and run `dc up -d --no-deps updater`.
 `MDHUB_HTTP_PROXY`, when set, also carries the GitHub traffic.
 
-After a panel update, run `dc up -d --no-deps hostmon`. The updater restarts only worker, api, admin
-and itself (`SERVICES`).
+The 0.1.3 updater restarts only worker, api, admin and itself (`SERVICES`), so after a panel update
+driven by it (0.1.3 to the next release) run `dc up -d --no-deps hostmon`. Updaters after 0.1.3 restart
+hostmon too.
 
 ## 8. Rollback
 
