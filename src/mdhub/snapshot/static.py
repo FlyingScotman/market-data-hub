@@ -29,6 +29,7 @@ calendar version and fingerprint for the whole set.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Mapping
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from statistics import median
@@ -46,6 +47,8 @@ __all__ = [
     "build_static",
     "calendar_objects",
     "coupon_frequency_from_schedule",
+    "face_steps",
+    "face_value_date",
 ]
 
 MATURED_LOOKBACK_DAYS: Final = 31
@@ -115,12 +118,56 @@ def coupon_frequency_from_schedule(coupons: list[dict[str, Any]]) -> int | None:
     return max(1, round(Decimal("365.25") / Decimal(median(days))))
 
 
+FACE_TOLERANCE: Final = Decimal("0.005")
+"""Per-bond amounts are rounded to kopecks / cents by MOEX: steps closer than this match."""
+
+
+def face_steps(
+    b: Mapping[str, Any], redemptions: list[dict[str, Any]]
+) -> list[tuple[date | None, Decimal]] | None:
+    """Outstanding face after each redemption date of the schedule, starting with
+    ``(issue_date, initial_face_value)``; ``None`` if the initial face or a redemption value
+    is missing (the steps cannot be established)."""
+    initial = b["initial_face_value"]
+    if initial is None:
+        return None
+    by_date: dict[date, Decimal] = defaultdict(Decimal)
+    for r in redemptions:
+        if r["value_per_bond"] is None:
+            return None
+        by_date[r["date"]] += r["value_per_bond"]
+    steps: list[tuple[date | None, Decimal]] = [(b["issue_date"], initial)]
+    left = initial
+    for d in sorted(by_date):
+        left -= by_date[d]
+        steps.append((d, left))
+    return steps
+
+
+def face_value_date(
+    b: Mapping[str, Any], redemptions: list[dict[str, Any]], business_date: date
+) -> date | None:
+    """HS11: date from which the published ``face_value`` is outstanding (see the contract
+    README): the latest schedule step on or before ``business_date`` whose outstanding face
+    equals ``face_value``, else the earliest later one; ``None`` without a match."""
+    face = b["face_value"]
+    steps = face_steps(b, redemptions)
+    if face is None or steps is None:
+        return None
+    hits = [d for d, left in steps if abs(left - face) <= FACE_TOLERANCE]
+    if not hits:
+        return None
+    past = [d for d in hits if d is None or d <= business_date]
+    return past[-1] if past else hits[0]
+
+
 def _instrument(
     b: dict[str, Any],
     boards: list[dict[str, Any]],
     labels: list[str],
     *,
     schedule_frequency: int | None = None,
+    face_date: date | None = None,
 ) -> dict[str, Any]:
     return {
         "secid": b["secid"],
@@ -143,6 +190,7 @@ def _instrument(
         "currency_id": b["currency_id"],
         "face_value": b["face_value"],
         "initial_face_value": b["initial_face_value"],
+        "face_value_date": face_date,
         "issue_date": b["issue_date"],
         "maturity_date": b["maturity_date"],
         "is_perpetual": bool(b["is_perpetual"]),
@@ -335,6 +383,9 @@ def build_static(
     scheduled_calls = {
         o["secid"] for o in offers if o["offer_type"] == "call" and o["status"] == "scheduled"
     }
+    redemptions_of: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for a in amort:
+        redemptions_of[a["secid"]].append({"date": a["amort_date"], "value_per_bond": a["value"]})
     instruments = []
     label_counts: Counter[str] = Counter()
     for b in bonds:
@@ -375,6 +426,7 @@ def build_static(
                 boards_of[b["secid"]],
                 labels,
                 schedule_frequency=coupon_frequency_from_schedule(coupons_of[b["secid"]]),
+                face_date=face_value_date(b, redemptions_of[b["secid"]], cut.business_date),
             )
         )
     prov.add_rows("instruments", bonds)

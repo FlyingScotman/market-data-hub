@@ -92,6 +92,21 @@ the static universe), `fx_swap`, `not_an_outright`, `non_rub_pair`, `precious_me
 | `calendars` | Calendar | from `ref.calendar_effective` only (MOEX weekend sessions are **not** business days): `valid_from`..`valid_to` (outside: unknown), `holidays`, `working_weekends`, `provisional_from` (first day decided by an unverified curated row), `version`, `fingerprint` |
 | `id_map` | IdMap | `isin_shared_with`: other SECIDs with the same ISIN (an ISIN join is ambiguous when non-empty) |
 
+### Face value on payment days (1.1, HS11)
+
+`Instrument.face_value` is the face MOEX published when the static was built. MOEX deducts a
+redemption from FACEVALUE during the redemption day, so on a payment day the value depends on
+the build time. `face_value_date` makes it explicit: the date from which `face_value` is
+outstanding according to `redemptions` (the date of the latest redemption already deducted
+from `initial_face_value`; `issue_date` when none is; `null` when no step of the schedule
+equals `face_value`, see label `face_value_not_in_schedule`).
+
+Rule for consumers: the face outstanding **before** the redemptions of day `D` is
+`initial_face_value − Σ redemptions.value_per_bond with date < D`. On `D = business_date`,
+`face_value_date = business_date` means `face_value` is already **after** that day's
+redemption; an earlier `face_value_date` means it is still **before** it. The golden static
+fixture carries a payment-day amortizer (see `fixtures/index.json`).
+
 ## Market objects (`data`)
 
 | Array | Object | Notes |

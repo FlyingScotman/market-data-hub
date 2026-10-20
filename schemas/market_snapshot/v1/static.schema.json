@@ -29,6 +29,7 @@
         "currency_id",
         "face_value",
         "initial_face_value",
+        "face_value_date",
         "issue_date",
         "maturity_date",
         "is_perpetual",
@@ -197,6 +198,14 @@
           "allOf": [
             {
               "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "face_value_date": {
+          "description": "Date from which face_value is outstanding according to the redemption schedule: the date of the latest redemption already deducted from initial_face_value (issue_date when none is). On a redemption date, face_value_date = business_date means MOEX had already deducted that day's redemption when the static was built. null when face_value matches no step of the schedule (or a value is missing)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date_or_null"
             }
           ]
         },
