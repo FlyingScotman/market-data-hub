@@ -47,6 +47,7 @@ __all__ = [
     "build_static",
     "calendar_objects",
     "coupon_frequency_from_schedule",
+    "face_schedule_labels",
     "face_steps",
     "face_value_date",
 ]
@@ -159,6 +160,49 @@ def face_value_date(
         return None
     past = [d for d in hits if d is None or d <= business_date]
     return past[-1] if past else hits[0]
+
+
+def face_schedule_labels(
+    b: Mapping[str, Any], redemptions: list[dict[str, Any]], business_date: date
+) -> tuple[str | None, str | None]:
+    """HS13: MOEX inconsistencies between the face and the redemption schedule, as labels
+    (the published values are not corrected):
+
+    * ``face_value_not_in_schedule`` - ``initial_face_value`` minus the scheduled redemptions
+      never equals ``face_value`` (e.g. face 400, redemptions 300 + 400). Not for indexed-face
+      bonds (indexation explains the difference).
+    * ``future_redemptions_differ_from_face`` - the redemptions still to be paid do not add
+      up to ``face_value`` (on a payment day, today's redemption counts as still to be paid
+      only while ``face_value`` has not been reduced by it).
+
+    Bonds without redemption rows, or with a missing value, get neither label."""
+    face = b["face_value"]
+    if face is None or not redemptions or any(r["value_per_bond"] is None for r in redemptions):
+        return None, None
+    fd = face_value_date(b, redemptions, business_date)
+    not_in = (
+        "face_value_not_in_schedule"
+        if fd is None and b["initial_face_value"] is not None and not b.get("is_face_indexed")
+        else None
+    )
+
+    def owed(include_today: bool) -> Decimal:
+        return sum(
+            (r["value_per_bond"] for r in redemptions
+             if r["date"] > business_date or (include_today and r["date"] == business_date)),
+            Decimal(0),
+        )  # fmt: skip
+
+    if fd is not None:
+        candidates = [owed(fd < business_date)]
+    else:
+        candidates = [owed(True), owed(False)]
+    differ = (
+        "future_redemptions_differ_from_face"
+        if all(abs(c - face) > FACE_TOLERANCE for c in candidates)
+        else None
+    )
+    return not_in, differ
 
 
 def _instrument(
@@ -418,6 +462,7 @@ def build_static(
             "no_issuer" if b["issuer_id"] is None or b["issuer_id"] not in issuer_set else None,
             "structured" if b["is_structured"] else None,
             "matured" if b["status"] == "matured" else None,
+            *face_schedule_labels(b, redemptions_of[b["secid"]], cut.business_date),
         )
         label_counts.update(labels)
         instruments.append(

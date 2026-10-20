@@ -76,3 +76,47 @@ def test_face_value_date_unknown_when_schedule_does_not_explain_face() -> None:
     # kopeck rounding of per-bond amounts
     rounded = [{"date": TODAY, "value_per_bond": Decimal("333.33")}]
     assert face_value_date(_bond("666.67"), rounded, TODAY) == TODAY
+
+
+# ------------------------------------------------------------------- HS13 inconsistencies
+
+from mdhub.snapshot.static import face_schedule_labels  # noqa: E402
+
+
+def test_face_schedule_labels() -> None:
+    # consistent amortizer (on its payment day, either side of the MOEX update)
+    assert face_schedule_labels(_bond("125"), REDEMPTIONS, TODAY) == (None, None)
+    assert face_schedule_labels(_bond("250"), REDEMPTIONS, TODAY) == (None, None)
+    # ИЛСБО-1-1Р-like: face 400, redemptions 300 + 400 still to come
+    ilsbo = [
+        {"date": date(2027, 1, 1), "value_per_bond": Decimal("300")},
+        {"date": date(2028, 1, 1), "value_per_bond": Decimal("400")},
+    ]
+    assert face_schedule_labels(_bond("400"), ilsbo, TODAY) == (
+        "face_value_not_in_schedule",
+        "future_redemptions_differ_from_face",
+    )
+    # securitization-like: face follows the paid redemptions, the projected rest does not add up
+    tb4 = [
+        {"date": date(2026, 9, 1), "value_per_bond": Decimal("116.12")},
+        {"date": date(2027, 9, 1), "value_per_bond": Decimal("866.94")},
+    ]
+    assert face_schedule_labels(_bond("883.88"), tb4, TODAY) == (
+        None,
+        "future_redemptions_differ_from_face",
+    )
+    # RU-30-like: face 0.035, redemptions 0.07 (initial face unknown here)
+    ru30 = [{"date": date(2030, 3, 31), "value_per_bond": Decimal("0.07")}]
+    labels = face_schedule_labels({**_bond("0.035", "0.07")}, ru30, TODAY)
+    assert labels == ("face_value_not_in_schedule", "future_redemptions_differ_from_face")
+    # indexed face: indexation explains a face outside the nominal steps
+    linker = [{"date": date(2028, 1, 1), "value_per_bond": Decimal("1300")}]
+    assert face_schedule_labels({**_bond("1300"), "is_face_indexed": True}, linker, TODAY) == (
+        None,
+        None,
+    )
+    # no schedule / missing value: no claim
+    assert face_schedule_labels(_bond("1000"), [], TODAY) == (None, None)
+    assert face_schedule_labels(
+        _bond("1000"), [{"date": TODAY, "value_per_bond": None}], TODAY
+    ) == (None, None)
