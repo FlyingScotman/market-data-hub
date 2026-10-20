@@ -61,9 +61,15 @@ ARG MDHUB_VERSION=
 COPY README.md .git_archival.txt ./
 COPY src ./src
 COPY schemas ./schemas
+# A git archive has no .git for tool.uv.cache-keys: refresh only this project's cached wheel.
+# --reinstall-package implies --refresh-package; dependency wheels remain cached.
+# set -eu stops on errors/unset variables. If an expected version was supplied (-n), test
+# checks CLI output ($(...) captures it) for equality and refuses a stale image.
 RUN --mount=type=cache,target=/root/.cache/uv \
+    set -eu; \
     if [ -n "${MDHUB_VERSION}" ]; then export SETUPTOOLS_SCM_PRETEND_VERSION="${MDHUB_VERSION}"; fi; \
-    uv sync --frozen --no-dev --no-editable
+    uv sync --frozen --no-dev --no-editable --reinstall-package market-data-hub; \
+    if [ -n "${MDHUB_VERSION}" ]; then test "$(/app/.venv/bin/mdhub --version)" = "${MDHUB_VERSION}"; fi
 
 # -------------------------------------------------------------------------- runtime stage
 FROM base AS runtime
