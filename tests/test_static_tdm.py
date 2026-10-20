@@ -120,3 +120,25 @@ def test_face_schedule_labels() -> None:
     assert face_schedule_labels(
         _bond("1000"), [{"date": TODAY, "value_per_bond": None}], TODAY
     ) == (None, None)
+
+
+# ------------------------------------------------------------------------ HS10 offers
+
+from mdhub.snapshot.static import undated_offer_reason  # noqa: E402
+
+
+def _offer(
+    status: str = "undated", start: date | None = None, end: date | None = None
+) -> dict[str, Any]:
+    return {"status": status, "offer_date_start": start, "offer_date_end": end}
+
+
+def test_undated_offer_reasons() -> None:
+    assert undated_offer_reason(_offer("completed"), TODAY) == "undated_past_event"
+    assert undated_offer_reason(_offer("cancelled"), TODAY) == "undated_past_event"
+    assert (
+        undated_offer_reason(_offer(start=date(2025, 1, 1), end=date(2025, 1, 10)), TODAY)
+        == "undated_window_past"
+    )
+    assert undated_offer_reason(_offer(start=date(2027, 1, 1)), TODAY) == "undated_window_future"
+    assert undated_offer_reason(_offer(), TODAY) == "undated_unexplained"

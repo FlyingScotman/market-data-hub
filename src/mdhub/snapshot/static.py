@@ -50,6 +50,7 @@ __all__ = [
     "face_schedule_labels",
     "face_steps",
     "face_value_date",
+    "undated_offer_reason",
 ]
 
 MATURED_LOOKBACK_DAYS: Final = 31
@@ -207,6 +208,27 @@ def face_schedule_labels(
         else None
     )
     return not_in, differ
+
+
+PUT_SUBTYPE: Final = "До оферты (put)"
+"""MOEX BOND_SUBTYPE of bonds that trade to a put offer (HS10)."""
+
+UNDATED_DONE: Final = frozenset({"completed", "cancelled", "default", "technical_default"})
+
+
+def undated_offer_reason(o: Mapping[str, Any], business_date: date) -> str:
+    """HS10: why an offer row has no date, as a label (the row is published as MOEX has it):
+
+    * ``undated_past_event`` - MOEX marks it completed / cancelled / defaulted;
+    * ``undated_window_past`` / ``undated_window_future`` - an exercise window is known and
+      ends before / on or after the business date;
+    * ``undated_unexplained`` - nothing in the row dates it (needs the issue terms)."""
+    if o["status"] in UNDATED_DONE:
+        return "undated_past_event"
+    ends = [d for d in (o["offer_date_end"], o["offer_date_start"]) if d is not None]
+    if ends:
+        return "undated_window_past" if max(ends) < business_date else "undated_window_future"
+    return "undated_unexplained"
 
 
 def _instrument(
@@ -476,6 +498,7 @@ def build_static(
     scheduled_calls = {
         o["secid"] for o in offers if o["offer_type"] == "call" and o["status"] == "scheduled"
     }
+    scheduled_offers = {o["secid"] for o in offers if o["status"] == "scheduled"}
     redemptions_of: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for a in amort:
         redemptions_of[a["secid"]].append({"date": a["amort_date"], "value_per_bond": a["value"]})
@@ -512,6 +535,11 @@ def build_static(
             "structured" if b["is_structured"] else None,
             "matured" if b["status"] == "matured" else None,
             *face_schedule_labels(b, redemptions_of[b["secid"]], cut.business_date),
+            "put_subtype_without_scheduled_offer"
+            if b["bond_subtype"] == PUT_SUBTYPE
+            and b["status"] == "active"
+            and b["secid"] not in scheduled_offers
+            else None,
         )
         label_counts.update(labels)
         instruments.append(
@@ -575,7 +603,10 @@ def build_static(
             "face_value": o["face_value"],
             "face_unit": o["face_unit"],
             "agent": o["agent"],
-            "labels": sorted_labels("date_missing" if o["date_missing"] else None),
+            "labels": sorted_labels(
+                "date_missing" if o["date_missing"] else None,
+                undated_offer_reason(o, cut.business_date) if o["date_missing"] else None,
+            ),
         }
         for o in offers
     ]
