@@ -226,6 +226,37 @@ def calendar_objects(
     return out, summary, eff
 
 
+def _issuer_coverage(
+    issuers: list[dict[str, Any]], bonds: list[dict[str, Any]], rows: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Fill rates of the issuer reference (HS1/HS3): over all published issuers and over the
+    issuers of ``active`` non-structured bonds (the desk's acceptance base)."""
+    active = {
+        b["issuer_id"]
+        for b in bonds
+        if b["status"] == "active" and not b["is_structured"] and b["issuer_id"] is not None
+    }
+
+    def rates(rows: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "issuers": len(rows),
+            "with_short_name": sum(1 for i in rows if i["short_name"]),
+            "with_ogrn": sum(1 for i in rows if i["ogrn"]),
+            "with_country": sum(1 for i in rows if i["country"]),
+            "with_sector": sum(1 for i in rows if i["sector"]),
+        }
+
+    return {
+        **rates(issuers),
+        "of_active_non_structured": rates([i for i in issuers if i["issuer_id"] in active]),
+        "by_sector": dict(sorted(Counter(i["sector"] or "none" for i in issuers).items())),
+        "by_sector_source": dict(
+            sorted(Counter(r.get("sector_source") or "none" for r in rows).items())
+        ),
+        "without_sector": sorted(i["issuer_id"] for i in issuers if not i["sector"]),
+    }
+
+
 def build_static(
     conn: DictConnection,
     *,
@@ -455,7 +486,7 @@ def build_static(
                 "floaters_without_formula": label_counts.get("floater_formula_missing", 0),
             },
         ),
-        Dataset("issuers", issuer_out),
+        Dataset("issuers", issuer_out, _issuer_coverage(issuer_out, bonds, issuers)),
         Dataset(
             "calendars",
             calendars,

@@ -15,6 +15,9 @@
    3166-1 alpha-2 of OKSM) come from the card. ``name``, ``inn`` and ``okpo`` stay as
    ``bonds_static`` loads them from the bond directory (one writer per column, so the two
    jobs never overwrite each other).
+4. **Sector** (HS3) of every issuer in scope from the versioned rules of
+   ``mdhub/data/sector_map.json`` (:mod:`mdhub.loaders._issuer_rules`): ``sector`` and
+   ``sector_source`` (``curated`` / ``group`` / ``okved`` / ``rule``); no rule -> NULL.
 
 A failing card is logged and the run ends ``partial``; the other cards are kept. Changes of
 both tables are versioned in ``ops.row_history`` (as-known-at readers 0520).
@@ -33,8 +36,9 @@ from mdhub.core.errors import FormatDriftError
 from mdhub.core.http import HttpError
 from mdhub.core.iss import ISS_BASE_URL
 from mdhub.core.timeutil import utc_now
-from mdhub.core.upsert import UpsertResult, touch_last_seen, upsert_rows
+from mdhub.core.upsert import touch_last_seen, upsert_rows
 from mdhub.jobs import JobContext, job
+from mdhub.loaders import _issuer_rules as rules
 from mdhub.sources import moex_emitters as me
 
 __all__ = ["MATURED_SCOPE_DAYS", "issuers_static", "scope_issuer_ids"]
@@ -104,7 +108,10 @@ def _due(
     return new + changed + [iid for _, iid in stale[: max(0, refresh_limit)]]
 
 
-@job("issuers_static", "Issuer reference: MOEX emitter cards (short name, OGRN, country)")
+@job(
+    "issuers_static",
+    "Issuer reference: MOEX emitter cards (short name, OGRN, country), curated sectors",
+)
 def issuers_static(
     ctx: JobContext,
     *,
@@ -147,7 +154,7 @@ def issuers_static(
                 failures.append(f"{iid}: {type(exc).__name__}: {str(exc)[:120]}")
     summary["fetched"] = fetched
     with ctx.connection() as conn:
-        summary["issuers_updated"] = _apply_cards(ctx, conn)
+        summary.update(_apply_issuer_fields(ctx, conn, today))
     if failures:
         summary["failed"] = len(failures)
         ctx.run.mark_partial(f"{len(failures)} emitter cards failed: " + "; ".join(failures[:5]))
@@ -182,25 +189,63 @@ def _store_card(
     touch_last_seen(conn, "ref.issuer_card", ["issuer_id"], [(iid,)], ctx.run.id, seen_at=utc_now())
 
 
-def _apply_cards(ctx: JobContext, conn: psycopg.Connection[Any]) -> int:
-    """Copy card fields to ``ref.issuer`` (only issuers that exist; never creates one)."""
-    rows = conn.execute(
+def _apply_issuer_fields(
+    ctx: JobContext, conn: psycopg.Connection[Any], today: date
+) -> dict[str, Any]:
+    """Write card fields (issuers with a found card) and sectors (issuers in scope) to
+    ``ref.issuer`` in one upsert, so one run makes at most one version per issuer. Issuers
+    are never created here; values outside these two sets are kept as stored."""
+    scope = set(scope_issuer_ids(conn, today))
+    cards = {
+        int(r["issuer_id"]): r
+        for r in conn.execute(
+            "SELECT issuer_id, short_title, ogrn, oksm, country FROM ref.issuer_card WHERE found"
+        ).fetchall()
+    }
+    ids = sorted(scope | set(cards))
+    classes: dict[int, set[str]] = {}
+    for r in conn.execute(
         """
-        SELECT c.issuer_id, c.short_title AS short_name, c.ogrn, c.oksm, c.country
-        FROM ref.issuer_card c JOIN ref.issuer i USING (issuer_id)
-        WHERE c.found
-        ORDER BY c.issuer_id
-        """
-    ).fetchall()
-    if not rows:
-        return 0
-    res: UpsertResult = upsert_rows(
-        conn,
-        "ref.issuer",
-        [dict(r) for r in rows],
-        ["issuer_id"],
-        list(ISSUER_FROM_CARD),
-        run_id=ctx.run.id,
-    )
-    ctx.run.add_counts(res)
-    return res.updated
+        SELECT issuer_id, bond_class FROM ref.bond
+        WHERE issuer_id = ANY(%(ids)s) AND (status = 'active'
+           OR (status = 'delisted' AND (is_perpetual OR maturity_date >= %(today)s))
+           OR (status = 'matured' AND maturity_date >= %(since)s))
+        """,
+        {"ids": sorted(scope), "today": today,
+         "since": today - timedelta(days=MATURED_SCOPE_DAYS)},
+    ).fetchall():  # fmt: skip
+        classes.setdefault(int(r["issuer_id"]), set()).add(str(r["bond_class"]))
+    out: list[dict[str, Any]] = []
+    assigned = unassigned = 0
+    for i in conn.execute(
+        "SELECT issuer_id, inn, name, short_name, ogrn, oksm, country, okved, sector, "
+        "sector_source FROM ref.issuer WHERE issuer_id = ANY(%s) ORDER BY issuer_id",
+        (ids,),
+    ).fetchall():
+        iid = int(i["issuer_id"])
+        row = {k: i[k] for k in ("issuer_id", *ISSUER_FROM_CARD, "sector", "sector_source")}
+        card = cards.get(iid)
+        if card is not None:
+            row.update(short_name=card["short_title"], ogrn=card["ogrn"], oksm=card["oksm"],
+                       country=card["country"])  # fmt: skip
+        if iid in scope:
+            res = rules.assign_sector(
+                inn=i["inn"],
+                name=i["name"],
+                short_name=row["short_name"],
+                bond_classes=classes.get(iid, ()),
+                okved=i["okved"],
+            )
+            row.update(
+                sector=res.sector if res else None, sector_source=res.source if res else None
+            )
+            assigned += res is not None
+            unassigned += res is None
+        out.append(row)
+    if out:
+        ctx.run.add_counts(upsert_rows(conn, "ref.issuer", out, ["issuer_id"], run_id=ctx.run.id))
+    return {
+        "sector_map_version": rules.sector_map().version,
+        "sector_assigned": assigned,
+        "sector_unassigned": unassigned,
+    }

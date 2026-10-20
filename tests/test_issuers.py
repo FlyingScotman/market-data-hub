@@ -246,3 +246,81 @@ def test_issuers_static_card_failure_is_partial(
     assert row == {"short_name": None, "country": None}
     gpn = conn.execute("SELECT country FROM ref.issuer WHERE issuer_id = 1039").fetchone()
     assert gpn == {"country": "RU"}
+
+
+# ------------------------------------------------------------------------- HS3 sectors
+
+from mdhub.loaders import _issuer_rules as rules  # noqa: E402
+
+
+def _sector(name: str, classes: tuple[str, ...] = ("corporate",), **kw: Any) -> str | None:
+    res = rules.assign_sector(inn=kw.pop("inn", None), name=name, short_name=None,
+                              bond_classes=classes, **kw)  # fmt: skip
+    return res.sector if res else None
+
+
+def test_sector_map_is_valid_and_versioned() -> None:
+    m = rules.sector_map()
+    assert m.version and len(m.codes) == 19
+    assert {"banks", "oil_gas", "securitization_spv", "financial_spv", "other"} <= m.codes
+
+
+@pytest.mark.parametrize(
+    ("name", "sector"),
+    [
+        ('Публичное акционерное общество "Сбербанк России"', "banks"),
+        ("Банк ВТБ (публичное акционерное общество)", "banks"),
+        ('Акционерное общество "АЛЬФА-БАНК"', "banks"),
+        ('"Газпромбанк" (Акционерное общество)', "banks"),
+        ('Публичное акционерное общество "Газпром нефть"', "oil_gas"),
+        ('Акционерное общество "ВТБ Лизинг"', "leasing"),
+        ('ООО "СФО ВТБ РКС 1"', "securitization_spv"),
+        ('Общество с ограниченной ответственностью "Газпром капитал"', "oil_gas"),
+        ('Общество с ограниченной ответственностью "Тест Финанс"', "financial_spv"),
+        ('Публичное акционерное общество "Магнит"', "retail"),
+        ('ПАО "Ростелеком"', "telecom"),
+        ('ПАО "Россети"', "utilities"),
+        ('ПАО "Группа ЛСР"', "real_estate"),
+        ('ООО "Неизвестная компания"', None),
+    ],
+)
+def test_name_rules(name: str, sector: str | None) -> None:
+    assert _sector(name) == sector
+
+
+def test_sector_precedence() -> None:
+    # bond classes decide for sovereign / subfederal / municipal / supranational
+    assert _sector("Министерство финансов Российской Федерации", ("ofz_pd",)) == "sovereign"
+    assert _sector("Комитет финансов Санкт-Петербурга", ("subfederal",)) == "subfederal"
+    assert _sector("Межгосударственный банк", ("ifi",)) == "supranational"
+    # securitization by class only when every bond is an MBS / securitization note
+    assert _sector("ООО Ипотека", ("mbs",)) == "securitization_spv"
+    assert _sector("ПАО Банк", ("mbs", "corporate")) == "banks"
+    # curated per-INN entry beats every rule
+    res = rules.assign_sector(inn="7708503727", name="ОАО РЖД", short_name=None,
+                              bond_classes=("corporate",))  # fmt: skip
+    assert res is not None and (res.sector, res.source) == ("transport", "curated")
+    # SPV of a curated group takes the group's sector
+    res = rules.assign_sector(inn=None, name='ООО "X капитал"', short_name=None,
+                              bond_classes=("corporate",), group_sector="oil_gas",
+                              group_relation="spv")  # fmt: skip
+    assert res is not None and (res.sector, res.source) == ("oil_gas", "group")
+    # OKVED mapping (when the code is known) before class and name rules
+    res = rules.assign_sector(inn=None, name="ООО Банк", short_name=None, bond_classes=(),
+                              okved="64.91")  # fmt: skip
+    assert res is not None and (res.sector, res.source) == ("leasing", "okved")
+
+
+def test_issuers_static_assigns_sectors(
+    respx_mock: respx.Router, conn: Conn, settings: Settings, db: Database
+) -> None:
+    _seed(conn, _today())
+    _mock(respx_mock, {1039: load("emitter_1039.json"), 712: load("emitter_712.json")})
+    assert _run(settings, db).status == "succeeded"
+    rows = {
+        r["issuer_id"]: (r["sector"], r["sector_source"])
+        for r in conn.execute("SELECT * FROM ref.issuer").fetchall()
+    }
+    assert rows[1039] == ("oil_gas", "rule")
+    assert rows[712] == ("transport", "curated")
+    assert rows[5] == (None, None)  # out of scope: untouched
