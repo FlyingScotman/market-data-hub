@@ -1258,7 +1258,8 @@ def amortizer_constant_fixed(inp: ClassifyInput) -> bool:
     floater with any benchmark evidence is classified floating first), every coupon - paid
     and future - is valued, and one positive rate (``value_prc``) runs over the whole
     schedule (above :data:`AMORTIZER_MIN_RATE_PCT`). Unlike :func:`schedule_constant_fixed`
-    it needs no paid coupon across a key-rate change, so new issues qualify; consumers can tell the weaker evidence by the basis."""
+    it needs no paid coupon across a key-rate change, so new issues qualify; consumers can
+    tell the weaker evidence by the basis."""
     if inp.bond_type not in AMORTIZING_BOND_TYPES:
         return False
     if inp.coupon_details is not None or inp.coupon_benchmark is not None or inp.has_formula:
