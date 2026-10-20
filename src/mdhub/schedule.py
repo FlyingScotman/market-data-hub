@@ -91,6 +91,7 @@ so the wait normally ends after the current task."""
 KNOWN_JOBS: Final = (
     "bonds_static",
     "bonds_static_probe",
+    "issuers_static",
     "cbonds_enrich",
     "bonds_eod",
     "bonds_intraday",
@@ -223,6 +224,9 @@ def snapshot_rules(settings: Settings | None = None) -> dict[str, tuple[Rule, ..
 RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
     "bonds_static": (_r("30 6 * * *", mode="full", note="full universe incl. bondization"),),
     "bonds_static_probe": (_poll("5 9-19 * * *", mode="probe", note="hourly new-listing probe"),),
+    "issuers_static": (
+        _r("0 7 * * *", mode="full", note="emitter list diff + weekly cards; after bonds_static"),
+    ),
     "cbonds_enrich": (_r("30 7 * * *", note="auto-skip while auth returns 401"),),
     "bonds_eod": (
         _r("20 19 * * *", mode="prelim", days_back=[0]),

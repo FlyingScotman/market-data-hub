@@ -1,0 +1,44 @@
+{
+"emitters": {
+	"metadata": {
+		"EMITTER_ID": {"type": "int32"},
+		"TITLE": {"type": "string", "bytes": 765, "max_size": 0},
+		"INN": {"type": "string", "bytes": 30, "max_size": 0},
+		"SHORT_TITLE": {"type": "string", "bytes": 384, "max_size": 0},
+		"URL": {"type": "string", "bytes": 384, "max_size": 0}
+	},
+	"columns": ["EMITTER_ID", "TITLE", "INN", "SHORT_TITLE", "URL"], 
+	"data": [
+		[88, "\"Акционерный коммерческий банк \"Держава\" публичное акционерное общество\"", "7729003482", "АКБ \"Держава\" ПАО", "http:\/\/derzhava.ru"],
+		[196, "\"Газпромбанк\" (Акционерное общество)", "7744001497", "Банк ГПБ (АО)", "https:\/\/www.gazprombank.ru"],
+		[6581, "\"МЕЖДУНАРОДНЫЙ ИНВЕСТИЦИОННЫЙ БАНК\"", "9909152110", "\"МИБ\"", "https:\/\/iib.int"],
+		[449, "\"МОСКОВСКИЙ КРЕДИТНЫЙ БАНК\" (публичное акционерное общество)", "7734202860", "ПАО \"МОСКОВСКИЙ КРЕДИТНЫЙ БАНК\"", "www.mkb.ru"],
+		[149, "\"Российский акционерный коммерческий дорожный банк\" (публичное акционерное общество)", "7718011918", "ПАО \"РосДорБанк\"", "https:\/\/www.rdb.ru"],
+		[13867, "\"СИНАРА-Капитал\" (общество с ограниченной ответственностью)", "9705167654", "\"СИНАРА-Капитал\" (ООО)", "https:\/\/sinara-capital.ru\/"],
+		[11502, "3M Company", null, "3M Company", null],
+		[12942, "8x8, Inc.", null, "8x8, Inc.", null],
+		[12065, "A. O. Smith Corporation", null, "A. O. Smith Corporation", null],
+		[11395, "Abbott Laboratories", null, "Abbott Laboratories", "https:\/\/www.abbott.com\/investors.html"],
+		[11321, "AbbVie Inc.", null, "AbbVie Inc.", "https:\/\/investors.abbvie.com\/"],
+		[12092, "Acadia Pharmaceuticals Inc.", null, "Acadia Pharmaceuticals Inc.", null],
+		[13000, "Accenture plc", null, "Accenture", null],
+		[11342, "Adobe Inc.", null, "Adobe Inc.", "https:\/\/www.adobe.com\/investor-relations.html"],
+		[11249, "Advanced Micro Devices, Inc.", null, "Advanced Micro Devices, Inc.", "https:\/\/ir.amd.com\/"],
+		[12979, "AerCap Holdings N.V.", null, "AerCap Holdings", null],
+		[12045, "Aflac Incorporated", null, "Aflac Incorporated", null],
+		[12489, "Agilent Technologies, Inc.", null, "Agilent Technologies, Inc.", null],
+		[12068, "Air Products & Chemicals, Inc.", null, "Air Products & Chemicals, Inc.", null],
+		[12684, "Airbnb, Inc.", null, "Airbnb, Inc.", null]
+	]
+},
+"emitters.cursor": {
+	"metadata": {
+		"INDEX": {"type": "int64"},
+		"TOTAL": {"type": "int64"},
+		"PAGESIZE": {"type": "int64"}
+	},
+	"columns": ["INDEX", "TOTAL", "PAGESIZE"], 
+	"data": [
+		[0, 1354, 20]
+	]
+}}
