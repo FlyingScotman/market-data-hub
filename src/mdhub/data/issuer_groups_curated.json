@@ -1,0 +1,225 @@
+{
+  "format": 1,
+  "version": "2026-10-20.1",
+  "description": "Curated issuer groups (TDM brief R9 HS4). No free machine-readable source exists (SPARK/Cbonds are paid; EGRUL does not disclose PAO shareholders), so groups are curated here, keyed by the INN MOEX publishes for the issuer (emitter_id cross-checks the match). Every row carries evidence: the MOEX emitter card that identifies the issuer and the document that states the relation. group_relation: parent | subsidiary | spv | securitization_spv | affiliate. is_state_owned is set only where an evidence document states it (null = not established). sector = sector of the group (mdhub/data/sector_map.json taxonomy): SPVs take it, securitization SPVs are securitization_spv. Job issuers_static writes the groups to ref.issuer (history in ops.row_history). Review: owner/desk; extend with evidence per row.",
+  "groups": {
+    "gazprom": {
+      "group_name": "Газпром",
+      "sector": "oil_gas",
+      "is_state_owned": null,
+      "note": "is_state_owned not set: not stated in the evidence documents"
+    },
+    "gazprombank": {
+      "group_name": "Газпромбанк",
+      "sector": "banks",
+      "is_state_owned": null,
+      "note": "separate from the Gazprom group (brief HS4)"
+    },
+    "vtb": {
+      "group_name": "ВТБ",
+      "sector": "banks",
+      "is_state_owned": null,
+      "note": "is_state_owned not set: not stated in the evidence documents"
+    },
+    "sber": {
+      "group_name": "Сбер",
+      "sector": "banks",
+      "is_state_owned": null,
+      "note": "is_state_owned not set: not stated in the evidence documents"
+    },
+    "veb_rf": {
+      "group_name": "ВЭБ.РФ",
+      "sector": "other",
+      "is_state_owned": true,
+      "note": "state development corporation"
+    },
+    "rzd": {
+      "group_name": "РЖД",
+      "sector": "transport",
+      "is_state_owned": true
+    },
+    "dom_rf": {
+      "group_name": "ДОМ.РФ",
+      "sector": "other",
+      "is_state_owned": true
+    }
+  },
+  "issuers": {
+    "7736050003": {
+      "emitter_id": 711,
+      "name": "ПАО \"Газпром\"",
+      "group_id": "gazprom",
+      "group_relation": "parent",
+      "evidence": {
+        "identity": "MOEX ISS /iss/emitters/711.json (INN 7736050003), fetched 2026-10-20",
+        "relation": "group parent",
+        "document": "TDM brief R9 'Static data requests to the market-data hub', HS4 acceptance criteria (20.10.2026)"
+      }
+    },
+    "7726588547": {
+      "emitter_id": 4682,
+      "name": "ООО \"Газпром капитал\"",
+      "group_id": "gazprom",
+      "group_relation": "spv",
+      "evidence": {
+        "identity": "MOEX ISS /iss/emitters/4682.json (INN 7726588547), fetched 2026-10-20",
+        "relation": "financing SPV of the Gazprom group (brief: one group with Газпром and Газпром нефть)",
+        "document": "TDM brief R9 'Static data requests to the market-data hub', HS4 acceptance criteria (20.10.2026)"
+      }
+    },
+    "5504036333": {
+      "emitter_id": 1039,
+      "name": "ПАО \"Газпром нефть\"",
+      "group_id": "gazprom",
+      "group_relation": "subsidiary",
+      "evidence": {
+        "identity": "MOEX ISS /iss/emitters/1039.json (INN 5504036333), fetched 2026-10-20",
+        "relation": "subsidiary of ПАО \"Газпром\" (brief: one group)",
+        "document": "TDM brief R9 'Static data requests to the market-data hub', HS4 acceptance criteria (20.10.2026)"
+      }
+    },
+    "7744001497": {
+      "emitter_id": 196,
+      "name": "Банк ГПБ (АО)",
+      "group_id": "gazprombank",
+      "group_relation": "parent",
+      "evidence": {
+        "identity": "MOEX ISS /iss/emitters/196.json (INN 7744001497), fetched 2026-10-20",
+        "relation": "own group, separate from Газпром (brief)",
+        "document": "TDM brief R9 'Static data requests to the market-data hub', HS4 acceptance criteria (20.10.2026)"
+      }
+    },
+    "7702070139": {
+      "emitter_id": 269,
+      "name": "Банк ВТБ (ПАО)",
+      "group_id": "vtb",
+      "group_relation": "parent",
+      "evidence": {
+        "identity": "MOEX ISS /iss/emitters/269.json (INN 7702070139), fetched 2026-10-20",
+        "relation": "group parent",
+        "document": "TDM brief R9 'Static data requests to the market-data hub', HS4 acceptance criteria (20.10.2026)"
+      }
+    },
+    "7709378229": {
+      "emitter_id": 6335,
+      "name": "АО ВТБ Лизинг",
+      "group_id": "vtb",
+      "group_relation": "subsidiary",
+      "evidence": {
+        "identity": "MOEX ISS /iss/emitters/6335.json (INN 7709378229), fetched 2026-10-20",
+        "relation": "VTB group (brief)",
+        "document": "TDM brief R9 'Static data requests to the market-data hub', HS4 acceptance criteria (20.10.2026)"
+      }
+    },
+    "7708683999": {
+      "emitter_id": 10695,
+      "name": "ООО ВТБ Факторинг",
+      "group_id": "vtb",
+      "group_relation": "subsidiary",
+      "evidence": {
+        "identity": "MOEX ISS /iss/emitters/10695.json (INN 7708683999), fetched 2026-10-20",
+        "relation": "VTB group (brief)",
+        "document": "TDM brief R9 'Static data requests to the market-data hub', HS4 acceptance criteria (20.10.2026)"
+      }
+    },
+    "97053": {
+      "emitter_id": 7194,
+      "name": "ВТБ Кэпитал Эс.Эй. (VTB Capital S.A.)",
+      "group_id": "vtb",
+      "group_relation": "spv",
+      "evidence": {
+        "identity": "MOEX ISS /iss/emitters/7194.json (INN 97053), fetched 2026-10-20",
+        "relation": "VTB group financing vehicle (brief); INN as published by MOEX for this foreign issuer",
+        "document": "TDM brief R9 'Static data requests to the market-data hub', HS4 acceptance criteria (20.10.2026)"
+      }
+    },
+    "9704018755": {
+      "emitter_id": 11361,
+      "name": "ООО \"СФО ВТБ РКС-1\"",
+      "group_id": "vtb",
+      "group_relation": "securitization_spv",
+      "evidence": {
+        "identity": "MOEX ISS /iss/emitters/11361.json (INN 9704018755), fetched 2026-10-20",
+        "relation": "securitization SPV of VTB (brief: three СФО ВТБ РКС = securitization_spv)",
+        "document": "TDM brief R9 'Static data requests to the market-data hub', HS4 acceptance criteria (20.10.2026)"
+      }
+    },
+    "9704147373": {
+      "emitter_id": 13865,
+      "name": "ООО \"СФО ВТБ РКС Эталон\"",
+      "group_id": "vtb",
+      "group_relation": "securitization_spv",
+      "evidence": {
+        "identity": "MOEX ISS /iss/emitters/13865.json (INN 9704147373), fetched 2026-10-20",
+        "relation": "securitization SPV of VTB (brief)",
+        "document": "TDM brief R9 'Static data requests to the market-data hub', HS4 acceptance criteria (20.10.2026)"
+      }
+    },
+    "9704268000": {
+      "emitter_id": 17411,
+      "name": "ООО \"СФО ВТБ РКС Олимп\"",
+      "group_id": "vtb",
+      "group_relation": "securitization_spv",
+      "evidence": {
+        "identity": "MOEX ISS /iss/emitters/17411.json (INN 9704268000), fetched 2026-10-20",
+        "relation": "securitization SPV of VTB (brief)",
+        "document": "TDM brief R9 'Static data requests to the market-data hub', HS4 acceptance criteria (20.10.2026)"
+      }
+    },
+    "7707083893": {
+      "emitter_id": 484,
+      "name": "ПАО Сбербанк",
+      "group_id": "sber",
+      "group_relation": "parent",
+      "evidence": {
+        "identity": "MOEX ISS /iss/emitters/484.json (INN 7707083893), fetched 2026-10-20",
+        "relation": "group parent",
+        "document": "TDM brief R9 'Static data requests to the market-data hub', HS4 acceptance criteria (20.10.2026)"
+      }
+    },
+    "7710048970": {
+      "emitter_id": 33,
+      "name": "АО \"Сбербанк КИБ\"",
+      "group_id": "sber",
+      "group_relation": "subsidiary",
+      "evidence": {
+        "identity": "MOEX ISS /iss/emitters/33.json (INN 7710048970), fetched 2026-10-20",
+        "relation": "Sber group (brief)",
+        "document": "TDM brief R9 'Static data requests to the market-data hub', HS4 acceptance criteria (20.10.2026)"
+      }
+    },
+    "7750004150": {
+      "emitter_id": 406,
+      "name": "ВЭБ.РФ",
+      "group_id": "veb_rf",
+      "group_relation": "parent",
+      "evidence": {
+        "identity": "MOEX ISS /iss/emitters/406.json (INN 7750004150), fetched 2026-10-20",
+        "relation": "state corporation (brief: is_state_owned)",
+        "document": "TDM brief R9 'Static data requests to the market-data hub', HS4 acceptance criteria (20.10.2026)"
+      }
+    },
+    "7708503727": {
+      "emitter_id": 712,
+      "name": "ОАО \"РЖД\"",
+      "group_id": "rzd",
+      "group_relation": "parent",
+      "evidence": {
+        "identity": "MOEX ISS /iss/emitters/712.json (INN 7708503727), fetched 2026-10-20",
+        "relation": "state-owned (brief: is_state_owned)",
+        "document": "TDM brief R9 'Static data requests to the market-data hub', HS4 acceptance criteria (20.10.2026)"
+      }
+    },
+    "7729355614": {
+      "emitter_id": 656,
+      "name": "ПАО ДОМ.РФ",
+      "group_id": "dom_rf",
+      "group_relation": "parent",
+      "evidence": {
+        "identity": "MOEX ISS /iss/emitters/656.json (INN 7729355614), fetched 2026-10-20",
+        "relation": "state-owned (brief: is_state_owned)",
+        "document": "TDM brief R9 'Static data requests to the market-data hub', HS4 acceptance criteria (20.10.2026)"
+      }
+    }
+  }
+}

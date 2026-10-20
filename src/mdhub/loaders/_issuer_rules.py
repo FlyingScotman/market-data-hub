@@ -15,10 +15,16 @@ from importlib.resources import files
 from typing import Any, Final
 
 __all__ = [
+    "GROUPS_RESOURCE",
+    "GROUP_RELATIONS",
     "SECTOR_RESOURCE",
+    "GroupAssignment",
     "SectorMap",
     "SectorResult",
     "assign_sector",
+    "groups_version",
+    "issuer_groups",
+    "load_groups",
     "sector_map",
 ]
 
@@ -117,3 +123,70 @@ def assign_sector(
     if group_sector is not None:
         return SectorResult(group_sector, "group", f"group_{group_relation}")
     return None
+
+
+# ------------------------------------------------------------------------ issuer groups (HS4)
+
+GROUPS_RESOURCE: Final = "issuer_groups_curated.json"
+GROUP_RELATIONS: Final = frozenset(
+    {"parent", "subsidiary", "spv", "securitization_spv", "affiliate"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class GroupAssignment:
+    inn: str
+    emitter_id: int | None
+    group_id: str
+    group_name: str
+    group_relation: str
+    is_state_owned: bool | None
+    sector: str | None
+    evidence: Mapping[str, Any]
+
+
+def load_groups(
+    doc: Mapping[str, Any], smap: SectorMap | None = None
+) -> dict[str, GroupAssignment]:
+    """Validate the curated group file: every row names a known group and relation and carries
+    evidence; group sectors are taxonomy codes."""
+    m = smap or sector_map()
+    version = str(doc["version"])
+    groups = doc["groups"]
+    out: dict[str, GroupAssignment] = {}
+    for gid, g in groups.items():
+        if g.get("sector") is not None and g["sector"] not in m.codes:
+            raise ValueError(f"issuer groups: group {gid}: sector {g['sector']!r} not in taxonomy")
+    for inn, row in doc["issuers"].items():
+        gid = str(row["group_id"])
+        if gid not in groups:
+            raise ValueError(f"issuer groups: INN {inn}: unknown group {gid!r}")
+        rel = str(row["group_relation"])
+        if rel not in GROUP_RELATIONS:
+            raise ValueError(f"issuer groups: INN {inn}: bad relation {rel!r}")
+        evidence = row.get("evidence")
+        if not isinstance(evidence, Mapping) or not evidence:
+            raise ValueError(f"issuer groups: INN {inn}: evidence missing")
+        g = groups[gid]
+        out[str(inn)] = GroupAssignment(
+            inn=str(inn),
+            emitter_id=int(row["emitter_id"]) if row.get("emitter_id") is not None else None,
+            group_id=gid,
+            group_name=str(g["group_name"]),
+            group_relation=rel,
+            is_state_owned=g.get("is_state_owned"),
+            sector=g.get("sector"),
+            evidence={"file": GROUPS_RESOURCE, "version": version, **evidence},
+        )
+    return out
+
+
+@cache
+def issuer_groups() -> dict[str, GroupAssignment]:
+    """The packaged curated issuer groups, by INN."""
+    return load_groups(json.loads(files("mdhub.data").joinpath(GROUPS_RESOURCE).read_text("utf-8")))
+
+
+def groups_version() -> str:
+    doc = json.loads(files("mdhub.data").joinpath(GROUPS_RESOURCE).read_text("utf-8"))
+    return str(doc["version"])

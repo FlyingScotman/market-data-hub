@@ -15,7 +15,11 @@
    3166-1 alpha-2 of OKSM) come from the card. ``name``, ``inn`` and ``okpo`` stay as
    ``bonds_static`` loads them from the bond directory (one writer per column, so the two
    jobs never overwrite each other).
-4. **Sector** (HS3) of every issuer in scope from the versioned rules of
+4. **Groups** (HS4) from the curated ``mdhub/data/issuer_groups_curated.json`` (keyed by
+   INN, evidence per row): ``group_id``, ``group_name``, ``group_relation``,
+   ``is_state_owned``, ``group_evidence`` on every issuer with a listed INN (removed rows
+   clear the group: a versioned change).
+5. **Sector** (HS3) of every issuer in scope from the versioned rules of
    ``mdhub/data/sector_map.json`` (:mod:`mdhub.loaders._issuer_rules`): ``sector`` and
    ``sector_source`` (``curated`` / ``group`` / ``okved`` / ``rule``); no rule -> NULL.
 
@@ -30,6 +34,7 @@ from datetime import date, timedelta
 from typing import Any, Final
 
 import psycopg
+from psycopg.types.json import Jsonb
 
 from mdhub.core.capture import record_capture
 from mdhub.core.errors import FormatDriftError
@@ -196,13 +201,22 @@ def _apply_issuer_fields(
     ``ref.issuer`` in one upsert, so one run makes at most one version per issuer. Issuers
     are never created here; values outside these two sets are kept as stored."""
     scope = set(scope_issuer_ids(conn, today))
+    groups = rules.issuer_groups()
+    group_inns = sorted(groups)
     cards = {
         int(r["issuer_id"]): r
         for r in conn.execute(
             "SELECT issuer_id, short_title, ogrn, oksm, country FROM ref.issuer_card WHERE found"
         ).fetchall()
     }
-    ids = sorted(scope | set(cards))
+    grouped_ids = {
+        int(r["issuer_id"])
+        for r in conn.execute(
+            "SELECT issuer_id FROM ref.issuer WHERE inn = ANY(%s) OR group_id IS NOT NULL",
+            (group_inns,),
+        ).fetchall()
+    }
+    ids = sorted(scope | set(cards) | grouped_ids)
     classes: dict[int, set[str]] = {}
     for r in conn.execute(
         """
@@ -216,14 +230,29 @@ def _apply_issuer_fields(
     ).fetchall():  # fmt: skip
         classes.setdefault(int(r["issuer_id"]), set()).add(str(r["bond_class"]))
     out: list[dict[str, Any]] = []
-    assigned = unassigned = 0
+    assigned = unassigned = grouped = 0
     for i in conn.execute(
         "SELECT issuer_id, inn, name, short_name, ogrn, oksm, country, okved, sector, "
-        "sector_source FROM ref.issuer WHERE issuer_id = ANY(%s) ORDER BY issuer_id",
+        "sector_source, group_id, group_name, group_relation, is_state_owned, group_evidence "
+        "FROM ref.issuer WHERE issuer_id = ANY(%s) ORDER BY issuer_id",
         (ids,),
     ).fetchall():
         iid = int(i["issuer_id"])
         row = {k: i[k] for k in ("issuer_id", *ISSUER_FROM_CARD, "sector", "sector_source")}
+        group = groups.get(i["inn"]) if i["inn"] else None
+        if group is not None and group.emitter_id not in (None, iid):
+            ctx.logger.warning(
+                "issuer group %s: INN %s matched issuer %s, file names emitter %s",
+                group.group_id, i["inn"], iid, group.emitter_id,
+            )  # fmt: skip
+        row.update(
+            group_id=group.group_id if group else None,
+            group_name=group.group_name if group else None,
+            group_relation=group.group_relation if group else None,
+            is_state_owned=group.is_state_owned if group else None,
+            group_evidence=Jsonb(dict(group.evidence)) if group else None,
+        )
+        grouped += group is not None
         card = cards.get(iid)
         if card is not None:
             row.update(short_name=card["short_title"], ogrn=card["ogrn"], oksm=card["oksm"],
@@ -235,6 +264,8 @@ def _apply_issuer_fields(
                 short_name=row["short_name"],
                 bond_classes=classes.get(iid, ()),
                 okved=i["okved"],
+                group_sector=group.sector if group else None,
+                group_relation=group.group_relation if group else None,
             )
             row.update(
                 sector=res.sector if res else None, sector_source=res.source if res else None
@@ -248,4 +279,6 @@ def _apply_issuer_fields(
         "sector_map_version": rules.sector_map().version,
         "sector_assigned": assigned,
         "sector_unassigned": unassigned,
+        "groups_version": rules.groups_version(),
+        "grouped_issuers": grouped,
     }

@@ -324,3 +324,77 @@ def test_issuers_static_assigns_sectors(
     assert rows[1039] == ("oil_gas", "rule")
     assert rows[712] == ("transport", "curated")
     assert rows[5] == (None, None)  # out of scope: untouched
+
+
+# -------------------------------------------------------------------------- HS4 groups
+
+
+def test_curated_groups_meet_the_brief() -> None:
+    g = rules.issuer_groups()
+    gaz = {inn for inn, a in g.items() if a.group_id == "gazprom"}
+    assert {"7736050003", "7726588547", "5504036333"} <= gaz  # Газпром, капитал, нефть
+    assert g["7744001497"].group_id != "gazprom"  # Газпромбанк separate
+    vtb = {a.group_name for a in g.values() if a.group_id == "vtb"}
+    assert vtb == {"ВТБ"}
+    spv = [
+        a for a in g.values() if a.group_id == "vtb" and a.group_relation == "securitization_spv"
+    ]
+    assert len(spv) == 3
+    assert g["7710048970"].group_name == g["7707083893"].group_name == "Сбер"
+    for inn in ("7750004150", "7708503727", "7729355614"):  # ВЭБ.РФ, РЖД, ДОМ.РФ
+        assert g[inn].is_state_owned is True
+    assert all(a.evidence.get("identity") and a.evidence.get("document") for a in g.values())
+
+
+def test_group_file_validation() -> None:
+    base = {
+        "version": "t",
+        "groups": {"x": {"group_name": "X", "sector": "banks"}},
+        "issuers": {"1": {"group_id": "x", "group_relation": "parent", "evidence": {"a": 1}}},
+    }
+    assert rules.load_groups(base)["1"].group_name == "X"
+    for bad in (
+        {**base, "groups": {"x": {"group_name": "X", "sector": "nope"}}},
+        {
+            **base,
+            "issuers": {"1": {"group_id": "y", "group_relation": "parent", "evidence": {"a": 1}}},
+        },
+        {
+            **base,
+            "issuers": {"1": {"group_id": "x", "group_relation": "cousin", "evidence": {"a": 1}}},
+        },
+        {**base, "issuers": {"1": {"group_id": "x", "group_relation": "parent"}}},
+    ):
+        with pytest.raises(ValueError):
+            rules.load_groups(bad)
+
+
+def test_issuers_static_writes_groups_and_group_sectors(
+    respx_mock: respx.Router, conn: Conn, settings: Settings, db: Database
+) -> None:
+    _seed(conn, _today())
+    conn.execute(
+        "INSERT INTO ref.issuer (issuer_id, name, inn) VALUES "
+        "(4682, 'Общество с ограниченной ответственностью \"Газпром капитал\"', '7726588547'), "
+        "(11361, 'ООО \"СФО ВТБ РКС-1\"', '9704018755')"
+    )
+    conn.execute(
+        "INSERT INTO ref.bond (secid, issuer_id, bond_class, coupon_type, coupon_type_basis, "
+        "status) VALUES ('GAZK', 4682, 'corporate', 'fixed', 'moex_label', 'active'), "
+        "('RKS1', 11361, 'corporate', 'fixed', 'moex_label', 'active')"
+    )
+    conn.commit()
+    _mock(respx_mock, {1039: load("emitter_1039.json"), 712: load("emitter_712.json"),
+                       4682: httpx.Response(503), 11361: httpx.Response(503)})  # fmt: skip
+    _run(settings, db)
+    rows = {r["issuer_id"]: r for r in conn.execute("SELECT * FROM ref.issuer").fetchall()}
+    gk = rows[4682]
+    assert (gk["group_id"], gk["group_relation"], gk["sector"], gk["sector_source"]) == (
+        "gazprom", "spv", "oil_gas", "group",
+    )  # fmt: skip
+    assert gk["group_evidence"]["identity"].startswith("MOEX ISS /iss/emitters/4682")
+    assert rows[1039]["group_relation"] == "subsidiary" and rows[1039]["group_name"] == "Газпром"
+    assert rows[712]["is_state_owned"] is True
+    rks = rows[11361]
+    assert (rks["group_relation"], rks["sector"]) == ("securitization_spv", "securitization_spv")
+    assert rows[5]["group_id"] is None

@@ -119,6 +119,10 @@ def coupon_frequency_from_schedule(coupons: list[dict[str, Any]]) -> int | None:
     return max(1, round(Decimal("365.25") / Decimal(median(days))))
 
 
+LARGE_ISSUER_RUB: Final = 5_000_000_000
+"""Issuers whose active RUB bonds outstanding (face x issue size) reach this must have a
+curated group (TDM brief HS4); the others missing one are listed in the issuers coverage."""
+
 FACE_TOLERANCE: Final = Decimal("0.005")
 """Per-bond amounts are rounded to kopecks / cents by MOEX: steps closer than this match."""
 
@@ -362,9 +366,26 @@ def _issuer_coverage(
             "with_sector": sum(1 for i in rows if i["sector"]),
         }
 
+    outstanding: Counter[int] = Counter()
+    for b in bonds:
+        if (
+            b["status"] == "active"
+            and b["issuer_id"] is not None
+            and b["face_unit"] == "RUB"
+            and b["face_value"] is not None
+            and b["issue_size"] is not None
+        ):
+            outstanding[b["issuer_id"]] += b["face_value"] * b["issue_size"]
+    large = {iid for iid, v in outstanding.items() if v >= LARGE_ISSUER_RUB}
     return {
         **rates(issuers),
         "of_active_non_structured": rates([i for i in issuers if i["issuer_id"] in active]),
+        "with_group": sum(1 for i in issuers if i["group_id"]),
+        "large_issuers_rub": len(large),
+        "large_issuer_threshold_rub": LARGE_ISSUER_RUB,
+        "large_issuers_without_group": sorted(
+            i["issuer_id"] for i in issuers if i["issuer_id"] in large and not i["group_id"]
+        ),
         "by_sector": dict(sorted(Counter(i["sector"] or "none" for i in issuers).items())),
         "by_sector_source": dict(
             sorted(Counter(r.get("sector_source") or "none" for r in rows).items())
@@ -559,8 +580,15 @@ def build_static(
             "name": i["name"],
             "short_name": i["short_name"],
             "sector": i["sector"],
+            "sector_source": i["sector_source"] if i["sector"] is not None else None,
+            "okved": i["okved"],
+            "okved_version": i["okved_version"],
             "country": i["country"],
             "is_sovereign": bool(i["is_sovereign"]),
+            "group_id": i["group_id"],
+            "group_name": i["group_name"],
+            "group_relation": i["group_relation"],
+            "is_state_owned": i["is_state_owned"],
         }
         for i in issuers
     ]

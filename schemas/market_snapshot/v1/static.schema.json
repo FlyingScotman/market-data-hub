@@ -784,8 +784,15 @@
         "name",
         "short_name",
         "sector",
+        "sector_source",
+        "okved",
+        "okved_version",
         "country",
-        "is_sovereign"
+        "is_sovereign",
+        "group_id",
+        "group_name",
+        "group_relation",
+        "is_state_owned"
       ],
       "properties": {
         "issuer_id": {
@@ -821,6 +828,30 @@
             "null"
           ]
         },
+        "sector_source": {
+          "description": "Where sector came from: okved (OKVED2 mapping) | curated (per-INN entry) | group (curated issuer group) | rule (bond-class or name rule of mdhub/data/sector_map.json); null without sector",
+          "enum": [
+            "okved",
+            "curated",
+            "group",
+            "rule",
+            null
+          ]
+        },
+        "okved": {
+          "description": "Main OKVED2 activity code; null: not loaded (FNS registers not reachable from the hub)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "okved_version": {
+          "description": "OKVED classifier version of okved (e.g. OKVED2)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "country": {
           "type": [
             "string",
@@ -829,6 +860,37 @@
         },
         "is_sovereign": {
           "type": "boolean"
+        },
+        "group_id": {
+          "description": "Curated issuer group (mdhub/data/issuer_groups_curated.json); null: not mapped",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "group_name": {
+          "description": "Display name of the group, e.g. Газпром, ВТБ, РЖД",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "group_relation": {
+          "enum": [
+            "parent",
+            "subsidiary",
+            "spv",
+            "securitization_spv",
+            "affiliate",
+            null
+          ]
+        },
+        "is_state_owned": {
+          "description": "true only where an evidence document states it; null: not established",
+          "type": [
+            "boolean",
+            "null"
+          ]
         }
       }
     },

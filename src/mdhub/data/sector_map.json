@@ -25,7 +25,7 @@
   "issuers": {
     "7708503727": {"sector": "transport", "name": "ОАО \"РЖД\""},
     "7750004150": {"sector": "other", "name": "ВЭБ.РФ", "note": "state development corporation"},
-    "7729355029": {"sector": "other", "name": "АО \"ДОМ.РФ\"", "note": "state housing development institution"}
+    "7729355614": {"sector": "other", "name": "ПАО ДОМ.РФ", "note": "state housing development institution"}
   },
   "okved_prefixes": [
     {"prefix": "64.19", "sector": "banks"},
