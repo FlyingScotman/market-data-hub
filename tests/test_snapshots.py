@@ -192,6 +192,61 @@ def test_coverage_labels_instead_of_exclusion(seeded: Conn, db: Database) -> Non
     assert _all_snapshots_valid(seeded) == 2
 
 
+@pytest.mark.parametrize("mode", ["eod_preliminary", "eod_final"])
+def test_eod_keeps_quoted_matured_and_delisted_bonds(seeded: Conn, db: Database, mode: str) -> None:
+    historical_day = date(2026, 1, 5)
+    seeded.execute(
+        "UPDATE md.bond_eod SET trade_date=%s WHERE trade_date=%s", (historical_day, DAY)
+    )
+    seeded.execute(
+        "UPDATE md.bond_eod_yield SET trade_date=%s WHERE trade_date=%s", (historical_day, DAY)
+    )
+    seeded.execute(
+        "UPDATE ref.bond SET status='matured', maturity_date='2026-02-01' "
+        "WHERE secid='SU26242RMFS0'"
+    )
+    seeded.execute("UPDATE ref.bond SET status='delisted' WHERE secid='RU000A105X12'")
+    # This bond has only yield analytics, not a price row. Its static must survive too.
+    seeded.execute("UPDATE ref.bond SET status='delisted' WHERE secid='DUPB'")
+    seeded.execute(
+        "INSERT INTO md.bond_eod_yield (trade_date,secid,board,effective_yield_pct) "
+        "VALUES (%s,'DUPB','TQOD',15)",
+        (historical_day,),
+    )
+    seeded.commit()
+    known = utc_now()
+    out = publish_market_snapshot(
+        db, cut_type=mode, business_date=historical_day, cut_ts=_cut_ts(), known_at=known
+    )
+    static = _bundle(seeded, out.static.id)
+    market = _bundle(seeded, out.market.id)
+    instruments = {i["secid"]: i for i in static["data"]["instruments"]}
+    quoted = {q["secid"] for q in market["data"]["bond_quotes"]}
+    retained = {"SU26242RMFS0", "RU000A105X12", "DUPB"}
+    assert retained <= quoted
+    assert retained <= instruments.keys()
+    assert instruments["SU26242RMFS0"]["status"] == "matured"
+    assert instruments["RU000A105X12"]["status"] == "delisted"
+    assert all("retained_for_market_quote" in instruments[s]["labels"] for s in retained)
+    assert "OLD1" not in instruments  # no quote on this cut's date
+    assert not [e for e in market["excluded"] if e["reason"] == "not_in_static_snapshot"]
+    assert _all_snapshots_valid(seeded) == 2
+    # Plain daily static keeps its existing active/recently-matured scope.
+    with db.connection() as c:
+        daily = build_static(c, cut=Cut("static", "daily", DAY, _cut_ts(), known))
+    assert not (retained & daily.universe)
+    # Replay must not see quote rows ingested after known_at.
+    seeded.execute(
+        "INSERT INTO md.bond_eod (trade_date,secid,board,close) VALUES (%s,'OLD1','TQCB',99)",
+        (historical_day,),
+    )
+    seeded.commit()
+    replay = publish_market_snapshot(
+        db, cut_type=mode, business_date=historical_day, cut_ts=_cut_ts(), known_at=known
+    )
+    assert replay.market.id == out.market.id and replay.market.status == "unchanged"
+
+
 def test_republish_same_content_is_unchanged_and_correction_supersedes(
     seeded: Conn, db: Database
 ) -> None:

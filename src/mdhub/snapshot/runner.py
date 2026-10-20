@@ -75,8 +75,23 @@ def publish_market_snapshot(
     market_cut = Cut("market", cut_type, business_date, cut_ts, known_at)
     with db.connection() as conn:
         _read_only(conn)
+        quoted_secids = (
+            frozenset(
+                row["secid"]
+                for row in conn.execute(
+                    "SELECT secid FROM md.bond_eod_known_at(%(t)s, %(d)s, %(d)s) "
+                    "UNION SELECT secid FROM md.bond_eod_yield_known_at(%(t)s, %(d)s, %(d)s)",
+                    {"t": known_at, "d": business_date},
+                ).fetchall()
+            )
+            if cut_type in ("eod_preliminary", "eod_final")
+            else frozenset()
+        )
         static_build: Build = build_static(
-            conn, cut=static_cut, matured_lookback_days=matured_lookback_days
+            conn,
+            cut=static_cut,
+            matured_lookback_days=matured_lookback_days,
+            quoted_secids=quoted_secids,
         )
         market_build = build_market(conn, cut=market_cut, static=static_build, params=params)
     with db.connection() as conn:
