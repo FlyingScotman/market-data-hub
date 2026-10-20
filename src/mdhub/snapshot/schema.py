@@ -8,13 +8,13 @@ finds either. Validation uses JSON Schema draft 2020-12 with a local registry (n
 from __future__ import annotations
 
 import json
-from functools import cache
+import re
+from functools import cache, partial
 from pathlib import Path
 from typing import Any, Final
 
-from jsonschema import Draft202012Validator
-from jsonschema.exceptions import ValidationError
-from referencing import Registry, Resource
+from jsonschema import Draft202012Validator as PythonValidator
+from jsonschema_rs import Draft202012Validator, Registry, ValidationError
 
 from mdhub.core.errors import MdhubError
 
@@ -38,6 +38,32 @@ class SnapshotSchemaError(MdhubError, ValueError):
     """A snapshot document does not conform to the contract schema."""
 
 
+class _PythonType:
+    """Keep Python jsonschema's types (notably lists, not tuples, for arrays)."""
+
+    def __init__(
+        self, parent_schema: dict[str, Any], value: Any, schema_path: list[str | int]
+    ) -> None:
+        self.types: tuple[str, ...] = (value,) if isinstance(value, str) else tuple(value)
+
+    def validate(self, instance: Any) -> None:
+        if not any(PythonValidator.TYPE_CHECKER.is_type(instance, t) for t in self.types):
+            raise ValueError(f"expected type {' or '.join(self.types)}")
+
+
+class _PythonPattern:
+    """Keep Python regex semantics, including $ matching before a final newline."""
+
+    def __init__(
+        self, parent_schema: dict[str, Any], value: Any, schema_path: list[str | int]
+    ) -> None:
+        self.pattern: re.Pattern[str] = re.compile(value)
+
+    def validate(self, instance: Any) -> None:
+        if isinstance(instance, str) and self.pattern.search(instance) is None:
+            raise ValueError(f"does not match {self.pattern.pattern!r}")
+
+
 def schema_dir() -> Path:
     """Directory holding ``*.schema.json`` (packaged copy first, then the source tree)."""
     here = Path(__file__).resolve()
@@ -56,29 +82,43 @@ def schema_dir() -> Path:
 
 
 @cache
-def _registry() -> Registry[Any]:
-    resources = []
+def _schemas() -> dict[str, Any]:
+    schemas = {}
     for path in sorted(schema_dir().glob("*.schema.json")):
         doc = json.loads(path.read_text(encoding="utf-8"))
-        resources.append((str(doc["$id"]), Resource.from_contents(doc)))
-    registry: Registry[Any] = Registry().with_resources(resources)
-    return registry
+        schemas[str(doc["$id"])] = doc
+    return schemas
+
+
+@cache
+def _registry() -> Registry:
+    return Registry(list(_schemas().items()))
 
 
 @cache
 def validator(name: str = "snapshot") -> Draft202012Validator:
     """Validator of ``<name>.schema.json`` (snapshot, static, market, manifest)."""
-    schema = _registry().contents(f"{BASE_URI}{name}.schema.json")
+    schema = _schemas()[f"{BASE_URI}{name}.schema.json"]
     return Draft202012Validator(
-        schema, registry=_registry(), format_checker=Draft202012Validator.FORMAT_CHECKER
+        schema,
+        registry=_registry(),
+        offline=True,
+        keywords={"type": _PythonType, "pattern": _PythonPattern},
+        # These are v1's formats. Keep the old checker, including its optional date-time
+        # dependency, rather than silently changing acceptance with native format checks.
+        formats={
+            name: partial(PythonValidator.FORMAT_CHECKER.conforms, format=name)
+            for name in ("date", "date-time")
+        },
+        validate_formats=True,
     )
 
 
 def _check(name: str, document: Any) -> None:
-    errors = sorted(validator(name).iter_errors(document), key=lambda e: list(e.absolute_path))
+    errors = sorted(validator(name).iter_errors(document), key=lambda e: e.instance_path)
     if errors:
         first: ValidationError = errors[0]
-        where = "/".join(str(p) for p in first.absolute_path) or "<root>"
+        where = "/".join(str(p) for p in first.instance_path) or "<root>"
         raise SnapshotSchemaError(
             f"{name} schema: {len(errors)} error(s); first at {where}: {first.message[:300]}"
         )

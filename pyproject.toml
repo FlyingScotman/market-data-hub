@@ -25,6 +25,7 @@ dependencies = [
   "python-multipart>=0.0.9",
   "psutil>=6,<8",
   "jsonschema>=4.23,<5",
+  "jsonschema-rs==0.59.0",
 ]
 
 [project.scripts]
