@@ -1246,6 +1246,9 @@ def schedule_constant_fixed(
 
 AMORTIZING_BOND_TYPES: Final = frozenset({"Амортизируемая облигация", "Амортизируемые облигации"})
 """MOEX BOND_TYPE labels of amortizers (they say nothing about the coupon)."""
+AMORTIZER_MIN_RATE_PCT: Final = Decimal("0.1")
+"""Constant rates up to 0.1 % p.a. are placeholders of investment notes whose income is a
+payoff (e.g. АЛЬФАБ1Р42 0.01 %, СберИОС119 0.016 % on 2026-10-20), not a fixed coupon."""
 
 
 def amortizer_constant_fixed(inp: ClassifyInput) -> bool:
@@ -1254,7 +1257,7 @@ def amortizer_constant_fixed(inp: ClassifyInput) -> bool:
     there is no COUPON_DETAILS, no COUPON_BENCHMARK and no rate formula from any source (a
     floater with any benchmark evidence is classified floating first), every coupon - paid
     and future - is valued, and one positive rate (``value_prc``) runs over the whole
-    schedule. Unlike :func:`schedule_constant_fixed` it needs no paid coupon across a key-rate
+    schedule (above :data:`AMORTIZER_MIN_RATE_PCT`). Unlike :func:`schedule_constant_fixed` it needs no paid coupon across a key-rate
     change, so new issues qualify; consumers can tell the weaker evidence by the basis."""
     if inp.bond_type not in AMORTIZING_BOND_TYPES:
         return False
@@ -1266,7 +1269,7 @@ def amortizer_constant_fixed(inp: ClassifyInput) -> bool:
     if len(values) != 1:
         return False
     (value,) = values
-    return value is not None and value > 0
+    return value is not None and value > AMORTIZER_MIN_RATE_PCT
 
 
 def fixed_known_label(inp: ClassifyInput) -> str | None:

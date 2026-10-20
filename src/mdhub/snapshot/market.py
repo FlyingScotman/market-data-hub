@@ -339,9 +339,7 @@ def _curve_sets(conn: DictConnection, t: datetime, d: date, prov: Provenance) ->
     present = {(s["source"], s["dataset"]) for s in snaps}
     present_datasets = {ds for _, ds in present}
     without_source = [ds for ds in REQUIRED_CURVE_DATASETS if ds not in present_datasets]
-    stale.extend(
-        f"{ds}: no quote set from any source on {d.isoformat()}" for ds in without_source
-    )
+    stale.extend(f"{ds}: no quote set from any source on {d.isoformat()}" for ds in without_source)
     return Dataset(
         "curve_quote_sets",
         out,

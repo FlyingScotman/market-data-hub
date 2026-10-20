@@ -446,6 +446,7 @@ def test_hs6_new_amortizer_with_constant_rate_is_fixed() -> None:
         ("rates_differ", amortizer([Decimal(17), Decimal(16)]), "unknown"),
         ("blank_future", amortizer([Decimal(17), None]), "variable_known"),
         ("zero_rate", amortizer([Decimal(0)] * 2), "unknown"),
+        ("note_placeholder_rate", amortizer([Decimal("0.01")] * 3), "unknown"),
         ("not_amortizer", amortizer([Decimal(17)] * 3, bond_type=None), "unknown"),
     ],
 )
