@@ -88,7 +88,7 @@ the static universe), `fx_swap`, `not_an_outright`, `non_rub_pair`, `precious_me
 |---|---|---|
 | `bond_quotes` | BondQuote (EOD) | `md.bond_eod` + `md.bond_eod_yield` of the business date; empty in intraday cuts |
 | `bond_quotes_intraday` | BondQuote (intraday) | latest stored quote per (secid, board) on the business date; empty in EOD cuts |
-| `curve_quote_sets` | CurveQuoteSet | latest snapshot per (source, dataset) fetched on the business date; `labels`: `mid_only`, `market_closed`, `source_clock_not_on_business_date` |
+| `curve_quote_sets` | CurveQuoteSet | latest snapshot per (source, dataset) fetched on the business date; `labels`: `mid_only`, `market_closed`, `source_clock_not_on_business_date`. `coverage.required_without_any_source` lists `ruonia_ois` / `key_rate_swap` when no source delivered it on the date (the dataset is then `stale`) |
 | `zcyc_params` | ZcycParams | EOD cuts: the end-of-day publication (else the latest, flagged stale); intraday: the latest |
 | `fixings` | Fixing | `md.fixing` and the RUSFAR family from `md.index_eod` (`origin`) |
 | `fx_rates` | FxRate | RUB per 1 unit: `cbr_official`, `moex_eod` (raw price, `quote_units`, exact per-unit value), `moex_indicative_14` / `_19` |

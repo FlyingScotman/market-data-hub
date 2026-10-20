@@ -288,6 +288,31 @@ def test_static_publishes_alive_bonds_that_are_not_traded(seeded: Conn, db: Data
     assert _all_snapshots_valid(seeded) == 1
 
 
+def test_market_cut_flags_required_curve_without_any_source(seeded: Conn, db: Database) -> None:
+    """WEB-8/WEB-13: every cut reports whether ruonia_ois and key_rate_swap came from at least
+    one source; a missing one is a stale reason, never a forward-filled value."""
+    seeded.execute("DELETE FROM md.curve_quote")
+    seeded.execute("DELETE FROM md.curve_snapshot")
+    seeded.execute(
+        "INSERT INTO md.curve_snapshot (source, dataset, quote_basis, fetched_at, snapshot_date, "
+        "content_sha256, parser_version) VALUES ('ratescalcs', 'ruonia_ois', 'bid_ask_mid', "
+        "%s, %s, %s, 't')",
+        (_cut_ts(DAY, 12, 0), DAY, "0" * 64),
+    )
+    seeded.commit()
+    out = publish_market_snapshot(
+        db, cut_type="eod_preliminary", business_date=DAY, cut_ts=_cut_ts(), known_at=utc_now()
+    )
+    market = _bundle(seeded, out.market.id)
+    ds = next(d for d in market["datasets"] if d["name"] == "curve_quote_sets")
+    assert ds["coverage"]["required_datasets"] == ["key_rate_swap", "ruonia_ois"]
+    assert ds["coverage"]["required_without_any_source"] == ["key_rate_swap"]
+    assert ds["stale"] and any(
+        r.startswith("key_rate_swap: no quote set from any source") for r in ds["stale_reasons"]
+    )
+    assert [q["dataset"] for q in market["data"]["curve_quote_sets"]] == ["ruonia_ois"]
+
+
 def test_republish_same_content_is_unchanged_and_correction_supersedes(
     seeded: Conn, db: Database
 ) -> None:
