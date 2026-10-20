@@ -142,3 +142,11 @@ def test_undated_offer_reasons() -> None:
     )
     assert undated_offer_reason(_offer(start=date(2027, 1, 1)), TODAY) == "undated_window_future"
     assert undated_offer_reason(_offer(), TODAY) == "undated_unexplained"
+
+
+def test_intraday_cuts_carry_floater_fixing_history() -> None:
+    """TDM HR3: intraday cuts need >= 200 days of fixings (OFZ-PK, RUONIA floaters)."""
+    from mdhub.snapshot.market import MarketParams
+
+    p = MarketParams()
+    assert p.intraday_fixing_lookback_days >= 200 and p.fixing_lookback_days >= 400

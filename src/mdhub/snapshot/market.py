@@ -68,7 +68,10 @@ class MarketParams:
 
     fixing_lookback_days: int = 400
     """EOD cuts: fixings with fixing_date in [D - n, D + fx_forward_days] (floater history)."""
-    intraday_fixing_lookback_days: int = 7
+    intraday_fixing_lookback_days: int = 200
+    """Intraday cuts: fixings with fixing_date in [D - n, D + fx_forward_days]. OFZ-PK and
+    RUONIA floaters need the compounding / averaging history of the current coupon period
+    (up to ~6 months), so intraday cuts carry 200 days (TDM HR3; EOD cuts 400)."""
     fx_lookback_days: int = 0
     """CBR official rates: effective dates in [D - n, D + fx_forward_days] (one row per
     calendar day the rate is in force)."""

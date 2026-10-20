@@ -425,7 +425,7 @@ EOD cuts: bond EOD + yields of D, curve sets fetched on D (latest per source/dat
 [D-400, D+7] (RUSFAR family from `md.index_eod`), CBR official FX in force on [D, D+7], MOEX FX
 EOD (RUB outrights; swaps, non-RUB pairs, metals excluded with reasons), indicative 14:00/19:00,
 ECB of [D-7, D], CBR meetings. Intraday cuts: latest intraday bond quotes of D, curves, latest
-ZCYC, fixings of [D-7, D+7], FX; ~10 KB gzip. Coverage (expected/missing curve series, `required_without_any_source` for
+ZCYC, fixings of [D-200, D+7] (floater coupon-period history, TDM HR3; was D-7), FX. Coverage (expected/missing curve series, `required_without_any_source` for
 `ruonia_ois`/`key_rate_swap` — stale when a cut has neither source —, latest
 fixing dates, universe without quote) and stale reasons are per dataset in the manifest; no
 forward fill.
