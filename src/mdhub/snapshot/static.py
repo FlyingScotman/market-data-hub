@@ -198,10 +198,7 @@ def face_schedule_labels(
             Decimal(0),
         )  # fmt: skip
 
-    if fd is not None:
-        candidates = [owed(fd < business_date)]
-    else:
-        candidates = [owed(True), owed(False)]
+    candidates = [owed(fd < business_date)] if fd is not None else [owed(True), owed(False)]
     differ = (
         "future_redemptions_differ_from_face"
         if all(abs(c - face) > FACE_TOLERANCE for c in candidates)
