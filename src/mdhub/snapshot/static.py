@@ -8,7 +8,11 @@ at ``known_at``: their rows carry an earlier ``ingested_at``).
 
 Universe: bonds whose status (as known) is ``active``, plus ``matured`` bonds with a maturity
 date within :data:`MATURED_LOOKBACK_DAYS` before the business date (late EOD rows and final
-redemptions stay quotable). For a linked EOD market cut, ``quoted_secids`` also retains any
+redemptions stay quotable), plus **alive bonds that are not traded** (``delisted`` with a
+maturity date on or after the business date, or perpetual; label ``not_traded``): desk
+positions resolve by ISIN against the instruments, also when MOEX lists no board for the
+bond. A ``delisted`` bond without a maturity date that is not perpetual is not included (its
+life cannot be established). For a linked EOD market cut, ``quoted_secids`` also retains any
 known instrument with a price or yield on that date, including older matured and delisted
 bonds (label ``retained_for_market_quote``). Missing reference instruments are not invented.
 Inside the universe nothing is excluded: unknown coupon types, perpetuals, missing day
@@ -48,17 +52,29 @@ BOND_CALENDAR: Final = "MOEX_STOCK"
 _PROVISIONAL_SOURCES: Final = frozenset({"curated_unverified"})
 
 
+def _alive_not_traded(b: dict[str, Any], day: date) -> bool:
+    """``delisted`` but alive on ``day``: perpetual or maturing on/after it (HS2)."""
+    return b["status"] == "delisted" and bool(
+        b["is_perpetual"] or (b["maturity_date"] is not None and b["maturity_date"] >= day)
+    )
+
+
 def _universe(
-    conn: DictConnection, known_at: datetime, since: date, quoted_secids: frozenset[str]
+    conn: DictConnection,
+    known_at: datetime,
+    since: date,
+    day: date,
+    quoted_secids: frozenset[str],
 ) -> list[dict[str, Any]]:
     return conn.execute(
         """
         SELECT * FROM ref.bond_known_at(%(t)s) b
         WHERE b.status = 'active' OR (b.status = 'matured' AND b.maturity_date >= %(since)s)
+           OR (b.status = 'delisted' AND (b.is_perpetual OR b.maturity_date >= %(day)s))
            OR b.secid = ANY(%(quoted)s)
         ORDER BY b.secid
         """,
-        {"t": known_at, "since": since, "quoted": sorted(quoted_secids)},
+        {"t": known_at, "since": since, "day": day, "quoted": sorted(quoted_secids)},
     ).fetchall()
 
 
@@ -223,7 +239,7 @@ def build_static(
     t = cut.known_at
     since = cut.business_date - timedelta(days=matured_lookback_days)
     prov = Provenance()
-    bonds = _universe(conn, t, since, quoted_secids)
+    bonds = _universe(conn, t, since, cut.business_date, quoted_secids)
     secids = [b["secid"] for b in bonds]
     universe = frozenset(secids)
 
@@ -275,8 +291,10 @@ def build_static(
                     and b["maturity_date"] is not None
                     and b["maturity_date"] >= since
                 )
+                or _alive_not_traded(b, cut.business_date)
             )
             else None,
+            "not_traded" if _alive_not_traded(b, cut.business_date) else None,
             "coupon_type_unknown" if b["coupon_type"] == "unknown" else None,
             "perpetual" if b["is_perpetual"] else None,
             "perpetual_no_call_date"
@@ -413,7 +431,8 @@ def build_static(
             "instruments",
             instruments,
             {
-                "universe": "status active, or matured with maturity_date >= since"
+                "universe": "status active, or matured with maturity_date >= since, or "
+                "delisted and alive (perpetual or maturity_date >= business_date)"
                 + (", or quoted in the linked market cut" if quoted_secids else ""),
                 "since": since,
                 "by_coupon_type": dict(sorted(Counter(b["coupon_type"] for b in bonds).items())),
@@ -454,9 +473,9 @@ def build_static(
         datasets=datasets,
         calendar=cal_summary,
         parameters={
-            "universe": "active_or_recently_matured_or_quoted"
+            "universe": "active_or_recently_matured_or_alive_or_quoted"
             if quoted_secids
-            else "active_or_recently_matured",
+            else "active_or_recently_matured_or_alive",
             "matured_lookback_days": matured_lookback_days,
             "bond_calendar": BOND_CALENDAR,
         },

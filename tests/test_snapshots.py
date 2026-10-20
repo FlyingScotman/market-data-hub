@@ -205,9 +205,15 @@ def test_eod_keeps_quoted_matured_and_delisted_bonds(seeded: Conn, db: Database,
         "UPDATE ref.bond SET status='matured', maturity_date='2026-02-01' "
         "WHERE secid='SU26242RMFS0'"
     )
-    seeded.execute("UPDATE ref.bond SET status='delisted' WHERE secid='RU000A105X12'")
+    # delisted after maturity (not alive on the cut's date: outside the default universe)
+    seeded.execute(
+        "UPDATE ref.bond SET status='delisted', maturity_date='2026-01-01' "
+        "WHERE secid='RU000A105X12'"
+    )
     # This bond has only yield analytics, not a price row. Its static must survive too.
-    seeded.execute("UPDATE ref.bond SET status='delisted' WHERE secid='DUPB'")
+    seeded.execute(
+        "UPDATE ref.bond SET status='delisted', maturity_date='2026-01-01' WHERE secid='DUPB'"
+    )
     seeded.execute(
         "INSERT INTO md.bond_eod_yield (trade_date,secid,board,effective_yield_pct) "
         "VALUES (%s,'DUPB','TQOD',15)",
@@ -245,6 +251,41 @@ def test_eod_keeps_quoted_matured_and_delisted_bonds(seeded: Conn, db: Database,
         db, cut_type=mode, business_date=historical_day, cut_ts=_cut_ts(), known_at=known
     )
     assert replay.market.id == out.market.id and replay.market.status == "unchanged"
+
+
+def test_static_publishes_alive_bonds_that_are_not_traded(seeded: Conn, db: Database) -> None:
+    """HS2: delisted bonds that are alive (maturity on/after the business date, or perpetual)
+    are instruments with label ``not_traded``; dead or undated delisted bonds are not."""
+    seeded.execute(
+        "UPDATE ref.bond SET status='delisted', maturity_date='2046-03-01' "
+        "WHERE secid='RU000A105X12'"
+    )
+    seeded.execute(
+        "UPDATE ref.bond SET status='delisted' WHERE secid='RU000PERP001'"
+    )  # perpetual, maturity NULL
+    seeded.execute(
+        "UPDATE ref.bond SET status='delisted', maturity_date=%s WHERE secid='DUPA'",
+        (DAY - timedelta(days=1),),
+    )  # matured before the business date
+    seeded.execute(
+        "UPDATE ref.bond SET status='delisted', maturity_date=NULL WHERE secid='DUPB'"
+    )  # life unknown
+    seeded.commit()
+    out = publish_static_snapshot(
+        db, cut_type="daily", business_date=DAY, cut_ts=_cut_ts(DAY, 7, 45), known_at=utc_now()
+    )
+    doc = _bundle(seeded, out.id)
+    inst = {i["secid"]: i for i in doc["data"]["instruments"]}
+    assert inst["RU000A105X12"]["status"] == "delisted"
+    assert "not_traded" in inst["RU000A105X12"]["labels"]
+    assert "retained_for_market_quote" not in inst["RU000A105X12"]["labels"]
+    assert {"not_traded", "perpetual"} <= set(inst["RU000PERP001"]["labels"])
+    assert "DUPA" not in inst and "DUPB" not in inst
+    assert {r["secid"] for r in doc["data"]["id_map"]} >= {"RU000A105X12", "RU000PERP001"}
+    cov = next(d for d in doc["datasets"] if d["name"] == "instruments")["coverage"]
+    assert cov["by_status"]["delisted"] == 2 and cov["labels"]["not_traded"] == 2
+    assert doc["parameters"]["universe"] == "active_or_recently_matured_or_alive"
+    assert _all_snapshots_valid(seeded) == 1
 
 
 def test_republish_same_content_is_unchanged_and_correction_supersedes(

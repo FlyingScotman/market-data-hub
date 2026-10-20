@@ -400,7 +400,8 @@ reproduces it byte for byte, except for rows whose writing transaction was still
 `md.zcyc_snapshot.is_eod` and same-`ts` revisions of intraday quotes are not versioned.
 
 **Static snapshot.** Universe: bonds `active` as known, plus `matured` with maturity within 31
-days before the business date. A static linked to an EOD market cut also retains every known
+days before the business date, plus alive bonds that MOEX does not trade (`delisted` with a
+maturity on/after the business date, or perpetual; label `not_traded`, WEB-13 HS2). A static linked to an EOD market cut also retains every known
 instrument with an EOD price or yield on that cut's business date, read at the same `known_at`.
 Older matured and delisted instruments are labelled `retained_for_market_quote`; their
 stored status/terms are preserved, not rewritten into a historical claim. Plain daily static
