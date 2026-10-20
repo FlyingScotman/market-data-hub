@@ -83,6 +83,7 @@ the static universe), `fx_swap`, `not_an_outright`, `non_rub_pair`, `precious_me
 | Array | Object | Notes |
 |---|---|---|
 | `instruments` | Instrument | `ref.bond` + boards. Universe: `active`, plus `matured` with maturity within `parameters.matured_lookback_days`, plus alive bonds MOEX no longer trades (`delisted` with `maturity_date >= business_date`, or perpetual; label `not_traded`; `parameters.universe = active_or_recently_matured_or_alive`); linked EOD static also retains known instruments with price/yield on the market date, even if now matured/delisted. All reads respect `known_at`; stored terms/status are not rewritten. `labels`: `retained_for_market_quote` (outside default universe), `not_traded` (alive but delisted: no MOEX board lists it), `coupon_type_unknown`, `perpetual`, `perpetual_no_call_date`, `day_count_not_published`, `floater_formula_missing`, `floater_formula_partial`, `coupon_schedule_empty`, `no_issuer`, `structured`, `matured` |
+| | | 1.1: `lat_name` (MOEX LATNAME); `coupon_frequency_schedule` = `round(365.25 / median period)` of the published coupon schedule (null with < 2 dated periods) next to `coupon_frequency` as MOEX states it (MOEX omits it when the first period is irregular) |
 | `coupon_periods` | CouponPeriod | `status`: only `known` is a fact; `current_published`, `projected_by_moex`, `unknown` are MOEX projections / gaps |
 | `redemptions` | Redemption | `kind` amortization / maturity |
 | `offers` | Offer | every source; `labels`: `date_missing` |

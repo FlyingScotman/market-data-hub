@@ -40,6 +40,7 @@
         "qualified_only",
         "high_risk",
         "coupon_frequency",
+        "coupon_frequency_schedule",
         "coupon_period_days",
         "day_count",
         "day_count_source",
@@ -261,6 +262,14 @@
             "integer",
             "null"
           ]
+        },
+        "coupon_frequency_schedule": {
+          "description": "Coupons per year from the published schedule: round(365.25 / median coupon period in days) over all coupon periods with start and pay dates; null with fewer than 2 such periods. coupon_frequency stays as MOEX states it (MOEX omits it when the first period is irregular)",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
         },
         "coupon_period_days": {
           "type": [

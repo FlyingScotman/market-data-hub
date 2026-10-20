@@ -30,6 +30,8 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta
+from decimal import Decimal
+from statistics import median
 from typing import Any, Final, LiteralString
 
 from psycopg import sql
@@ -43,6 +45,7 @@ __all__ = [
     "MATURED_LOOKBACK_DAYS",
     "build_static",
     "calendar_objects",
+    "coupon_frequency_from_schedule",
 ]
 
 MATURED_LOOKBACK_DAYS: Final = 31
@@ -97,8 +100,27 @@ def _boards(conn: DictConnection, known_at: datetime, secids: list[str]) -> list
     ).fetchall()
 
 
+def coupon_frequency_from_schedule(coupons: list[dict[str, Any]]) -> int | None:
+    """Coupons per year from a schedule (HS7): ``round(365.25 / median period)`` over the
+    periods with both ``start_date`` and ``pay_date`` (positive length); ``None`` with fewer
+    than two such periods. Irregular first/last periods do not move the median."""
+    days = sorted(
+        (c["pay_date"] - c["start_date"]).days
+        for c in coupons
+        if c["start_date"] is not None and c["pay_date"] is not None
+        and c["pay_date"] > c["start_date"]
+    )  # fmt: skip
+    if len(days) < 2:
+        return None
+    return max(1, round(Decimal("365.25") / Decimal(median(days))))
+
+
 def _instrument(
-    b: dict[str, Any], boards: list[dict[str, Any]], labels: list[str]
+    b: dict[str, Any],
+    boards: list[dict[str, Any]],
+    labels: list[str],
+    *,
+    schedule_frequency: int | None = None,
 ) -> dict[str, Any]:
     return {
         "secid": b["secid"],
@@ -132,6 +154,7 @@ def _instrument(
         "qualified_only": b["qualified_only"],
         "high_risk": b["high_risk"],
         "coupon_frequency": b["coupon_frequency"],
+        "coupon_frequency_schedule": schedule_frequency,
         "coupon_period_days": b["coupon_period_days"],
         "day_count": b["day_count"],
         "day_count_source": b["day_count_source"],
@@ -304,6 +327,9 @@ def build_static(
     for r in boards:
         boards_of[r["secid"]].append(r)
     coupon_count = Counter(c["secid"] for c in coupons)
+    coupons_of: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for c in coupons:
+        coupons_of[c["secid"]].append(c)
     formula_of = {f["secid"]: f for f in formulas}
     issuer_set = {i["issuer_id"] for i in issuers}
     scheduled_calls = {
@@ -343,7 +369,14 @@ def build_static(
             "matured" if b["status"] == "matured" else None,
         )
         label_counts.update(labels)
-        instruments.append(_instrument(b, boards_of[b["secid"]], labels))
+        instruments.append(
+            _instrument(
+                b,
+                boards_of[b["secid"]],
+                labels,
+                schedule_frequency=coupon_frequency_from_schedule(coupons_of[b["secid"]]),
+            )
+        )
     prov.add_rows("instruments", bonds)
 
     coupon_rows = [
