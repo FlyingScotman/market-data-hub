@@ -365,7 +365,7 @@ def test_group_file_validation() -> None:
         },
         {**base, "issuers": {"1": {"group_id": "x", "group_relation": "parent"}}},
     ):
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError, match="issuer groups"):
             rules.load_groups(bad)
 
 
