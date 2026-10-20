@@ -346,6 +346,29 @@ def calendar_objects(
     return out, summary, eff
 
 
+def _rating_coverage(ratings: list[dict[str, Any]], bonds: list[dict[str, Any]]) -> dict[str, Any]:
+    """HS5 coverage: issuers of active non-structured RUB corporate bonds with a rating (the
+    desk's acceptance base); ``sources`` names where rows came from. No source rows is shown as
+    zero coverage, never filled from elsewhere."""
+    base = {
+        b["issuer_id"]
+        for b in bonds
+        if b["status"] == "active"
+        and b["bond_class"] == "corporate"
+        and not b["is_structured"]
+        and b["face_unit"] == "RUB"
+        and b["issuer_id"] is not None
+    }
+    rated = {r["issuer_id"] for r in ratings if r["issuer_id"] in base}
+    return {
+        "rows": len(ratings),
+        "by_agency": dict(sorted(Counter(r["agency"] for r in ratings).items())),
+        "sources": sorted({r["source"] for r in ratings}),
+        "active_rub_corporate_issuers": len(base),
+        "active_rub_corporate_issuers_rated": len(rated),
+    }
+
+
 def _issuer_coverage(
     issuers: list[dict[str, Any]], bonds: list[dict[str, Any]], rows: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -428,6 +451,11 @@ def build_static(
         "SELECT * FROM ref.issuer_known_at(%(t)s) x WHERE x.issuer_id = ANY(%(i)s) "
         "ORDER BY x.issuer_id",
         {"t": t, "i": issuer_ids},
+    ).fetchall()
+    rating_rows = conn.execute(
+        "SELECT * FROM ref.bond_rating_known_at(%(t)s) x WHERE x.secid = ANY(%(s)s) "
+        "ORDER BY x.secid, x.agency, x.scale, x.source",
+        {"t": t, "s": secids},
     ).fetchall()
     isin_rows = conn.execute(
         "SELECT secid, isin FROM ref.bond_known_at(%(t)s) WHERE isin IS NOT NULL",
@@ -593,6 +621,24 @@ def build_static(
         for i in issuers
     ]
     prov.add_rows("issuers", issuers)
+    issuer_of = {b["secid"]: b["issuer_id"] for b in bonds}
+    ratings_out = [
+        {
+            "scope": "issue",
+            "secid": r["secid"],
+            "issuer_id": r["issuer_id"] if r["issuer_id"] is not None else issuer_of[r["secid"]],
+            "agency": r["agency"],
+            "scale": r["scale"],
+            "rating": r["rating"],
+            "outlook": r["outlook"],
+            "watch": None,
+            "rating_date": r["rating_date"],
+            "action": None,
+            "source": r["source"],
+        }
+        for r in rating_rows
+    ]
+    prov.add_rows("ratings", rating_rows)
     for r in cal_rows:
         prov.add("calendars", r["source"], r["run_id"], r["ingested_at"])
 
@@ -646,6 +692,7 @@ def build_static(
             },
         ),
         Dataset("issuers", issuer_out, _issuer_coverage(issuer_out, bonds, issuers)),
+        Dataset("ratings", ratings_out, _rating_coverage(ratings_out, bonds)),
         Dataset(
             "calendars",
             calendars,

@@ -313,6 +313,46 @@ def test_market_cut_flags_required_curve_without_any_source(seeded: Conn, db: Da
     assert [q["dataset"] for q in market["data"]["curve_quote_sets"]] == ["ruonia_ois"]
 
 
+def test_static_ratings_dataset_verbatim_and_honest_coverage(seeded: Conn, db: Database) -> None:
+    """HS5: ratings come from ref.bond_rating as known at known_at, verbatim; without source
+    rows the dataset is empty and its coverage says so (nothing inferred)."""
+    known_empty = utc_now()
+    seeded.execute(
+        "INSERT INTO ref.bond_rating (secid, agency, scale, source, rating, outlook, rating_date) "
+        "VALUES ('RU000A105X12', 'АКРА', 'Национальная шкала для Российской Федерации', "
+        "'cbonds', 'A(RU)', 'Стабильный', '2026-05-01')"
+    )
+    seeded.commit()
+    out = publish_static_snapshot(
+        db, cut_type="daily", business_date=DAY, cut_ts=_cut_ts(DAY, 7, 45), known_at=utc_now()
+    )
+    doc = _bundle(seeded, out.id)
+    assert doc["data"]["ratings"] == [
+        {
+            "scope": "issue",
+            "secid": "RU000A105X12",
+            "issuer_id": 2,
+            "agency": "АКРА",
+            "scale": "Национальная шкала для Российской Федерации",
+            "rating": "A(RU)",
+            "outlook": "Стабильный",
+            "watch": None,
+            "rating_date": "2026-05-01",
+            "action": None,
+            "source": "cbonds",
+        }
+    ]
+    cov = next(d for d in doc["datasets"] if d["name"] == "ratings")["coverage"]
+    assert cov["sources"] == ["cbonds"] and cov["active_rub_corporate_issuers_rated"] == 1
+    # replay before the row existed: empty, coverage shows the gap
+    with db.connection() as c:
+        empty = build_static(c, cut=Cut("static", "daily", DAY, _cut_ts(DAY, 7, 45), known_empty))
+    ds = next(d for d in empty.datasets if d.name == "ratings")
+    assert ds.rows == [] and ds.coverage["active_rub_corporate_issuers_rated"] == 0
+    assert ds.coverage["sources"] == []
+    assert _all_snapshots_valid(seeded) == 1
+
+
 def test_republish_same_content_is_unchanged_and_correction_supersedes(
     seeded: Conn, db: Database
 ) -> None:

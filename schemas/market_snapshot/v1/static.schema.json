@@ -894,6 +894,92 @@
         }
       }
     },
+    "rating": {
+      "description": "Credit rating as known at known_at (ref.bond_rating; 1.1, HS5). Values verbatim from the source, nothing inferred; withdrawn ratings are absent or carry action = withdrawn",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "secid",
+        "issuer_id",
+        "agency",
+        "scale",
+        "rating",
+        "outlook",
+        "watch",
+        "rating_date",
+        "action",
+        "source"
+      ],
+      "properties": {
+        "scope": {
+          "description": "issue: rating of the bond secid; issuer: rating of issuer_id",
+          "enum": [
+            "issue",
+            "issuer"
+          ]
+        },
+        "secid": {
+          "description": "scope issue: the rated bond; issuer: null",
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/secid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "issuer_id": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "agency": {
+          "description": "Agency as the source names it (e.g. АКРА, Эксперт РА, НКР, НРА)",
+          "type": "string"
+        },
+        "scale": {
+          "description": "Rating scale as the source names it (e.g. national scale for the Russian Federation); empty string when the source gives none",
+          "type": "string"
+        },
+        "rating": {
+          "description": "Rating verbatim",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outlook": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "watch": {
+          "description": "Rating watch / under review flag as published; null when the source does not publish it",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rating_date": {
+          "$ref": "common.schema.json#/$defs/date_or_null"
+        },
+        "action": {
+          "description": "Rating action as published (assigned, affirmed, upgraded, downgraded, withdrawn, ...); null when the source does not publish it",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "Hub source of the row (cbonds, ...)",
+          "type": "string"
+        }
+      }
+    },
     "calendar": {
       "description": "Business-day calendar from ref.calendar_effective as known at known_at (not ref.weekend_session)",
       "type": "object",
@@ -1070,6 +1156,7 @@
         "offers",
         "floater_formulas",
         "issuers",
+        "ratings",
         "calendars",
         "id_map"
       ],
@@ -1108,6 +1195,12 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/issuer"
+          }
+        },
+        "ratings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rating"
           }
         },
         "calendars": {
