@@ -14,9 +14,18 @@ are in [`docs/DESIGN.md`](../../../docs/DESIGN.md) §11.
 | `common.schema.json` | Shared definitions: decimal strings, dates, UTC instants, sha256, labels |
 | `fixtures/` | Golden bundles built from public data (`index.json` lists their ids) |
 
-`schema_version` is `market_snapshot/1.0`. Every schema object has
+`schema_version` is `market_snapshot/1.1`. Every schema object has
 `additionalProperties: false`: a new field is a schema version bump, so a consumer pinned to
 an older version fails its conformance tests instead of silently ignoring it.
+
+**Versions.** A minor version (`1.x`) only adds fields, datasets, enum values or labels; it
+never removes, renames or changes the meaning or unit of an existing field. A consumer that
+reads `1.x` and ignores unknown additive fields stays correct; a new major (`2.0`) is refused.
+
+| Version | Change (all additive) |
+|---|---|
+| 1.0 | initial contract |
+| 1.1 (WEB-13, TDM brief R9) | Instrument `lat_name` (HS12), `coupon_frequency_schedule` (HS7), `face_value_date` (HS11); Issuer `sector_source`, `okved`, `okved_version` (HS3), `group_id`, `group_name`, `group_relation`, `is_state_owned` (HS4); dataset `ratings` (HS5) |
 
 ## Identity
 

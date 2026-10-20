@@ -15,6 +15,7 @@
         "issuer_id",
         "name",
         "short_name",
+        "lat_name",
         "sec_type",
         "bond_type",
         "bond_subtype",
@@ -79,6 +80,13 @@
           ]
         },
         "short_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lat_name": {
+          "description": "MOEX LATNAME verbatim (Latin name; SHORTNAME is cut at 10 characters)",
           "type": [
             "string",
             "null"

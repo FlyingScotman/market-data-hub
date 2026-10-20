@@ -107,6 +107,7 @@ def _instrument(
         "issuer_id": b["issuer_id"],
         "name": b["name"],
         "short_name": b["short_name"],
+        "lat_name": b["lat_name"],
         "sec_type": b["sec_type"],
         "bond_type": b["bond_type"],
         "bond_subtype": b["bond_subtype"],
