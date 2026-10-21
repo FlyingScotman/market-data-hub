@@ -110,6 +110,14 @@ class JobSpec:
     name: str
     description: str
     fn: Callable[..., Any]
+    lock_key: Callable[[Mapping[str, Any]], str] | None = None
+    """Lock name per run from the coerced parameters (default: the job name). Lets independent
+    variants of one job run side by side (``snapshot_market``: intraday cuts vs. EOD cuts vs.
+    rebuilds of past days), each still exclusive among its own runs."""
+
+    def lock_name(self, params: Mapping[str, Any]) -> str:
+        """Advisory lock name of a run with ``params`` (``mdhub.job:<lock_name>``)."""
+        return self.lock_key(params) if self.lock_key is not None else self.name
 
     @property
     def module(self) -> str:
@@ -130,7 +138,14 @@ class JobRegistry:
     def __init__(self) -> None:
         self._jobs: dict[str, JobSpec] = {}
 
-    def register(self, name: str, description: str, fn: Callable[..., Any]) -> JobSpec:
+    def register(
+        self,
+        name: str,
+        description: str,
+        fn: Callable[..., Any],
+        *,
+        lock_key: Callable[[Mapping[str, Any]], str] | None = None,
+    ) -> JobSpec:
         """Register ``fn`` as ``name``.
 
         Re-registering the same function (same module + qualname, e.g. on reload) replaces
@@ -148,7 +163,7 @@ class JobRegistry:
                 f"job {name!r} already registered by {existing.fn.__module__}."
                 f"{existing.fn.__qualname__}"
             )
-        spec = JobSpec(name=name, description=description, fn=fn)
+        spec = JobSpec(name=name, description=description, fn=fn, lock_key=lock_key)
         self._jobs[name] = spec
         return spec
 
@@ -175,11 +190,17 @@ class JobRegistry:
 REGISTRY: Final = JobRegistry()
 
 
-def job(name: str, description: str) -> Callable[[F], F]:
-    """Decorator registering ``fn(ctx, **params)`` in :data:`REGISTRY` as job ``name``."""
+def job(
+    name: str,
+    description: str,
+    *,
+    lock_key: Callable[[Mapping[str, Any]], str] | None = None,
+) -> Callable[[F], F]:
+    """Decorator registering ``fn(ctx, **params)`` in :data:`REGISTRY` as job ``name``
+    (``lock_key``: :attr:`JobSpec.lock_key`)."""
 
     def decorator(fn: F) -> F:
-        REGISTRY.register(name, description, fn)
+        REGISTRY.register(name, description, fn, lock_key=lock_key)
         return fn
 
     return decorator
@@ -514,7 +535,8 @@ def run_job(
     """Run job ``name`` once and record it in ``ops.job_run``.
 
     :param params: raw parameters (strings are coerced per annotations).
-    :param exclusive: hold advisory lock ``mdhub.job:<name>``; if another run holds it (after
+    :param exclusive: hold advisory lock ``mdhub.job:<name>`` (or the job's per-run
+        :attr:`JobSpec.lock_key` name); if another run holds it (after
         waiting up to ``lock_wait_s``) the job is recorded as ``skipped`` with an error text
         starting ``lock_busy:`` and not executed.
     :param lock_wait_s: how long to wait for the lock (scheduled runs wait; default 0).
@@ -539,7 +561,11 @@ def run_job(
 
     lock_cm: AbstractContextManager[str | None] = (
         _job_lock(
-            db, name, wait_s=lock_wait_s, poll_s=lock_poll_s, yield_to_waiters=yield_to_waiters
+            db,
+            spec.lock_name(coerced),
+            wait_s=lock_wait_s,
+            poll_s=lock_poll_s,
+            yield_to_waiters=yield_to_waiters,
         )
         if exclusive
         else _no_lock()

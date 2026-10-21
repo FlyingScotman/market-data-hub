@@ -3164,20 +3164,18 @@
     "source_ts": "2026-10-15T15:21:07Z"
    },
    {
-    "content_sha256": "1afa4b615aa9378fd40d3e8f99a83a986c639bd06535516f41e94acfd875e937",
+    "content_sha256": "c5e177cedc7b96f89bfd785da0fbf10b3f14b8b2542360d862c3adda701d370c",
     "dataset": "key_rate_swap",
-    "fetched_at": "2026-10-15T15:15:00Z",
+    "fetched_at": "2026-10-15T09:00:00Z",
     "label": null,
-    "labels": [
-     "mid_only"
-    ],
+    "labels": [],
     "market_closed": null,
-    "quote_basis": "mid_only",
-    "quote_set_id": 2068,
+    "quote_basis": "bid_ask_mid",
+    "quote_set_id": 2067,
     "quotes": [
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "14.1",
+      "bid_pct": "13.9",
       "extra": null,
       "mid_pct": "14.0",
       "pillar_date": null,
@@ -3187,8 +3185,8 @@
       "tenor_months": 3
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "14.26",
+      "bid_pct": "14.09",
       "extra": null,
       "mid_pct": "14.175",
       "pillar_date": null,
@@ -3198,8 +3196,8 @@
       "tenor_months": 6
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "14.34",
+      "bid_pct": "14.16",
       "extra": null,
       "mid_pct": "14.25",
       "pillar_date": null,
@@ -3209,8 +3207,8 @@
       "tenor_months": 9
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "14.47",
+      "bid_pct": "14.27",
       "extra": null,
       "mid_pct": "14.37",
       "pillar_date": null,
@@ -3220,8 +3218,8 @@
       "tenor_months": 12
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "14.6",
+      "bid_pct": "14.4",
       "extra": null,
       "mid_pct": "14.5",
       "pillar_date": null,
@@ -3231,8 +3229,8 @@
       "tenor_months": 24
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "14.89",
+      "bid_pct": "14.72",
       "extra": null,
       "mid_pct": "14.805",
       "pillar_date": null,
@@ -3242,8 +3240,8 @@
       "tenor_months": 36
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "15.15",
+      "bid_pct": "14.95",
       "extra": null,
       "mid_pct": "15.05",
       "pillar_date": null,
@@ -3253,8 +3251,8 @@
       "tenor_months": 48
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "15.35",
+      "bid_pct": "15.17",
       "extra": null,
       "mid_pct": "15.26",
       "pillar_date": null,
@@ -3264,8 +3262,8 @@
       "tenor_months": 60
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "15.5",
+      "bid_pct": "15.31",
       "extra": null,
       "mid_pct": "15.405",
       "pillar_date": null,
@@ -3275,8 +3273,8 @@
       "tenor_months": 72
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "15.6",
+      "bid_pct": "15.4",
       "extra": null,
       "mid_pct": "15.5",
       "pillar_date": null,
@@ -3286,8 +3284,8 @@
       "tenor_months": 84
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "15.67",
+      "bid_pct": "15.47",
       "extra": null,
       "mid_pct": "15.57",
       "pillar_date": null,
@@ -3297,8 +3295,8 @@
       "tenor_months": 96
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "15.72",
+      "bid_pct": "15.52",
       "extra": null,
       "mid_pct": "15.62",
       "pillar_date": null,
@@ -3308,8 +3306,8 @@
       "tenor_months": 108
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "15.7",
+      "bid_pct": "15.56",
       "extra": null,
       "mid_pct": "15.63",
       "pillar_date": null,
@@ -3321,23 +3319,21 @@
     ],
     "snapshot_date": "2026-10-15",
     "source": "otc_monitor",
-    "source_ts": "2026-10-15T15:02:19Z"
+    "source_ts": "2026-10-15T08:58:34Z"
    },
    {
-    "content_sha256": "336260627c18cf6775d17ed7cfeae43e9d3afea329a61973b7b847cbe90ba53c",
+    "content_sha256": "18893d51082ead291c445078b93c92ccf14184a8fae1904d68d7ea57f461448d",
     "dataset": "ruonia_ois",
-    "fetched_at": "2026-10-15T15:15:00Z",
+    "fetched_at": "2026-10-15T09:00:00Z",
     "label": null,
-    "labels": [
-     "mid_only"
-    ],
+    "labels": [],
     "market_closed": null,
-    "quote_basis": "mid_only",
-    "quote_set_id": 2133,
+    "quote_basis": "bid_ask_mid",
+    "quote_set_id": 2132,
     "quotes": [
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "13.9",
+      "bid_pct": "13.7",
       "extra": null,
       "mid_pct": "13.8",
       "pillar_date": null,
@@ -3347,8 +3343,8 @@
       "tenor_months": null
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "13.95",
+      "bid_pct": "13.75",
       "extra": null,
       "mid_pct": "13.85",
       "pillar_date": null,
@@ -3358,8 +3354,8 @@
       "tenor_months": null
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "14.03",
+      "bid_pct": "13.83",
       "extra": null,
       "mid_pct": "13.93",
       "pillar_date": null,
@@ -3369,8 +3365,8 @@
       "tenor_months": 1
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "14.15",
+      "bid_pct": "13.95",
       "extra": null,
       "mid_pct": "14.05",
       "pillar_date": null,
@@ -3380,8 +3376,8 @@
       "tenor_months": 2
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "14.19",
+      "bid_pct": "13.99",
       "extra": null,
       "mid_pct": "14.09",
       "pillar_date": null,
@@ -3391,8 +3387,8 @@
       "tenor_months": 3
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "14.32",
+      "bid_pct": "14.12",
       "extra": null,
       "mid_pct": "14.22",
       "pillar_date": null,
@@ -3402,8 +3398,8 @@
       "tenor_months": 6
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "14.4",
+      "bid_pct": "14.2",
       "extra": null,
       "mid_pct": "14.3",
       "pillar_date": null,
@@ -3413,8 +3409,8 @@
       "tenor_months": 9
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "14.51",
+      "bid_pct": "14.32",
       "extra": null,
       "mid_pct": "14.415",
       "pillar_date": null,
@@ -3424,8 +3420,8 @@
       "tenor_months": 12
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "14.69",
+      "bid_pct": "14.5",
       "extra": null,
       "mid_pct": "14.595",
       "pillar_date": null,
@@ -3435,8 +3431,8 @@
       "tenor_months": 24
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "14.97",
+      "bid_pct": "14.77",
       "extra": null,
       "mid_pct": "14.87",
       "pillar_date": null,
@@ -3446,8 +3442,8 @@
       "tenor_months": 36
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "15.2",
+      "bid_pct": "15.0",
       "extra": null,
       "mid_pct": "15.1",
       "pillar_date": null,
@@ -3457,8 +3453,8 @@
       "tenor_months": 48
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "15.42",
+      "bid_pct": "15.22",
       "extra": null,
       "mid_pct": "15.32",
       "pillar_date": null,
@@ -3468,8 +3464,8 @@
       "tenor_months": 60
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "15.56",
+      "bid_pct": "15.36",
       "extra": null,
       "mid_pct": "15.46",
       "pillar_date": null,
@@ -3479,8 +3475,8 @@
       "tenor_months": 72
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "15.65",
+      "bid_pct": "15.46",
       "extra": null,
       "mid_pct": "15.555",
       "pillar_date": null,
@@ -3490,8 +3486,8 @@
       "tenor_months": 84
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "15.72",
+      "bid_pct": "15.54",
       "extra": null,
       "mid_pct": "15.63",
       "pillar_date": null,
@@ -3501,8 +3497,8 @@
       "tenor_months": 96
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "15.77",
+      "bid_pct": "15.6",
       "extra": null,
       "mid_pct": "15.685",
       "pillar_date": null,
@@ -3512,8 +3508,8 @@
       "tenor_months": 108
      },
      {
-      "ask_pct": null,
-      "bid_pct": null,
+      "ask_pct": "15.81",
+      "bid_pct": "15.61",
       "extra": null,
       "mid_pct": "15.71",
       "pillar_date": null,
@@ -3525,7 +3521,7 @@
     ],
     "snapshot_date": "2026-10-15",
     "source": "otc_monitor",
-    "source_ts": "2026-10-15T15:01:57Z"
+    "source_ts": "2026-10-15T08:58:35Z"
    },
    {
     "content_sha256": "c5e177cedc7b96f89bfd785da0fbf10b3f14b8b2542360d862c3adda701d370c",
@@ -15699,6 +15695,7 @@
  "datasets": [
   {
    "coverage": {
+    "basis": "moex_history",
     "secids": 10,
     "trade_date": "2026-10-15",
     "universe": 11,
@@ -15722,6 +15719,8 @@
   },
   {
    "coverage": {
+    "eod_cutoff_msk": "19:00",
+    "eod_rule": "latest_bid_ask_within_cutoff_else_latest",
     "expected": [
      "otc_monitor/cny_ruonia_xccy",
      "otc_monitor/cny_rusfar_ois",
@@ -15756,12 +15755,9 @@
    },
    "name": "curve_quote_sets",
    "rows": 7,
-   "sha256": "a6942f1cd10ce9b6462f353d084699a50a2027e165ccc7bfca3e944a59c0d48c",
-   "stale": true,
-   "stale_reasons": [
-    "otc_monitor/key_rate_swap: mid-only quotes (off-hours mark)",
-    "otc_monitor/ruonia_ois: mid-only quotes (off-hours mark)"
-   ]
+   "sha256": "7ddf77fe9d2208c1907072487ae4e31a48e89693efa5dcc257dd887726faeeb0",
+   "stale": false,
+   "stale_reasons": []
   },
   {
    "coverage": {

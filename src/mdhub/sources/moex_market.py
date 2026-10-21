@@ -85,7 +85,8 @@ __all__ = [
     "parse_zcyc",
 ]
 
-PARSER_VERSION: Final = "1"
+PARSER_VERSION: Final = "2"
+"""2: bonds marketdata ``LCLOSEPRICE`` (``legal_close``, official close after the session)."""
 
 BONDS_HISTORY_PATH: Final = "/history/engines/stock/markets/bonds/securities.json"
 BONDS_YIELDS_PATH: Final = "/history/engines/stock/markets/bonds/yields.json"
@@ -311,6 +312,7 @@ BOND_QUOTE_FIELDS: Final[tuple[FieldSpec, ...]] = (
     ("market_price_today", "MARKETPRICETODAY", "dec"),
     ("lcurrent_price", "LCURRENTPRICE", "dec"),
     ("close_price", "CLOSEPRICE", "dec"),
+    ("legal_close", "LCLOSEPRICE", "dec"),
     ("yield_pct", "YIELD", "dec"),
     ("yield_at_waprice_pct", "YIELDATWAPRICE", "dec"),
     ("yield_to_offer_pct", "YIELDTOOFFER", "dec"),
@@ -346,6 +348,7 @@ BOND_QUOTE_COMPARE: Final = (
     "market_price",
     "lcurrent_price",
     "close_price",
+    "legal_close",
     "yield_pct",
     "yield_at_waprice_pct",
     "num_trades",

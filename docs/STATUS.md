@@ -4,6 +4,11 @@
 > use [ROADMAP.md](../ROADMAP.md), updated 19 October 2026. Earlier "Remaining steps" and
 > source-access assumptions below may have been superseded; recheck before acting.
 
+> **2026-10-21 (WEB-17):** EOD fixes from the live check of 21.10 (eod_preliminary bonds from the
+> intraday close, per-mode snapshot locks, curve EOD rule with bid/ask inside the window,
+> RU_PRODUCTION from the official calendar) on branch `claude/hub-eod-fixes` (intended release
+> 0.3.1): [ROADMAP.md](../ROADMAP.md) WEB-17, [deploy/UPGRADE_TO_0.3.1.md](../deploy/UPGRADE_TO_0.3.1.md).
+
 > **2026-10-21 (WEB-16):** €STR / SOFR fixings with fallback chains, cross rates (`md.fx_cross`:
 > CBR / MOEX derived, MOEX CETS, FRED H.10; ECB fallback host), proxy curves (UST par, ECB AAA par,
 > Bundesbank), official CPI y/y (CBR) and Rosstat release dates, contract `market_snapshot/1.3`,

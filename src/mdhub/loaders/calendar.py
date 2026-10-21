@@ -13,8 +13,10 @@ MOEX_FX         ``observed_moex_fx``: CETS    ``curated`` / ``curated_unverified
                 CNYRUB_TOM history row        versioned file ``mdhub/data/calendar_curated.json``
 MOEX_FORTS      ``observed_moex_forts``: Si
                 futures volume > 0
-RU_PRODUCTION   ``observed_cbr_ruonia``: a    ``curated`` (Government decrees on transfers)
-                RUONIA fixing exists (md.fixing)
+RU_PRODUCTION   ``curated`` (Labour Code      ``curated`` (Government decrees on transfers)
+                art. 112 + transfer decrees,
+                2019-) for past days too;
+                RUONIA only cross-checks it
 TARGET          (none - rule only)            ``rule_target`` for past *and* future days:
                                               :func:`target_closing_days` (Jan 1, Good Friday,
                                               Easter Monday, May 1, Dec 25, Dec 26) + weekends,
@@ -24,15 +26,24 @@ TARGET          (none - rule only)            ``rule_target`` for past *and* fut
 =============== ============================ ===============================================
 
 Observed rows cover every calendar day from the start date (:data:`OBSERVED_START`, 2019) to the
-last observed day (days without trading / a fixing -> ``false``). Curated and ISS-calendar rows
-are written only for days after the last observed day of the calendar. TARGET has no observed
+last observed day (days without trading -> ``false``). Curated and ISS-calendar rows are written
+only for days after the last observed day of the calendar - except for the
+:data:`OFFICIAL_CURATED_CALENDARS` (RU_PRODUCTION): the official production calendar is known
+for every year, so its curated rows cover past days as well and the calendar is never derived
+from the data it gates (review §2.5 item 6: deriving it from RUONIA turned a business day
+without a RUONIA fixing - the last working day of every year 2019-2025, the 2020 non-working
+days - into a holiday, so a missing RUONIA was invisible). The former ``observed_cbr_ruonia``
+rows are soft-deleted where a curated year covers the day (:func:`retire_source`); RUONIA dates
+only cross-check the calendar (:func:`ruonia_crosscheck`: a fixing on a non-business day ->
+warning, run ``partial``; a business day without a fixing is a data gap of ``cbr_ruonia``,
+reported by the ``quality`` job). TARGET has no observed
 source: the rule is exact (ECB rate dates 2015-2026 match it day for day), and deriving the
 calendar from ``md.ecb_fx`` would turn a failed ECB load into a holiday. ECB data only
 cross-checks the rule (:func:`target_crosscheck`): a rule business day without rates (past the
 no-data grace period, inside the ECB data range) or rates on a rule closing day -> warning and
-run ``partial``, the calendar is not changed. Known limitation of the observed calendars
-(RU_PRODUCTION from RUONIA, MOEX from trading history): a day whose source data failed to load
-before a refresh becomes a non-business day. A row is (re)written
+run ``partial``, the calendar is not changed. Known limitation of the observed MOEX calendars
+(from trading history): a day whose source data failed to load before a refresh becomes a
+non-business day. A row is (re)written
 only when ``is_business_day`` changes (``known_at`` = when that became known; the old image
 goes to ``ops.row_history``; ``ingested_at`` = when the hub wrote that version). Repair on every
 refresh: ISS-calendar rows that the current ISS answer no longer lists are soft-deleted
@@ -95,6 +106,8 @@ __all__ = [
     "iss_weekend_sessions",
     "load_curated",
     "refresh_calendar",
+    "retire_source",
+    "ruonia_crosscheck",
     "seed_calendar",
     "target_closing_days",
     "target_crosscheck",
@@ -123,6 +136,10 @@ curated file > anything else; the weekday rule applies only when no row exists. 
 (``known_at``) only breaks ties within a rank. Mirrored by ``ref.calendar_source_rank``
 (migrations 0420, 0422) used by ``ref.calendar_effective`` and
 :class:`mdhub.core.bizday.DbCalendar`."""
+OFFICIAL_CURATED_CALENDARS: Final = frozenset({"RU_PRODUCTION"})
+"""Calendars whose curated years are the authority for past days too (module doc)."""
+RETIRED_RUONIA_SOURCE: Final = "observed_cbr_ruonia"
+"""Former RU_PRODUCTION source (RUONIA observation days); soft-deleted where curated."""
 TARGET_CALENDAR: Final = "TARGET"
 TARGET_RULE_SOURCE: Final = "rule_target"
 """The only TARGET source: :func:`target_rule_days` for every day (past and future)."""
@@ -367,6 +384,46 @@ def _drop_unlisted(
     if n:
         log.warning("calendar %s: removed %d %s row(s) no longer listed", calendar, n, source)
     return UpsertResult(updated=max(n, 0))
+
+
+def retire_source(
+    conn: psycopg.Connection[Any],
+    calendar: str,
+    source: str,
+    days: Iterable[date],
+    *,
+    run_id: int | None,
+) -> UpsertResult:
+    """Soft-delete the ``(calendar, source)`` rows of ``days`` (a versioned change, as
+    :func:`_drop_unlisted`). Counted as updates."""
+    wanted = sorted(set(days))
+    if not wanted:
+        return UpsertResult()
+    with conn.cursor(row_factory=tuple_row) as cur:
+        _set_history_run(cur, run_id)
+        cur.execute(
+            """
+            UPDATE ref.calendar_day c
+            SET is_deleted = true, ingested_at = now(), run_id = %(run)s
+            WHERE c.calendar = %(cal)s AND c.source = %(src)s AND NOT c.is_deleted
+              AND c.day = ANY(%(days)s::date[])
+            """,
+            {"cal": calendar, "src": source, "days": wanted, "run": run_id},
+        )
+        n = cur.rowcount
+        _set_history_run(cur, None)
+    if n:
+        log.warning("calendar %s: retired %d %s row(s)", calendar, n, source)
+    return UpsertResult(updated=max(n, 0))
+
+
+def ruonia_crosscheck(
+    fixing_dates: Iterable[date], is_business_day: Callable[[date], bool], today: date
+) -> tuple[list[date], list[date]]:
+    """RUONIA observation dates vs the RU_PRODUCTION calendar, as :func:`target_crosscheck`:
+    ``(missing, unexpected)`` - business days without a fixing (grace over) and fixings on
+    non-business days."""
+    return target_crosscheck(fixing_dates, is_business_day, today)
 
 
 def _last_observed(conn: psycopg.Connection[Any], calendar: str) -> date | None:
@@ -672,8 +729,9 @@ def _fetch_iss_calendars(
 def refresh_calendar(
     ctx: JobContext, *, full: bool = False, since: date | None = None
 ) -> dict[str, Any]:
-    """Refresh ``ref.calendar_day`` (observed history, MOEX ISS calendar, curated file,
-    TARGET rule) and cross-check TARGET against the ECB rate dates.
+    """Refresh ``ref.calendar_day`` (observed MOEX history, MOEX ISS calendar, curated file,
+    TARGET rule) and cross-check RU_PRODUCTION against the RUONIA dates and TARGET against the
+    ECB rate dates.
 
     ``full`` re-reads observed history from ``since``; otherwise from the last observed day
     minus :data:`INCREMENTAL_OVERLAP_DAYS`. ``since`` defaults to :data:`OBSERVED_START`
@@ -718,30 +776,6 @@ def refresh_calendar(
                 )
 
             step(source, observed)
-
-        def ruonia(conn: psycopg.Connection[Any]) -> UpsertResult:
-            source = "observed_cbr_ruonia"
-            start = _observed_start(conn, "RU_PRODUCTION", source, full=full, since=base)
-            with conn.cursor(row_factory=tuple_row) as cur:
-                dates = [
-                    r[0]
-                    for r in cur.execute(
-                        """SELECT fixing_date FROM md.fixing
-                           WHERE index_code = 'RUONIA' AND source = 'cbr' AND fixing_date >= %s""",
-                        (start,),
-                    ).fetchall()
-                ]
-            return write_calendar_days(
-                conn,
-                "RU_PRODUCTION",
-                source,
-                observed_days(dates, start),
-                known_at=utc_now(),
-                run_id=ctx.run.id,
-                note="CBR RUONIA observation days (md.fixing)",
-            )
-
-        step("observed_cbr_ruonia", ruonia)
 
         def iss_calendar(conn: psycopg.Connection[Any]) -> UpsertResult:
             rows, caps = _fetch_iss_calendars(ctx, http, conn)
@@ -796,8 +830,13 @@ def refresh_calendar(
         cc = load_curated()
         total = UpsertResult()
         for cy in cc.years:
-            last = _last_observed(conn, cy.calendar)
+            official = cy.calendar in OFFICIAL_CURATED_CALENDARS
+            last = None if official else _last_observed(conn, cy.calendar)
             days = {d: v for d, v in cy.days().items() if last is None or d > last}
+            if official and cy.source == "curated":
+                total += retire_source(
+                    conn, cy.calendar, RETIRED_RUONIA_SOURCE, days, run_id=ctx.run.id
+                )
             total += write_calendar_days(
                 conn,
                 cy.calendar,
@@ -865,6 +904,61 @@ def refresh_calendar(
             failures.append(msg)
         summary["target_crosscheck"] = result
 
+    def ruonia_check(conn: psycopg.Connection[Any]) -> None:
+        """RUONIA fixing dates vs the effective RU_PRODUCTION calendar (from the curated
+        years). Reports only - never changes the calendar; missing fixings are gaps of the
+        ``cbr_ruonia`` dataset (quality job)."""
+        lo = base if full or since is not None else today - timedelta(days=62)
+        lo = max(lo, OBSERVED_START)
+        with conn.cursor(row_factory=tuple_row) as cur:
+            dates = [
+                r[0]
+                for r in cur.execute(
+                    """SELECT fixing_date FROM md.fixing
+                       WHERE index_code = 'RUONIA' AND source = 'cbr' AND fixing_date >= %s""",
+                    (lo,),
+                ).fetchall()
+            ]
+            flags: dict[date, bool] = dict(
+                cur.execute(
+                    """SELECT day, is_business_day FROM ref.calendar_effective
+                       WHERE calendar = 'RU_PRODUCTION' AND day BETWEEN %s AND %s""",
+                    (lo, today),
+                ).fetchall()
+            )
+        if not dates:
+            summary["ruonia_crosscheck"] = {"checked_days": 0}
+            return
+        missing, unexpected = ruonia_crosscheck(
+            dates, lambda d: flags.get(d, d.weekday() < 5), today
+        )
+        summary["ruonia_crosscheck"] = {
+            "checked_days": len(dates),
+            "business_days_without_ruonia": [d.isoformat() for d in missing],
+            "ruonia_on_non_business_days": [d.isoformat() for d in unexpected],
+        }
+        if missing:
+            ctx.logger.info(
+                "calendar RU_PRODUCTION: %d business day(s) without a RUONIA fixing %s "
+                "(data gaps of cbr_ruonia, not holidays)",
+                len(missing),
+                _short(missing),
+            )
+        if unexpected:
+            msg = (
+                f"calendar RU_PRODUCTION cross-check: {len(unexpected)} RUONIA fixing(s) on "
+                f"non-business days {_short(unexpected)}; calendar unchanged"
+            )
+            ctx.logger.warning(msg)
+            failures.append(msg)
+
+    try:
+        with ctx.connection() as conn:
+            ruonia_check(conn)
+    except (psycopg.Error, ValueError) as exc:
+        ctx.logger.exception("calendar RUONIA cross-check failed")
+        failures.append(f"calendar ruonia_crosscheck: {type(exc).__name__}: {exc}")
+        summary["ruonia_crosscheck"] = "failed"
     try:
         with ctx.connection() as conn:
             target_check(conn)
@@ -892,8 +986,8 @@ def seed_calendar(
 ) -> dict[str, Any]:
     """Initial full seeding outside the scheduler (one ``ops.job_run`` named
     ``calendar_seed``). ``since`` defaults to :data:`OBSERVED_START` (TARGET:
-    :data:`TARGET_RULE_START`). Load RUONIA history first (``cbr_daily``) for RU_PRODUCTION
-    (and ECB history, ``ecb_fx``, for the TARGET cross-check)."""
+    :data:`TARGET_RULE_START`). Load RUONIA history (``cbr_daily``) and ECB history (``ecb_fx``)
+    first for the RU_PRODUCTION and TARGET cross-checks."""
     settings = credentials.resolve(settings)  # not run_job: resolve as it would
     with job_run(db, "calendar_seed", {"since": since}, settings=settings, trigger="cli") as run:
         ctx = JobContext(

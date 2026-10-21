@@ -1,14 +1,14 @@
 """``mdhub calendar seed [--since YYYY-MM-DD]``: (re)seed the business-day calendars.
 
 Runs :func:`mdhub.loaders.calendar.seed_calendar` (one ``ops.job_run`` named
-``calendar_seed``): observed MOEX trading days and CBR RUONIA observation days from ``--since``
-(default 2019-01-01), the days the MOEX ISS calendar lists (plus the weekend sessions of each
-engine -> ``ref.weekend_session``), the curated file and the TARGET closing-day rule (from
-2002-01-01, or ``--since`` if later; cross-checked against the ECB rate dates). Re-running it
-repairs earlier data (ISS rows no longer listed are removed unless the ISS answer looks
-incomplete; source precedence decides).
-Load RUONIA history first (``cbr_daily``) for RU_PRODUCTION (and ECB history, ``ecb_fx``, for
-the TARGET cross-check).
+``calendar_seed``): observed MOEX trading days from ``--since`` (default 2019-01-01), the days
+the MOEX ISS calendar lists (plus the weekend sessions of each engine ->
+``ref.weekend_session``), the curated file (RU_PRODUCTION: the official production calendar of
+every curated year, past days included; RUONIA dates only cross-check it) and the TARGET
+closing-day rule (from 2002-01-01, or ``--since`` if later; cross-checked against the ECB rate
+dates). Re-running it repairs earlier data (ISS rows no longer listed are removed unless the ISS
+answer looks incomplete; former ``observed_cbr_ruonia`` rows are retired; source precedence
+decides). Load RUONIA (``cbr_daily``) and ECB history (``ecb_fx``) first for the cross-checks.
 """
 
 from __future__ import annotations
