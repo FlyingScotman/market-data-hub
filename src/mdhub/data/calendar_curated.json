@@ -1,7 +1,7 @@
 {
   "format": 1,
-  "version": "2026-10-16.1",
-  "known_at": "2026-10-16T00:00:00+03:00",
+  "version": "2026-10-21.1",
+  "known_at": "2026-10-21T00:00:00+03:00",
   "description": "Curated business-day calendars for days not yet observed. Per year: weekdays that are NOT business days (non_working) and weekend days that ARE business days (working_weekends); every other day follows Monday-Friday. Past days are superseded by observed trading (ref.calendar_day source observed_*), current-year MOEX days by the MOEX ISS calendar (source moex_iss_calendar).",
   "calendars": {
     "RU_PRODUCTION": [
@@ -21,6 +21,86 @@
                         "2027-02-22", "2027-02-23", "2027-03-08", "2027-05-03", "2027-05-10", "2027-06-14",
                         "2027-11-04", "2027-11-05", "2027-12-31"],
         "working_weekends": ["2027-02-20"]
+      },
+      {
+        "year": 2028,
+        "source": "curated_unverified",
+        "reference": "Provisional (no Government transfer decree yet): Labour Code art. 112 only - weekday holidays Jan 1-8, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4; a holiday other than Jan 1-6/8 on a weekend moves to the next working day. The decree's moves of the January weekend days (2026-2027: to a day in May/November and to Dec 31) and its working Saturdays are not known yet",
+        "non_working": ["2028-01-03", "2028-01-04", "2028-01-05", "2028-01-06", "2028-01-07", "2028-02-23", "2028-03-08", "2028-05-01",
+                        "2028-05-09", "2028-06-12", "2028-11-06"],
+        "working_weekends": []
+      },
+      {
+        "year": 2029,
+        "source": "curated_unverified",
+        "reference": "Provisional (no Government transfer decree yet): Labour Code art. 112 only - weekday holidays Jan 1-8, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4; a holiday other than Jan 1-6/8 on a weekend moves to the next working day. The decree's moves of the January weekend days (2026-2027: to a day in May/November and to Dec 31) and its working Saturdays are not known yet",
+        "non_working": ["2029-01-01", "2029-01-02", "2029-01-03", "2029-01-04", "2029-01-05", "2029-01-08", "2029-01-09", "2029-02-23",
+                        "2029-03-08", "2029-05-01", "2029-05-09", "2029-06-12", "2029-11-05"],
+        "working_weekends": []
+      },
+      {
+        "year": 2030,
+        "source": "curated_unverified",
+        "reference": "Provisional (no Government transfer decree yet): Labour Code art. 112 only - weekday holidays Jan 1-8, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4; a holiday other than Jan 1-6/8 on a weekend moves to the next working day. The decree's moves of the January weekend days (2026-2027: to a day in May/November and to Dec 31) and its working Saturdays are not known yet",
+        "non_working": ["2030-01-01", "2030-01-02", "2030-01-03", "2030-01-04", "2030-01-07", "2030-01-08", "2030-02-25", "2030-03-08",
+                        "2030-05-01", "2030-05-09", "2030-06-12", "2030-11-04"],
+        "working_weekends": []
+      },
+      {
+        "year": 2031,
+        "source": "curated_unverified",
+        "reference": "Provisional (no Government transfer decree yet): Labour Code art. 112 only - weekday holidays Jan 1-8, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4; a holiday other than Jan 1-6/8 on a weekend moves to the next working day. The decree's moves of the January weekend days (2026-2027: to a day in May/November and to Dec 31) and its working Saturdays are not known yet",
+        "non_working": ["2031-01-01", "2031-01-02", "2031-01-03", "2031-01-06", "2031-01-07", "2031-01-08", "2031-02-24", "2031-03-10",
+                        "2031-05-01", "2031-05-09", "2031-06-12", "2031-11-04"],
+        "working_weekends": []
+      },
+      {
+        "year": 2032,
+        "source": "curated_unverified",
+        "reference": "Provisional (no Government transfer decree yet): Labour Code art. 112 only - weekday holidays Jan 1-8, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4; a holiday other than Jan 1-6/8 on a weekend moves to the next working day. The decree's moves of the January weekend days (2026-2027: to a day in May/November and to Dec 31) and its working Saturdays are not known yet",
+        "non_working": ["2032-01-01", "2032-01-02", "2032-01-05", "2032-01-06", "2032-01-07", "2032-01-08", "2032-02-23", "2032-03-08",
+                        "2032-05-03", "2032-05-10", "2032-06-14", "2032-11-04"],
+        "working_weekends": []
+      },
+      {
+        "year": 2033,
+        "source": "curated_unverified",
+        "reference": "Provisional (no Government transfer decree yet): Labour Code art. 112 only - weekday holidays Jan 1-8, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4; a holiday other than Jan 1-6/8 on a weekend moves to the next working day. The decree's moves of the January weekend days (2026-2027: to a day in May/November and to Dec 31) and its working Saturdays are not known yet",
+        "non_working": ["2033-01-03", "2033-01-04", "2033-01-05", "2033-01-06", "2033-01-07", "2033-02-23", "2033-03-08", "2033-05-02",
+                        "2033-05-09", "2033-06-13", "2033-11-04"],
+        "working_weekends": []
+      },
+      {
+        "year": 2034,
+        "source": "curated_unverified",
+        "reference": "Provisional (no Government transfer decree yet): Labour Code art. 112 only - weekday holidays Jan 1-8, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4; a holiday other than Jan 1-6/8 on a weekend moves to the next working day. The decree's moves of the January weekend days (2026-2027: to a day in May/November and to Dec 31) and its working Saturdays are not known yet",
+        "non_working": ["2034-01-02", "2034-01-03", "2034-01-04", "2034-01-05", "2034-01-06", "2034-01-09", "2034-02-23", "2034-03-08",
+                        "2034-05-01", "2034-05-09", "2034-06-12", "2034-11-06"],
+        "working_weekends": []
+      },
+      {
+        "year": 2035,
+        "source": "curated_unverified",
+        "reference": "Provisional (no Government transfer decree yet): Labour Code art. 112 only - weekday holidays Jan 1-8, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4; a holiday other than Jan 1-6/8 on a weekend moves to the next working day. The decree's moves of the January weekend days (2026-2027: to a day in May/November and to Dec 31) and its working Saturdays are not known yet",
+        "non_working": ["2035-01-01", "2035-01-02", "2035-01-03", "2035-01-04", "2035-01-05", "2035-01-08", "2035-01-09", "2035-02-23",
+                        "2035-03-08", "2035-05-01", "2035-05-09", "2035-06-12", "2035-11-05"],
+        "working_weekends": []
+      },
+      {
+        "year": 2036,
+        "source": "curated_unverified",
+        "reference": "Provisional (no Government transfer decree yet): Labour Code art. 112 only - weekday holidays Jan 1-8, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4; a holiday other than Jan 1-6/8 on a weekend moves to the next working day. The decree's moves of the January weekend days (2026-2027: to a day in May/November and to Dec 31) and its working Saturdays are not known yet",
+        "non_working": ["2036-01-01", "2036-01-02", "2036-01-03", "2036-01-04", "2036-01-07", "2036-01-08", "2036-02-25", "2036-03-10",
+                        "2036-05-01", "2036-05-09", "2036-06-12", "2036-11-04"],
+        "working_weekends": []
+      },
+      {
+        "year": 2037,
+        "source": "curated_unverified",
+        "reference": "Provisional (no Government transfer decree yet): Labour Code art. 112 only - weekday holidays Jan 1-8, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4; a holiday other than Jan 1-6/8 on a weekend moves to the next working day. The decree's moves of the January weekend days (2026-2027: to a day in May/November and to Dec 31) and its working Saturdays are not known yet",
+        "non_working": ["2037-01-01", "2037-01-02", "2037-01-05", "2037-01-06", "2037-01-07", "2037-01-08", "2037-02-23", "2037-03-09",
+                        "2037-05-01", "2037-05-11", "2037-06-12", "2037-11-04"],
+        "working_weekends": []
       }
     ],
     "MOEX_STOCK": [
@@ -37,6 +117,77 @@
         "reference": "Rule inferred from MOEX practice 2023-2026 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days and on official working Saturdays); MOEX 2027 schedule not yet published",
         "non_working": ["2027-01-01", "2027-01-07", "2027-02-23", "2027-03-08", "2027-11-04", "2027-12-31"],
         "working_weekends": ["2027-02-20"]
+      },
+      {
+        "year": 2028,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2028-01-07", "2028-02-23", "2028-03-08", "2028-05-01", "2028-05-09", "2028-06-12"],
+        "working_weekends": []
+      },
+      {
+        "year": 2029,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2029-01-01", "2029-01-02", "2029-02-23", "2029-03-08", "2029-05-01", "2029-05-09", "2029-06-12", "2029-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2030,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2030-01-01", "2030-01-02", "2030-01-07", "2030-03-08", "2030-05-01", "2030-05-09", "2030-06-12", "2030-11-04",
+                        "2030-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2031,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2031-01-01", "2031-01-02", "2031-01-07", "2031-05-01", "2031-05-09", "2031-06-12", "2031-11-04", "2031-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2032,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2032-01-01", "2032-01-02", "2032-01-07", "2032-02-23", "2032-03-08", "2032-11-04", "2032-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2033,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2033-01-07", "2033-02-23", "2033-03-08", "2033-05-09", "2033-11-04"],
+        "working_weekends": []
+      },
+      {
+        "year": 2034,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2034-01-02", "2034-02-23", "2034-03-08", "2034-05-01", "2034-05-09", "2034-06-12"],
+        "working_weekends": []
+      },
+      {
+        "year": 2035,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2035-01-01", "2035-01-02", "2035-02-23", "2035-03-08", "2035-05-01", "2035-05-09", "2035-06-12", "2035-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2036,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2036-01-01", "2036-01-02", "2036-01-07", "2036-05-01", "2036-05-09", "2036-06-12", "2036-11-04", "2036-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2037,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2037-01-01", "2037-01-02", "2037-01-07", "2037-02-23", "2037-05-01", "2037-06-12", "2037-11-04", "2037-12-31"],
+        "working_weekends": []
       }
     ],
     "MOEX_FX": [
@@ -53,6 +204,77 @@
         "reference": "Same rule as MOEX_STOCK 2027 (CETS followed the stock market calendar 2023-2026); MOEX 2027 schedule not yet published",
         "non_working": ["2027-01-01", "2027-01-07", "2027-02-23", "2027-03-08", "2027-11-04", "2027-12-31"],
         "working_weekends": ["2027-02-20"]
+      },
+      {
+        "year": 2028,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2028-01-07", "2028-02-23", "2028-03-08", "2028-05-01", "2028-05-09", "2028-06-12"],
+        "working_weekends": []
+      },
+      {
+        "year": 2029,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2029-01-01", "2029-01-02", "2029-02-23", "2029-03-08", "2029-05-01", "2029-05-09", "2029-06-12", "2029-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2030,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2030-01-01", "2030-01-02", "2030-01-07", "2030-03-08", "2030-05-01", "2030-05-09", "2030-06-12", "2030-11-04",
+                        "2030-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2031,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2031-01-01", "2031-01-02", "2031-01-07", "2031-05-01", "2031-05-09", "2031-06-12", "2031-11-04", "2031-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2032,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2032-01-01", "2032-01-02", "2032-01-07", "2032-02-23", "2032-03-08", "2032-11-04", "2032-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2033,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2033-01-07", "2033-02-23", "2033-03-08", "2033-05-09", "2033-11-04"],
+        "working_weekends": []
+      },
+      {
+        "year": 2034,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2034-01-02", "2034-02-23", "2034-03-08", "2034-05-01", "2034-05-09", "2034-06-12"],
+        "working_weekends": []
+      },
+      {
+        "year": 2035,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2035-01-01", "2035-01-02", "2035-02-23", "2035-03-08", "2035-05-01", "2035-05-09", "2035-06-12", "2035-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2036,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2036-01-01", "2036-01-02", "2036-01-07", "2036-05-01", "2036-05-09", "2036-06-12", "2036-11-04", "2036-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2037,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2037-01-01", "2037-01-02", "2037-01-07", "2037-02-23", "2037-05-01", "2037-06-12", "2037-11-04", "2037-12-31"],
+        "working_weekends": []
       }
     ],
     "MOEX_FORTS": [
@@ -69,6 +291,77 @@
         "reference": "Same rule as MOEX_STOCK 2027 (FORTS followed the stock market calendar 2023-2026); MOEX 2027 schedule not yet published",
         "non_working": ["2027-01-01", "2027-01-07", "2027-02-23", "2027-03-08", "2027-11-04", "2027-12-31"],
         "working_weekends": ["2027-02-20"]
+      },
+      {
+        "year": 2028,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2028-01-07", "2028-02-23", "2028-03-08", "2028-05-01", "2028-05-09", "2028-06-12"],
+        "working_weekends": []
+      },
+      {
+        "year": 2029,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2029-01-01", "2029-01-02", "2029-02-23", "2029-03-08", "2029-05-01", "2029-05-09", "2029-06-12", "2029-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2030,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2030-01-01", "2030-01-02", "2030-01-07", "2030-03-08", "2030-05-01", "2030-05-09", "2030-06-12", "2030-11-04",
+                        "2030-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2031,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2031-01-01", "2031-01-02", "2031-01-07", "2031-05-01", "2031-05-09", "2031-06-12", "2031-11-04", "2031-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2032,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2032-01-01", "2032-01-02", "2032-01-07", "2032-02-23", "2032-03-08", "2032-11-04", "2032-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2033,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2033-01-07", "2033-02-23", "2033-03-08", "2033-05-09", "2033-11-04"],
+        "working_weekends": []
+      },
+      {
+        "year": 2034,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2034-01-02", "2034-02-23", "2034-03-08", "2034-05-01", "2034-05-09", "2034-06-12"],
+        "working_weekends": []
+      },
+      {
+        "year": 2035,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2035-01-01", "2035-01-02", "2035-02-23", "2035-03-08", "2035-05-01", "2035-05-09", "2035-06-12", "2035-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2036,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2036-01-01", "2036-01-02", "2036-01-07", "2036-05-01", "2036-05-09", "2036-06-12", "2036-11-04", "2036-12-31"],
+        "working_weekends": []
+      },
+      {
+        "year": 2037,
+        "source": "curated_unverified",
+        "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
+        "non_working": ["2037-01-01", "2037-01-02", "2037-01-07", "2037-02-23", "2037-05-01", "2037-06-12", "2037-11-04", "2037-12-31"],
+        "working_weekends": []
       }
     ]
   }

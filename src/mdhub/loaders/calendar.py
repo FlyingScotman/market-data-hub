@@ -18,8 +18,9 @@ RU_PRODUCTION   ``observed_cbr_ruonia``: a    ``curated`` (Government decrees on
 TARGET          (none - rule only)            ``rule_target`` for past *and* future days:
                                               :func:`target_closing_days` (Jan 1, Good Friday,
                                               Easter Monday, May 1, Dec 25, Dec 26) + weekends,
-                                              from :data:`TARGET_RULE_START` (2002) through the
-                                              end of next year
+                                              from :data:`TARGET_RULE_START` (2002) through
+                                              :data:`TARGET_RULE_END` (2037-12-31) or the end
+                                              of next year, whichever is later
 =============== ============================ ===============================================
 
 Observed rows cover every calendar day from the start date (:data:`OBSERVED_START`, 2019) to the
@@ -84,6 +85,7 @@ __all__ = [
     "CURATED_RESOURCE",
     "OBSERVED_START",
     "SOURCE_PRIORITY",
+    "TARGET_RULE_END",
     "TARGET_RULE_SOURCE",
     "TARGET_RULE_START",
     "CuratedCalendar",
@@ -125,6 +127,9 @@ TARGET_CALENDAR: Final = "TARGET"
 TARGET_RULE_SOURCE: Final = "rule_target"
 """The only TARGET source: :func:`target_rule_days` for every day (past and future)."""
 TARGET_RULE_START: Final = date(2002, 1, 1)
+TARGET_RULE_END: Final = date(2037, 12, 31)
+"""Horizon of the TARGET rule rows (the rule is exact; the other calendars' provisional curated
+years also run to 2037)."""
 """The six TARGET closing days apply since 2002 (TARGET calendar default start)."""
 TARGET_RULE_VERSION: Final = "target-closing-days-1"
 CROSSCHECK_MAX_LISTED: Final = 10
@@ -813,7 +818,7 @@ def refresh_calendar(
             conn,
             TARGET_CALENDAR,
             TARGET_RULE_SOURCE,
-            target_rule_days(start, date(today.year + 1, 12, 31)),
+            target_rule_days(start, max(date(today.year + 1, 12, 31), TARGET_RULE_END)),
             known_at=utc_now(),
             run_id=ctx.run.id,
             version=TARGET_RULE_VERSION,
