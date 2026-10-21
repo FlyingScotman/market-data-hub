@@ -12,8 +12,20 @@ Per trade date (one transaction each, fail closed per date):
 
 A business day with zero ISS rows is a recorded "no data" outcome (warning,
 :func:`mdhub.core.gaps.record_no_data` in ``final`` mode / backfill: ``unfillable`` once the
-day is older than the grace period, else ``open``), not an error. ``prelim`` (19:20, same day)
-just notes it - history may not be published yet.
+day is older than the grace period, else ``open``), not an error.
+
+``prelim`` (19:20, same day; review §6.4): ISS publishes the history of D only overnight
+(``history/.../dates.json`` ends at D-1 during the evening), so at 19:20 the history is
+normally empty. The run reads the history cursor (one request) every
+``MDHUB_BONDS_EOD_PRELIM_RETRY_MINUTES`` until it lists at least
+``MDHUB_BONDS_EOD_PRELIM_MIN_ROWS`` rows or ``MDHUB_BONDS_EOD_PRELIM_DEADLINE`` (MSK, before the
+eod_preliminary cut) has passed, then loads what there is. A business day that still has fewer
+rows ends ``partial`` (never ``succeeded`` with 0 rows) and, for today, takes one more
+marketdata snapshot (:func:`mdhub.loaders.bonds_intraday.poll_bond_marketdata`) so the state after
+the close - official close ``LCLOSEPRICE``, WAPRICE, market price, yields - is stored: the
+eod_preliminary cut then publishes the bonds from it (``bond_quotes`` coverage
+``basis = intraday_close``, :mod:`mdhub.snapshot.market`). Prelim runs record no gaps; the
+final run of D+1 07:15 loads the history.
 
 Parameters: ``mode`` (``prelim``/``final``), ``days_back`` (business days of MOEX_STOCK before
 today, default ``[1]``), ``day`` (one date), ``date_from``/``date_to`` (inclusive backfill
@@ -22,16 +34,20 @@ range; every MOEX_STOCK business day).
 
 from __future__ import annotations
 
+import time as _time
 from collections.abc import Callable, Sequence
-from datetime import date
+from datetime import date, datetime, time
 from typing import Any, Final
 
+from mdhub.config import parse_hhmm
 from mdhub.core.capture import record_capture
 from mdhub.core.gaps import close_gap, record_no_data
 from mdhub.core.iss import ISS_BASE_URL, IssFormatError, IssPagingError, iter_pages
+from mdhub.core.timeutil import MSK, utc_now
 from mdhub.core.upsert import upsert_rows
 from mdhub.datasets import DatasetSpec, register_dataset
 from mdhub.jobs import JobContext, job
+from mdhub.loaders.bonds_intraday import poll_bond_marketdata
 from mdhub.sources.moex_market import (
     BOND_HISTORY_REQUIRED,
     BONDS_HISTORY_PATH,
@@ -46,6 +62,7 @@ __all__ = [
     "KEY",
     "close_gap",
     "load_bonds_eod_day",
+    "load_bonds_eod_prelim_day",
     "record_no_data",
     "resolve_trade_dates",
     "run_dates",
@@ -141,6 +158,10 @@ def run_dates(
     return results
 
 
+# indirection for tests (no real sleeping)
+_sleep: Callable[[float], None] = _time.sleep
+_now: Callable[[], datetime] = utc_now
+
 # ---------------------------------------------------------------------------- loader
 
 
@@ -235,6 +256,75 @@ def load_bonds_eod_day(
     }
 
 
+def _history_total(ctx: JobContext, http: Any, trade_date: date) -> int:
+    """TOTAL of the ISS bonds history of ``trade_date`` (first page only; captured)."""
+    with ctx.connection() as conn:
+        for page in iter_pages(
+            http,
+            BONDS_HISTORY_PATH,
+            {"date": trade_date.isoformat()},
+            required=BOND_HISTORY_REQUIRED,
+        ):
+            record_capture(
+                conn, ctx.run.id, SOURCE, "bonds_history", None, page.response, PARSER_VERSION
+            )
+            assert page.cursor is not None
+            return page.cursor.total
+    return 0
+
+
+def load_bonds_eod_prelim_day(ctx: JobContext, http: Any, trade_date: date) -> dict[str, Any]:
+    """Preliminary load of ``trade_date`` (module doc): wait for the ISS history up to the
+    deadline, load it, and end ``partial`` with an intraday-close snapshot when it is short."""
+    s = ctx.settings
+    min_rows = s.bonds_eod_prelim_min_rows
+    h, m = parse_hhmm(s.bonds_eod_prelim_deadline)
+    deadline = datetime.combine(trade_date, time(h, m), tzinfo=MSK)
+    checks = 0
+    while True:
+        total = _history_total(ctx, http, trade_date)
+        checks += 1
+        left = (deadline - _now()).total_seconds()
+        if total >= min_rows or left <= 0:
+            break
+        ctx.logger.info(
+            "bonds_eod prelim %s: ISS history has %d rows (< %d); next check in %.0f s",
+            trade_date,
+            total,
+            min_rows,
+            min(s.bonds_eod_prelim_retry_minutes * 60, left),
+        )
+        _sleep(min(s.bonds_eod_prelim_retry_minutes * 60, left))
+    summary: dict[str, Any] = (
+        load_bonds_eod_day(ctx, http, trade_date, mode="prelim")
+        if total
+        else {"history": 0, "yields": 0, "no_data": True}
+    )
+    summary["checks"] = checks
+    loaded = int(summary["history"])
+    if loaded >= min_rows or not ctx.is_business_day(trade_date, CALENDAR):
+        return summary
+    note = (
+        f"{trade_date}: ISS bonds history has {loaded} rows (< {min_rows}) at "
+        f"{s.bonds_eod_prelim_deadline} MSK after {checks} check(s)"
+    )
+    if trade_date == ctx.today():
+        try:
+            poll = poll_bond_marketdata(ctx, http, count=False)
+        except Exception as exc:  # the partial status below is the outcome either way
+            ctx.logger.exception("bonds_eod prelim %s: marketdata snapshot failed", trade_date)
+            note += f"; marketdata snapshot failed: {type(exc).__name__}: {exc}"
+        else:
+            summary["intraday_close"] = poll
+            note += (
+                "; eod_preliminary publishes the bonds from the latest intraday marketdata "
+                "(basis=intraday_close)"
+            )
+    ctx.logger.warning("bonds_eod prelim %s", note)
+    ctx.run.mark_partial(note)
+    return summary
+
+
 @job("bonds_eod", "MOEX bonds EOD history + yields by trade date, all boards")
 def bonds_eod(
     ctx: JobContext,
@@ -259,4 +349,6 @@ def bonds_eod(
         ctx.run.mark_skipped("no business dates to load")
         return {}
     with ctx.http(base_url=ISS_BASE_URL) as http:
+        if mode == "prelim":
+            return run_dates(ctx, dates, lambda d: load_bonds_eod_prelim_day(ctx, http, d))
         return run_dates(ctx, dates, lambda d: load_bonds_eod_day(ctx, http, d, mode=mode))

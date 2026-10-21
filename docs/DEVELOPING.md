@@ -171,7 +171,8 @@ src/mdhub/
   calendar; `0427_history_api.sql` the curve index of the history API. A new calendar needs `mdhub.core.bizday.CALENDARS` plus a migration widening the
   `ref.calendar_day.calendar` CHECK (find the constraint by definition, as 0420/0422 do).
   Prefer an exact computed rule (a `rule_*` source, like `rule_target`) over deriving a calendar
-  from the data it gates: an observed calendar turns a failed load into a holiday. Use the data
+  from the data it gates: an observed calendar turns a failed load into a holiday. RU_PRODUCTION is
+  curated from 2019 for exactly this reason (0.2.1; RUONIA only cross-checks it). Use the data
   as a cross-check instead (`target_crosscheck`: mismatch -> warning, run `partial`).
 - Every new FK to `ops.raw_capture` gets an index on `capture_id` in the same migration
   (retention probes and `ON DELETE SET NULL` actions; `tests/test_review2_fixes.py` checks it).
@@ -255,7 +256,12 @@ the engine), `business_dates(days_back)`. `run_job` already wraps the call in
 off). Any other exception marks the run `failed` and is re-raised.
 
 Lock: `run_job(..., lock_wait_s=N)` waits up to N seconds for `mdhub.job:<name>` (scheduled
-fires: 15 minutes, polling rules 0); a run that does not get it is recorded `skipped` with an
+fires: 15 minutes, polling rules 0). A job whose variants may overlap registers
+`@job(..., lock_key=fn)`: `fn(params) -> name` picks the lock per run (`snapshot_market`:
+`snapshot_market:intraday|eod|rebuild`), and the scheduler keeps one in-process lock per such name.
+A rule with `missed_gap="<dataset>"` opens an `ops.data_gap` (key `{"cut": "HH:MM"}`) when its fire
+does not run (`mdhub.core.gaps.record_missed`); the job closes it with `close_gap` once the item is
+produced; a run that does not get it is recorded `skipped` with an
 error starting `lock_busy:` (job health: `missed`; the `quality` job re-runs it). Backfill runs
 pass `yield_to_waiters=True` and step aside while a scheduled run waits. Runs left `running` by
 a dead process are failed by `reap_orphaned_runs` (scheduler start, nightly maintenance).

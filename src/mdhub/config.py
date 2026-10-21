@@ -252,6 +252,31 @@ class Settings(BaseSettings):
         default=True,
         validation_alias=AliasChoices("MDHUB_SNAPSHOT_AUTOCORRECT", "snapshot_autocorrect"),
     )
+    bonds_eod_prelim_min_rows: int = Field(
+        default=1000,
+        ge=1,
+        validation_alias=AliasChoices(
+            "MDHUB_BONDS_EOD_PRELIM_MIN_ROWS", "bonds_eod_prelim_min_rows"
+        ),
+    )
+    bonds_eod_prelim_deadline: str = Field(
+        default="19:40",
+        validation_alias=AliasChoices(
+            "MDHUB_BONDS_EOD_PRELIM_DEADLINE", "bonds_eod_prelim_deadline"
+        ),
+    )
+    bonds_eod_prelim_retry_minutes: int = Field(
+        default=5,
+        ge=1,
+        le=60,
+        validation_alias=AliasChoices(
+            "MDHUB_BONDS_EOD_PRELIM_RETRY_MINUTES", "bonds_eod_prelim_retry_minutes"
+        ),
+    )
+    curve_eod_cutoff: str = Field(
+        default="19:00",
+        validation_alias=AliasChoices("MDHUB_CURVE_EOD_CUTOFF", "curve_eod_cutoff"),
+    )
 
     hostmon_mounts: str = Field(
         default="/", validation_alias=AliasChoices("MDHUB_HOSTMON_MOUNTS", "hostmon_mounts")
@@ -315,7 +340,11 @@ class Settings(BaseSettings):
         return value
 
     @field_validator(
-        "snapshot_static_time", "snapshot_eod_preliminary_time", "snapshot_eod_final_time"
+        "snapshot_static_time",
+        "snapshot_eod_preliminary_time",
+        "snapshot_eod_final_time",
+        "bonds_eod_prelim_deadline",
+        "curve_eod_cutoff",
     )
     @classmethod
     def _valid_hhmm(cls, value: str) -> str:

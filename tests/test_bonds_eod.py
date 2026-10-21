@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Callable, Iterator
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -20,6 +20,7 @@ import mdhub.loaders.bonds_eod  # noqa: F401 - registers the job
 from mdhub.config import Settings
 from mdhub.core.http import HttpClient, RateLimiter
 from mdhub.core.iss import ISS_BASE_URL, IssFormatError, IssPagingError, parse_block
+from mdhub.core.timeutil import MSK
 from mdhub.datasets import get_dataset
 from mdhub.db.pool import Database
 from mdhub.jobs import JobOutcome, run_job
@@ -318,14 +319,102 @@ def test_no_data_day_is_recorded_not_failed(
     assert statuses == [{"status": "backfilled"}]
 
 
-def test_prelim_no_data_records_no_gap(
-    iss: respx.MockRouter, settings: Settings, db: Database, conn: Conn
-) -> None:
+def _empty_history() -> dict[str, Any]:
     empty = _load("bonds_history_2026-10-15.json")
     empty["history"]["data"] = []
-    _mock(iss, empty)
-    assert _run({"day": "2026-10-15", "mode": "prelim"}, settings, db).status == "succeeded"
+    return empty
+
+
+def _clock(monkeypatch: pytest.MonkeyPatch, start: datetime) -> list[float]:
+    """Fake clock and sleep of the prelim retry loop; returns the recorded sleeps."""
+    import mdhub.loaders.bonds_eod as be
+
+    now = [start]
+    sleeps: list[float] = []
+
+    def sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+        now[0] += timedelta(seconds=seconds)
+
+    monkeypatch.setattr(be, "_now", lambda: now[0])
+    monkeypatch.setattr(be, "_sleep", sleep)
+    return sleeps
+
+
+def test_prelim_no_data_is_partial_and_records_no_gap(
+    iss: respx.MockRouter, settings: Settings, db: Database, conn: Conn
+) -> None:
+    """Review §6.4: the 19:20 prelim run found 0 rows on a trading day and ended
+    ``succeeded``; 0 rows on a business day must end ``partial`` (still no gap: the final run
+    of D+1 decides)."""
+    _mock(iss, _empty_history())
+    out = _run({"day": "2026-10-15", "mode": "prelim"}, settings, db)
+    assert out.status == "partial"
+    run = conn.execute("SELECT error FROM ops.job_run WHERE id = %s", (out.run_id,)).fetchone()
+    assert run is not None and "0 rows (< 1000)" in run["error"]
     assert conn.execute("SELECT count(*) AS n FROM ops.data_gap").fetchone() == {"n": 0}
+
+
+def test_prelim_waits_for_history_until_threshold(
+    iss: respx.MockRouter, db: Database, conn: Conn, db_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The prelim run re-reads the history cursor every N minutes until it lists at least
+    MIN_ROWS rows (here: published at the third check), then loads the day."""
+    settings = Settings(database_url=db_url, iss_rps=1000.0, bonds_eod_prelim_min_rows=10)
+    sleeps = _clock(monkeypatch, datetime(2026, 10, 15, 19, 20, tzinfo=MSK))
+    full = history_handler(_load("bonds_history_2026-10-15.json"))
+    empty = history_handler(_empty_history())
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if int(request.url.params.get("start", "0")) == 0:
+            calls["n"] += 1
+        return (empty if calls["n"] <= 2 else full)(request)
+
+    iss.get(mm.BONDS_HISTORY_PATH).mock(side_effect=handler)
+    iss.get(mm.BONDS_YIELDS_PATH).mock(
+        side_effect=yields_handler(_load("bonds_yields_2026-10-15.json"))
+    )
+    out = _run({"day": "2026-10-15", "mode": "prelim"}, settings, db)
+    assert out.status == "succeeded"
+    assert sleeps == [300.0, 300.0]
+    assert out.result["2026-10-15"]["history"] == 12
+    assert out.result["2026-10-15"]["checks"] == 3
+    n = conn.execute("SELECT count(*) AS n FROM md.bond_eod").fetchone()
+    assert n == {"n": 12}
+
+
+def test_prelim_gives_up_at_deadline_and_stores_intraday_close(
+    iss: respx.MockRouter,
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    monkeypatch: pytest.MonkeyPatch,
+    today_is: Callable[[date], None],
+) -> None:
+    """History still empty at the deadline (19:40): the run ends ``partial`` after the last
+    check and stores one marketdata snapshot with the official close (LCLOSEPRICE), which the
+    eod_preliminary cut publishes (basis=intraday_close)."""
+    today_is(date(2026, 10, 16))
+    sleeps = _clock(monkeypatch, datetime(2026, 10, 16, 19, 20, 5, tzinfo=MSK))
+    _mock(iss, _empty_history())
+    md = json.loads((FIX / "bonds_marketdata.json").read_text("utf-8"))
+    cols = md["marketdata"]["columns"]
+    for row in md["marketdata"]["data"]:
+        row[cols.index("LCLOSEPRICE")] = 99.5
+    iss.get(mm.BONDS_MARKETDATA_PATH).mock(return_value=httpx.Response(200, json=md))
+    out = _run({"day": "2026-10-16", "mode": "prelim"}, settings, db)
+    assert out.status == "partial"
+    assert sum(sleeps) == pytest.approx(19 * 60 + 55)  # 5-min steps, the last one shortened
+    assert out.result["2026-10-16"]["intraday_close"]["changed"] > 0
+    err = conn.execute("SELECT error, rows_inserted FROM ops.job_run WHERE id = %s", (out.run_id,))
+    row = err.fetchone()
+    assert row is not None and "basis=intraday_close" in row["error"]
+    assert row["rows_inserted"] == 0  # the intraday rows are not counted as EOD rows
+    lc = conn.execute(
+        "SELECT count(*) AS n FROM md.bond_quote_intraday WHERE legal_close = 99.5"
+    ).fetchone()
+    assert lc is not None and lc["n"] > 0
 
 
 def test_date_range_iterates_business_days(

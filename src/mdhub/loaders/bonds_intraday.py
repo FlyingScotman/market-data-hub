@@ -26,7 +26,7 @@ from mdhub.sources.moex_market import (
     parse_bond_marketdata,
 )
 
-__all__ = ["changed_rows"]
+__all__ = ["changed_rows", "poll_bond_marketdata"]
 
 SOURCE: Final = "moex_iss"
 INTRADAY_ENDPOINT: Final = "intraday:bonds_marketdata"
@@ -56,10 +56,18 @@ def changed_rows(
 @job("bonds_intraday", "MOEX bonds marketdata snapshot (all boards), changed quotes only")
 def bonds_intraday(ctx: JobContext) -> dict[str, Any]:
     with ctx.http(base_url=ISS_BASE_URL) as http:
-        res = http.get_json(
-            BONDS_MARKETDATA_PATH,
-            params={"iss.meta": "off", "iss.only": "marketdata,marketdata_yields"},
-        )
+        return poll_bond_marketdata(ctx, http)
+
+
+def poll_bond_marketdata(ctx: JobContext, http: Any, *, count: bool = True) -> dict[str, Any]:
+    """One marketdata snapshot -> changed rows of ``md.bond_quote_intraday`` (the body of
+    ``bonds_intraday``; also used by the ``bonds_eod`` prelim run to store the state after the
+    close when the ISS history of the day is not published yet; ``count=False``: the written
+    rows are not added to the run's counts, which then stay those of the job's own table)."""
+    res = http.get_json(
+        BONDS_MARKETDATA_PATH,
+        params={"iss.meta": "off", "iss.only": "marketdata,marketdata_yields"},
+    )
     with ctx.connection() as conn:
         session_day = ctx.is_trading_day if BONDS_TRADE_WEEKEND_SESSIONS else ctx.is_business_day
         snapshot = parse_bond_marketdata(
@@ -87,7 +95,8 @@ def bonds_intraday(ctx: JobContext) -> dict[str, Any]:
         result = upsert_rows(
             conn, "md.bond_quote_intraday", changed, ["secid", "board", "ts"], run_id=ctx.run.id
         )
-        ctx.run.add_counts(result)
+        if count:
+            ctx.run.add_counts(result)
         upsert_rows(conn, "md.bond_quote_last", changed, ["secid", "board"])
     ctx.logger.info(
         "bonds_intraday: %d rows in snapshot, %d changed (latency %s, min lag %s s)",

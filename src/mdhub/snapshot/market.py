@@ -36,6 +36,10 @@ from mdhub.snapshot.build import (
 from mdhub.sources.moex_market import INDEX_GROUPS
 
 __all__ = [
+    "BASIS_HISTORY",
+    "BASIS_INTRADAY_CLOSE",
+    "CURVE_EOD_RULE",
+    "DEFAULT_CURVE_EOD_CUTOFF",
     "EXPECTED_CURVES",
     "PRECIOUS_METALS",
     "REQUIRED_CURVE_DATASETS",
@@ -43,6 +47,7 @@ __all__ = [
     "RUSFAR_RATE_SERIES",
     "MarketParams",
     "build_market",
+    "curve_eod_order",
     "rusfar_unit",
 ]
 
@@ -77,6 +82,31 @@ RUSFAR_UNKNOWN_REASON: Final = "rusfar_series_unit_unknown"
 list: a new MOEX series is never published with a guessed unit."""
 _OIS_LIKE: Final = frozenset({"ruonia_ois", "key_rate_swap"})
 
+BASIS_HISTORY: Final = "moex_history"
+BASIS_INTRADAY_CLOSE: Final = "intraday_close"
+"""``bond_quotes`` coverage ``basis``: ISS history of the business date, or (``eod_preliminary``
+before ISS publishes the history) the latest intraday marketdata of the date."""
+
+DEFAULT_CURVE_EOD_CUTOFF: Final = "19:00"
+CURVE_EOD_RULE: Final = "latest_bid_ask_within_cutoff_else_latest"
+
+
+def curve_eod_order(alias: str = "s") -> str:
+    """``ORDER BY`` tail of the curve end-of-day rule (review §2.5 item 3), shared by the EOD
+    market cuts and ``/v1/history/curves`` ``rule=eod`` (``DISTINCT ON (snapshot_date, source,
+    dataset)`` first): per day and source the **latest quote set with bid/ask** (``quote_basis
+    <> 'mid_only'``) whose source clock (else fetch time) is on the snapshot date at or before
+    the cutoff (named parameter ``%(eod_cutoff)s``, MSK ``HH:MM``); without one, the latest quote
+    set of the day (the off-hours mid-only mark; labelled ``mid_only``)."""
+    a = alias
+    return (
+        f"({a}.quote_basis <> 'mid_only' "
+        f"AND (COALESCE({a}.source_ts, {a}.fetched_at) AT TIME ZONE 'Europe/Moscow')::date "
+        f"= {a}.snapshot_date "
+        f"AND (COALESCE({a}.source_ts, {a}.fetched_at) AT TIME ZONE 'Europe/Moscow')::time "
+        f"<= %(eod_cutoff)s::time) DESC, {a}.fetched_at DESC, {a}.id DESC"
+    )
+
 
 @dataclass(frozen=True, slots=True)
 class MarketParams:
@@ -95,6 +125,13 @@ class MarketParams:
     """CBR rates set on D are in force from D+1 (over weekends / holidays for several days):
     the announced rates are part of the cut. Also the forward edge of the fixing window."""
     ecb_lookback_days: int = 7
+    prelim_bond_min_rows: int = 1000
+    """``eod_preliminary``: with fewer EOD history rows of D than this (ISS publishes the history
+    overnight), ``bond_quotes`` comes from the latest intraday marketdata of D (coverage
+    ``basis = intraday_close``; ``MDHUB_BONDS_EOD_PRELIM_MIN_ROWS``). Recorded in the coverage."""
+    curve_eod_cutoff: str = DEFAULT_CURVE_EOD_CUTOFF
+    """EOD cuts: the curve EOD rule's cutoff (:func:`curve_eod_order`, ``MDHUB_CURVE_EOD_CUTOFF``).
+    Recorded in the coverage of ``curve_quote_sets``."""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -142,7 +179,11 @@ def _bond_quotes_eod(
     universe: frozenset[str],
     prov: Provenance,
     excluded: Excluded,
+    min_rows: int | None = None,
 ) -> Dataset:
+    """EOD bond quotes of ``d`` from the ISS history. ``min_rows`` (``eod_preliminary`` only):
+    with fewer history rows the dataset comes from the intraday close
+    (:func:`_bond_quotes_intraday_close`)."""
     rows = conn.execute(
         """
         SELECT COALESCE(e.trade_date, y.trade_date) AS trade_date,
@@ -168,6 +209,12 @@ def _bond_quotes_eod(
         """,
         {"t": t, "d": d},
     ).fetchall()
+    if min_rows is not None and len(rows) < min_rows:
+        fallback = _bond_quotes_intraday_close(
+            conn, t, d, universe, prov, excluded, len(rows), min_rows
+        )
+        if fallback is not None:
+            return fallback
     out = []
     for r in rows:
         if r["secid"] not in universe:
@@ -229,11 +276,118 @@ def _bond_quotes_eod(
         out,
         {
             "trade_date": d,
+            "basis": BASIS_HISTORY,
             "secids": len(quoted),
             "universe": len(universe),
             "universe_without_quote": len(universe - quoted),
         },
         [] if out else [f"no EOD bond rows for {d.isoformat()}"],
+    )
+
+
+def _bond_quotes_intraday_close(
+    conn: DictConnection,
+    t: datetime,
+    d: date,
+    universe: frozenset[str],
+    prov: Provenance,
+    excluded: Excluded,
+    history_rows: int,
+    min_rows: int,
+) -> Dataset | None:
+    """``eod_preliminary`` while the ISS history of ``d`` is not published (review §6.4): per
+    (secid, board) the latest intraday marketdata state of ``d`` known at ``t``, in the EOD
+    BondQuote shape. Only fields with the same meaning are filled: ``legal_close_pct`` =
+    LCLOSEPRICE (official close), ``close_pct`` = LAST (last trade, as history CLOSE),
+    ``waprice_pct``, ``market_price3_pct`` = MARKETPRICETODAY (market price of the day; MARKETPRICE
+    is the previous day's and is not used), open/low/high, volume, value, trades and the MOEX
+    yields of the snapshot; accrued interest, face and ``market_price2_pct`` stay null. The
+    dataset's coverage says ``basis = intraday_close`` and it is flagged stale. ``None`` when
+    the intraday state has no more rows than the history (nothing better to publish)."""
+    start, end = _day_bounds(d)
+    rows = conn.execute(
+        """
+        SELECT DISTINCT ON (q.secid, q.board) q.*
+        FROM md.bond_quote_intraday q
+        WHERE q.ts >= %(start)s AND q.ts < %(end)s AND q.ingested_at <= %(t)s
+        ORDER BY q.secid, q.board, q.ts DESC
+        """,
+        {"start": start, "end": end, "t": t},
+    ).fetchall()
+    if len(rows) <= history_rows:
+        return None
+    out = []
+    for r in rows:
+        if r["secid"] not in universe:
+            excluded.add(
+                "bond_quotes",
+                {"secid": r["secid"], "board": r["board"], "trade_date": d},
+                "not_in_static_snapshot",
+            )
+            continue
+        prov.add("bond_quotes", "moex_iss", r["run_id"], r["updated_at"] or r["ingested_at"])
+        out.append(
+            {
+                "secid": r["secid"],
+                "board": r["board"],
+                "trade_date": d,
+                "open_pct": r["open"],
+                "low_pct": r["low"],
+                "high_pct": r["high"],
+                "close_pct": r["last"],
+                "legal_close_pct": r["legal_close"],
+                "waprice_pct": r["waprice"],
+                "market_price2_pct": None,
+                "market_price3_pct": r["market_price_today"],
+                "admitted_quote_pct": None,
+                "accrued_per_bond": None,
+                "face_value": None,
+                "face_unit": None,
+                "currency_id": None,
+                "volume_bonds": r["vol_today"],
+                "value_ccy": r["val_today"],
+                "num_trades": r["num_trades"],
+                "trading_session": r["trading_session"],
+                "source_analytics": {
+                    "yield_close_pct": r["yield_pct"],
+                    "yield_at_waprice_pct": r["yield_at_waprice_pct"],
+                    "yield_to_offer_pct": r["yield_to_offer_pct"],
+                    "effective_yield_pct": r["effective_yield_pct"],
+                    "effective_yield_waprice_pct": None,
+                    "yield_date": r["yield_date"],
+                    "yield_date_type": r["yield_date_type"],
+                    "duration_days": r["duration_days"],
+                    "zspread_bp": r["zspread_bp"],
+                    "gspread_bp": r["gspread_bp"],
+                    "duration_waprice_days": None,
+                    "yield_last_coupon_pct": None,
+                    "icpi": None,
+                    "ir": None,
+                    "bei": None,
+                    "cbr": None,
+                },
+            }
+        )
+    quoted = {r["secid"] for r in out}
+    latest = max((r["source_ts"] for r in rows), default=None)
+    stale = [
+        f"no EOD bond history for {d.isoformat()} at the cut ({history_rows} rows < {min_rows}): "
+        "bond_quotes from the latest intraday marketdata (basis=intraday_close)"
+    ]
+    return Dataset(
+        "bond_quotes",
+        out,
+        {
+            "trade_date": d,
+            "basis": BASIS_INTRADAY_CLOSE,
+            "history_rows": history_rows,
+            "min_history_rows": min_rows,
+            "latest_source_ts": latest,
+            "secids": len(quoted),
+            "universe": len(universe),
+            "universe_without_quote": len(universe - quoted),
+        },
+        stale,
     )
 
 
@@ -308,15 +462,25 @@ def _bond_quotes_intraday(
 # ---------------------------------------------------------------------------- curves
 
 
-def _curve_sets(conn: DictConnection, t: datetime, d: date, prov: Provenance) -> Dataset:
+def _curve_sets(
+    conn: DictConnection,
+    t: datetime,
+    d: date,
+    prov: Provenance,
+    *,
+    eod_cutoff: str | None = None,
+) -> Dataset:
+    """Quote sets of ``d`` per (source, dataset) known at ``t``: EOD cuts (``eod_cutoff``) by
+    the curve EOD rule (:func:`curve_eod_order`), intraday cuts the latest."""
+    order = curve_eod_order("s") if eod_cutoff is not None else "s.fetched_at DESC, s.id DESC"
     snaps = conn.execute(
         """
         SELECT DISTINCT ON (s.source, s.dataset) s.*, s.meta::text AS meta_text
         FROM md.curve_snapshot s
         WHERE s.snapshot_date = %(d)s AND s.fetched_at <= %(t)s AND s.ingested_at <= %(t)s
-        ORDER BY s.source, s.dataset, s.fetched_at DESC, s.id DESC
-        """,
-        {"d": d, "t": t},
+        ORDER BY s.source, s.dataset, """
+        + order,
+        {"d": d, "t": t, "eod_cutoff": eod_cutoff},
     ).fetchall()
     quotes: dict[int, list[dict[str, Any]]] = defaultdict(list)
     if snaps:
@@ -384,6 +548,11 @@ def _curve_sets(conn: DictConnection, t: datetime, d: date, prov: Provenance) ->
             "missing": [f"{a}/{b}" for a, b in EXPECTED_CURVES if (a, b) not in present],
             "required_datasets": list(REQUIRED_CURVE_DATASETS),
             "required_without_any_source": without_source,
+            **(
+                {"eod_rule": CURVE_EOD_RULE, "eod_cutoff_msk": eod_cutoff}
+                if eod_cutoff is not None
+                else {}
+            ),
         },
         stale,
     )
@@ -739,7 +908,15 @@ def build_market(
     excluded = Excluded()
     universe = static.universe
     if eod:
-        quotes = _bond_quotes_eod(conn, t, d, universe, prov, excluded)
+        quotes = _bond_quotes_eod(
+            conn,
+            t,
+            d,
+            universe,
+            prov,
+            excluded,
+            min_rows=params.prelim_bond_min_rows if cut.cut_type == "eod_preliminary" else None,
+        )
         quotes_intraday = Dataset("bond_quotes_intraday", [], {"not_in_cut": "eod"})
     else:
         quotes = Dataset("bond_quotes", [], {"not_in_cut": "intraday"})
@@ -748,7 +925,7 @@ def build_market(
     datasets = [
         quotes,
         quotes_intraday,
-        _curve_sets(conn, t, d, prov),
+        _curve_sets(conn, t, d, prov, eod_cutoff=params.curve_eod_cutoff if eod else None),
         _zcyc(conn, t, d, eod, prov),
         _fixings(conn, t, d, lookback, params.fx_forward_days, prov, excluded),
         _fx(conn, t, d, params, eod, prov, excluded),

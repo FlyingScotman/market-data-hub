@@ -48,7 +48,14 @@ from mdhub.api.columnar import (
 from mdhub.api.common import bad_request, require_aware, split_list
 from mdhub.core.timeutil import msk_today
 from mdhub.db.pool import DictConnection
-from mdhub.snapshot.market import RUSFAR_INDEX_SERIES, RUSFAR_RATE_SERIES, rusfar_unit
+from mdhub.snapshot.market import (
+    CURVE_EOD_RULE,
+    DEFAULT_CURVE_EOD_CUTOFF,
+    RUSFAR_INDEX_SERIES,
+    RUSFAR_RATE_SERIES,
+    curve_eod_order,
+    rusfar_unit,
+)
 
 router = APIRouter(prefix="/history", tags=["history"])
 
@@ -438,8 +445,10 @@ def history_curves(
     rule: Annotated[
         str,
         Query(
-            description="eod (default): per (snapshot_date, source) the latest snapshot of that "
-            "Moscow day - the eod_final rule; all: every stored snapshot"
+            description="eod (default): per (snapshot_date, source) the quote set of the EOD "
+            "market cuts - the latest one with bid/ask whose source clock is on that day at or "
+            "before MDHUB_CURVE_EOD_CUTOFF (MSK, default 19:00), else the latest one of the day; "
+            "all: every stored snapshot"
         ),
     ] = "eod",
     fields: Annotated[str | None, Query(description="comma list of columns")] = None,
@@ -458,18 +467,28 @@ def history_curves(
         raise bad_request("rule must be eod or all")
     sources = split_list(source)
     cols = _select_fields(CURVE_COLUMNS, CURVE_KEYS, fields)
+    settings = getattr(request.app.state, "settings", None)
+    cutoff = settings.curve_eod_cutoff if settings is not None else DEFAULT_CURVE_EOD_CUTOFF
     norm = {
         "dataset": ds,
         "from": d1,
         "to": d2,
         "sources": sorted(sources) if sources else None,
         "rule": rule,
+        "eod_cutoff": cutoff if rule == "eod" else None,
         "fields": [c.name for c in cols],
         "known_at": known,
     }
     qhash = query_hash("curves", norm)
     key = decode_cursor(cursor, qhash, 5)
-    params: dict[str, Any] = {"ds": ds, "d1": d1, "d2": d2, "sources": sources, "ka": known}
+    params: dict[str, Any] = {
+        "ds": ds,
+        "d1": d1,
+        "d2": d2,
+        "sources": sources,
+        "ka": known,
+        "eod_cutoff": cutoff,
+    }
     params.update(_cursor_params("c", key))
     where: list[sql.Composable] = [
         sql.SQL("s.dataset = %(ds)s AND s.snapshot_date BETWEEN %(d1)s AND %(d2)s")
@@ -481,7 +500,7 @@ def history_curves(
     cond = sql.SQL(" AND ").join(where)
     distinct = sql.SQL("DISTINCT ON (s.snapshot_date, s.source) ") if rule == "eod" else sql.SQL("")
     order = (
-        sql.SQL(" ORDER BY s.snapshot_date, s.source, s.fetched_at DESC, s.id DESC")
+        sql.SQL(" ORDER BY s.snapshot_date, s.source, ") + sql.SQL(curve_eod_order("s"))
         if rule == "eod"
         else sql.SQL("")
     )
@@ -552,6 +571,9 @@ def history_curves(
                 "from": d1,
                 "to": d2,
                 "rule": rule,
+                "eod_rule": (
+                    {"rule": CURVE_EOD_RULE, "cutoff_msk": cutoff} if rule == "eod" else None
+                ),
                 "sources": sorted(sources) if sources else None,
                 "order": ["snapshot_date", "source", "quote_set_id", "position"],
                 "units": "bid_pct / mid_pct / ask_pct in % p.a. (mid-only quotes: bid/ask null); "

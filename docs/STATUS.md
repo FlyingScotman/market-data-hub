@@ -4,6 +4,11 @@
 > use [ROADMAP.md](../ROADMAP.md), updated 19 October 2026. Earlier "Remaining steps" and
 > source-access assumptions below may have been superseded; recheck before acting.
 
+> **2026-10-21 (WEB-16):** EOD fixes from the live check of 21.10 (eod_preliminary bonds from the
+> intraday close, per-mode snapshot locks, curve EOD rule with bid/ask inside the window,
+> RU_PRODUCTION from the official calendar) on branch `claude/hub-eod-fixes` (intended release
+> 0.2.1): [ROADMAP.md](../ROADMAP.md) WEB-16, [deploy/UPGRADE_TO_0.2.1.md](../deploy/UPGRADE_TO_0.2.1.md).
+
 > **2026-10-21 (WEB-15):** history read API `/v1/history/*`, contract `market_snapshot/1.2`,
 > dataset-level curve gaps, `eod_final` input readiness and auto-correction, calendars to 2037 on
 > branch `claude/hub-tdm-history-1-2` (intended release 0.2.0). Details and remaining work:

@@ -43,6 +43,7 @@ __all__ = [
     "close_gap",
     "db_business_days",
     "no_data_status",
+    "record_missed",
     "record_no_data",
 ]
 
@@ -161,4 +162,28 @@ def close_gap(
           AND status IN ('open', 'unfillable')
         """,
         (note, dataset, Jsonb(dict(key or {})), day),
+    )
+
+
+def record_missed(
+    conn: psycopg.Connection[Any],
+    dataset: str,
+    day: date,
+    note: str,
+    *,
+    key: Mapping[str, Any] | None = None,
+) -> None:
+    """Open a gap for a scheduled product that was not produced (e.g. an intraday snapshot cut
+    skipped because its lock stayed busy). Not a "no data" outcome: it stays ``open`` (visible
+    in ``ops.v_open_gaps`` / ``/v1/gaps``) until :func:`close_gap` - a replay of the missed item
+    - or an operator closes it. ``dataset`` need not be registered (no scan, no backfill)."""
+    conn.execute(
+        """
+        INSERT INTO ops.data_gap (dataset, key, gap_date, status, note)
+        VALUES (%s, %s, %s, 'open', %s)
+        ON CONFLICT (dataset, key, gap_date) DO UPDATE
+            SET status = 'open', note = EXCLUDED.note, detected_at = now()
+            WHERE ops.data_gap.status IN ('open', 'not_expected')
+        """,
+        (dataset, Jsonb(dict(key or {})), day, note[:1000]),
     )

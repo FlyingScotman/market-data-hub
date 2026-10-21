@@ -22,6 +22,7 @@ from mdhub.core.bizday import CALENDARS, DbCalendar, weekday_calendar
 from mdhub.core.errors import FormatDriftError
 from mdhub.core.http import HttpClient, RateLimiter
 from mdhub.core.iss import ISS_BASE_URL
+from mdhub.core.timeutil import utc_now
 from mdhub.datasets import get_dataset
 from mdhub.db.pool import Database
 from mdhub.jobs import run_job
@@ -107,11 +108,16 @@ def test_provisional_calendars_to_2037_follow_their_rules() -> None:
     assert _labour_code_rule(2029) >= {date(2029, 1, 9), date(2029, 11, 5)}  # Jan 7 / Nov 4 Sun
 
 
+def _ru(data: dict[str, Any], year: int) -> dict[str, Any]:
+    entry: dict[str, Any] = next(e for e in data["calendars"]["RU_PRODUCTION"] if e["year"] == year)
+    return entry
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
-        lambda d: d["calendars"]["RU_PRODUCTION"][0]["non_working"].append("2026-01-03"),
-        lambda d: d["calendars"]["RU_PRODUCTION"][0]["working_weekends"].append("2026-01-05"),
+        lambda d: _ru(d, 2026)["non_working"].append("2026-01-03"),
+        lambda d: _ru(d, 2026)["working_weekends"].append("2026-01-05"),
         lambda d: d["calendars"].update({"NYSE": []}),
         lambda d: d.update({"known_at": "2026-10-16T12:00:00"}),
     ],
@@ -690,3 +696,69 @@ def test_ecb_fx_gap_scan_follows_target(
         "SELECT DISTINCT status FROM ops.data_gap WHERE dataset = 'ecb_fx'"
     ).fetchall()
     assert st == [{"status": "not_expected"}]
+
+
+def test_ru_production_is_the_official_calendar_and_missing_ruonia_is_a_gap(
+    iss: respx.MockRouter,
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review §2.5 item 6: RU_PRODUCTION was derived from RUONIA (``observed_cbr_ruonia``), so a
+    business day without a fixing became a holiday - on production the last working day of every
+    year 2019-2025 (e.g. Tue 2025-12-30) and the 2020 non-working days. The curated official
+    calendar now covers past years, the observed rows are retired, RUONIA only cross-checks,
+    and the missing fixing is a ``cbr_ruonia`` gap."""
+    monkeypatch.setattr("mdhub.jobs.msk_today", lambda: date(2026, 1, 20))
+    # production state of 0.2.0: RUONIA observation rows with 2025-12-30 as a "holiday"
+    holidays = {date(2025, 12, 30), date(2025, 12, 31)} | {date(2026, 1, d) for d in range(1, 10)}
+    observed = {
+        d: d.weekday() < 5 and d not in holidays
+        for d in (date(2025, 12, 1) + timedelta(days=i) for i in range(45))
+    }
+    cal.write_calendar_days(
+        conn, "RU_PRODUCTION", "observed_cbr_ruonia", observed, known_at=utc_now(), run_id=None
+    )
+    for d, flag in observed.items():
+        if flag:
+            conn.execute(
+                "INSERT INTO md.fixing (index_code, fixing_date, source, value)"
+                " VALUES ('RUONIA', %s, 'cbr', 16)",
+                (d,),
+            )
+    conn.commit()
+    dbcal = DbCalendar(db, ttl=0)
+    assert dbcal(date(2025, 12, 30), "RU_PRODUCTION") is False  # the defect
+
+    out = run_job(
+        "cbr_meetings",
+        {"mode": "calendar_full"},
+        settings=settings,
+        db=db,
+        http_factory=_http_factory,
+    )
+    assert out.status == "succeeded", out.result
+    assert dbcal(date(2025, 12, 30), "RU_PRODUCTION") is True
+    assert dbcal(date(2025, 12, 31), "RU_PRODUCTION") is False  # Government decree transfer
+    assert dbcal(date(2025, 11, 1), "RU_PRODUCTION") is True  # working Saturday
+    eff = conn.execute(
+        "SELECT source FROM ref.calendar_effective"
+        " WHERE calendar = 'RU_PRODUCTION' AND day = '2025-12-30'"
+    ).fetchone()
+    assert eff == {"source": "curated"}
+    live = conn.execute(
+        "SELECT count(*) AS n FROM ref.calendar_day"
+        " WHERE source = 'observed_cbr_ruonia' AND NOT is_deleted"
+    ).fetchone()
+    assert live == {"n": 0}
+    hist = conn.execute(
+        "SELECT count(*) AS n FROM ops.row_history WHERE table_name = 'ref.calendar_day'"
+    ).fetchone()
+    assert hist is not None and hist["n"] >= len(observed)  # retired rows stay as versions
+    check = out.result["calendar"]["ruonia_crosscheck"]
+    assert "2025-12-30" in check["business_days_without_ruonia"]
+    assert check["ruonia_on_non_business_days"] == []
+
+    scan = scan_dataset(conn, get_dataset("cbr_ruonia"), today=date(2026, 1, 20), calendar=dbcal)
+    assert date(2025, 12, 30) in {g.day for g in scan.gaps}

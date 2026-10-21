@@ -415,28 +415,42 @@ def test_job_continues_legacy_history(
     assert out.result["ruonia_ois"] == "stored (17 quotes)"
 
 
+@pytest.mark.parametrize(
+    ("dataset", "quotes"),
+    [("key_rate_swap", 13), ("cny_rusfar_ois", 8), ("cny_ruonia_xccy", 14)],
+)
 def test_unchanged_curve_is_stored_once_on_a_new_business_date(
-    site: Site, otc_settings: Settings, db: Database, conn: Conn
+    site: Site, otc_settings: Settings, db: Database, conn: Conn, dataset: str, quotes: int
 ) -> None:
     """WEB-8/WEB-13: content dedup must not hide a curve from the next day's cut. A curve
     whose quotes did not change since yesterday is stored once more on the first poll of
     today (snapshot_date = today), so the market snapshot of today has the quote set; later
-    identical polls of the same day stay ``unchanged``."""
-    curve = _curves(site.rows)["key_rate_swap"]
+    identical polls of the same day stay ``unchanged``.
+
+    Review §2.5 item 5: OTC Monitor updates CNY OIS vs RUSFAR CNY rarely (source clock 16.10,
+    then 20.10 18:50), and before this rule (0.2.0) an unchanged curve was never stored again:
+    2 snapshots in a week on production. The CNY curves get their daily copy like the RUB ones."""
+    curve = _curves(site.rows)[dataset]
     yesterday = utc_now() - timedelta(days=1)
     conn.execute(
         """INSERT INTO md.curve_snapshot (source, dataset, quote_basis, fetched_at, snapshot_date,
                content_sha256, parser_version)
-           VALUES ('otc_monitor', 'key_rate_swap', 'bid_ask_mid', %s, %s, %s, 'test')""",
-        (yesterday, yesterday.astimezone(MSK).date(), otc.content_hash(curve)),
+           VALUES ('otc_monitor', %s, %s, %s, %s, %s, 'test')""",
+        (
+            dataset,
+            curve.quote_basis,
+            yesterday,
+            yesterday.astimezone(MSK).date(),
+            otc.content_hash(curve),
+        ),
     )
     conn.commit()
     out = _run(otc_settings, db)
-    assert out.result["key_rate_swap"] == "stored (13 quotes, unchanged content, new day)"
+    assert out.result[dataset] == f"stored ({quotes} quotes, unchanged content, new day)"
     today = utc_now().astimezone(MSK).date()
     n = _count(
         conn,
-        "SELECT count(*) AS n FROM md.curve_snapshot WHERE dataset = 'key_rate_swap' "
+        f"SELECT count(*) AS n FROM md.curve_snapshot WHERE dataset = '{dataset}' "
         f"AND snapshot_date = '{today.isoformat()}'",
     )
     assert n == 1

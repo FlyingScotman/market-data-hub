@@ -160,7 +160,7 @@ selected snapshot; ordered by `snapshot_date, source, quote_set_id, position, te
 
 | parameter | meaning |
 |---|---|
-| `rule` | `eod` (default): per (`snapshot_date`, `source`) the latest snapshot of that Moscow day - the rule of the `eod_final` cut (with `known_at`: only snapshots with `fetched_at` and `ingested_at` <= `known_at`, exactly as the cut built at `known_at`); `all`: every stored snapshot (intraday history; snapshots are stored only on change and on the first poll of each day) |
+| `rule` | `eod` (default): per (`snapshot_date`, `source`) the quote set of the EOD cuts - the latest one **with bid/ask** whose source clock (else `fetched_at`) is on that Moscow day at or before `MDHUB_CURVE_EOD_CUTOFF` (19:00 MSK), else the latest one of the day (mid-only, labelled `mid_only`); `meta.eod_rule` gives the rule and cutoff; same SQL as the snapshot builder, 0.2.1 (with `known_at`: only snapshots with `fetched_at` and `ingested_at` <= `known_at`, exactly as the cut built at `known_at`); `all`: every stored snapshot (intraday history; snapshots are stored only on change and on the first poll of each day) |
 | `source` | comma list (`otc_monitor`, `ratescalcs`, `andromeda`, ...); default all. Sources are separate series; pick per day as DESIGN §8 "Curve sources" describes |
 | `from`, `to` | range of `snapshot_date` (Moscow date of `fetched_at`) |
 
