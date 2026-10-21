@@ -147,17 +147,16 @@ def test_static_snapshot_1_3_fields(conn: Conn, db: Database) -> None:
     doc = _bundle(conn, out.id)  # validated against the 1.3 schema when published
     assert doc["schema_version"] == "market_snapshot/1.3"
     inst = {i["secid"]: i for i in doc["data"]["instruments"]}
-    assert (inst["SU26242RMFS0"]["replacement_bond"], inst["SU26242RMFS0"]["replacement_basis"]) == (
-        True, "name_rule",
-    )  # fmt: skip
-    assert (inst["RU000PERP001"]["replacement_bond"], inst["RU000PERP001"]["replacement_basis"]) == (
-        False, "document",
-    )  # fmt: skip
-    assert inst["RU000A105X12"]["replacement_bond"] is None
-    assert inst["RU000A105X12"]["replacement_basis"] is None
-    assert (inst["SU26242RMFS0"]["issue_size_moex"], inst["SU26242RMFS0"]["issue_size_moex_field"]) == (
-        "1000000", "ISSUESIZEPLACED",
-    )  # fmt: skip
+
+    def pick(secid: str, *fields: str) -> tuple[Any, ...]:
+        return tuple(inst[secid][f] for f in fields)
+
+    repl = ("replacement_bond", "replacement_basis")
+    assert pick("SU26242RMFS0", *repl) == (True, "name_rule")
+    assert pick("RU000PERP001", *repl) == (False, "document")
+    assert pick("RU000A105X12", *repl) == (None, None)
+    size = ("issue_size_moex", "issue_size_moex_field")
+    assert pick("SU26242RMFS0", *size) == ("1000000", "ISSUESIZEPLACED")
     assert inst["RU000A105X12"]["issue_size_moex_field"] == "ISSUESIZE"
 
     ratings = doc["data"]["ratings"]
