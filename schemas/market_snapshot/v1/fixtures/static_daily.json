@@ -6948,7 +6948,7 @@
   "name": "market-data-hub",
   "version": "0.1.0"
  },
- "schema_version": "market_snapshot/1.1",
+ "schema_version": "market_snapshot/1.2",
  "sources": [
   {
    "dataset": "calendars",

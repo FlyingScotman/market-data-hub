@@ -25,14 +25,20 @@
     "open_pct": "99.16",
     "secid": "RU000A0JXQ44",
     "source_analytics": {
+     "bei": null,
+     "cbr": null,
      "duration_days": "512",
+     "duration_waprice_days": "512",
      "effective_yield_pct": "16.4279",
      "effective_yield_waprice_pct": "16.0074",
      "gspread_bp": "206",
+     "icpi": null,
+     "ir": null,
      "yield_at_waprice_pct": "16.14",
      "yield_close_pct": "16.56",
      "yield_date": "2028-04-18",
      "yield_date_type": "OFFER",
+     "yield_last_coupon_pct": null,
      "yield_to_offer_pct": "16.4279",
      "zspread_bp": "200"
     },
@@ -59,14 +65,20 @@
     "open_pct": "80",
     "secid": "RU000A100GW5",
     "source_analytics": {
+     "bei": null,
+     "cbr": null,
      "duration_days": null,
+     "duration_waprice_days": null,
      "effective_yield_pct": null,
      "effective_yield_waprice_pct": null,
      "gspread_bp": null,
+     "icpi": null,
+     "ir": null,
      "yield_at_waprice_pct": "18.75",
      "yield_close_pct": "18.75",
      "yield_date": null,
      "yield_date_type": "MATDATE",
+     "yield_last_coupon_pct": null,
      "yield_to_offer_pct": null,
      "zspread_bp": null
     },
@@ -93,14 +105,20 @@
     "open_pct": "67.7",
     "secid": "RU000A1034P7",
     "source_analytics": {
+     "bei": null,
+     "cbr": null,
      "duration_days": null,
+     "duration_waprice_days": null,
      "effective_yield_pct": null,
      "effective_yield_waprice_pct": null,
      "gspread_bp": null,
+     "icpi": null,
+     "ir": null,
      "yield_at_waprice_pct": "15.03",
      "yield_close_pct": "14.97",
      "yield_date": null,
      "yield_date_type": "MATDATE",
+     "yield_last_coupon_pct": null,
      "yield_to_offer_pct": null,
      "zspread_bp": null
     },
@@ -127,14 +145,20 @@
     "open_pct": "100.4",
     "secid": "RU000A109XR1",
     "source_analytics": {
+     "bei": null,
+     "cbr": null,
      "duration_days": "227",
+     "duration_waprice_days": "227",
      "effective_yield_pct": "24.1997",
      "effective_yield_waprice_pct": "24.5735",
      "gspread_bp": "1103",
+     "icpi": null,
+     "ir": null,
      "yield_at_waprice_pct": "16.06",
      "yield_close_pct": "15.72",
      "yield_date": "2027-10-14",
      "yield_date_type": "MATDATE",
+     "yield_last_coupon_pct": null,
      "yield_to_offer_pct": null,
      "zspread_bp": "1067"
     },
@@ -161,14 +185,20 @@
     "open_pct": "96.3569",
     "secid": "RU000A10BRM5",
     "source_analytics": {
+     "bei": null,
+     "cbr": null,
      "duration_days": "735",
+     "duration_waprice_days": "735",
      "effective_yield_pct": "9.8989",
      "effective_yield_waprice_pct": "9.9606",
      "gspread_bp": "-513",
+     "icpi": null,
+     "ir": null,
      "yield_at_waprice_pct": "9.96",
      "yield_close_pct": "9.9",
      "yield_date": "2029-11-12",
      "yield_date_type": "MATDATE",
+     "yield_last_coupon_pct": null,
      "yield_to_offer_pct": null,
      "zspread_bp": "-526"
     },
@@ -195,14 +225,20 @@
     "open_pct": null,
     "secid": "RU000A10BRM5",
     "source_analytics": {
+     "bei": null,
+     "cbr": null,
      "duration_days": "735",
+     "duration_waprice_days": null,
      "effective_yield_pct": null,
      "effective_yield_waprice_pct": null,
      "gspread_bp": null,
+     "icpi": null,
+     "ir": null,
      "yield_at_waprice_pct": "9.96",
      "yield_close_pct": null,
      "yield_date": null,
      "yield_date_type": null,
+     "yield_last_coupon_pct": null,
      "yield_to_offer_pct": null,
      "zspread_bp": null
     },
@@ -229,14 +265,20 @@
     "open_pct": "99.89",
     "secid": "RU000A10GCT1",
     "source_analytics": {
+     "bei": null,
+     "cbr": null,
      "duration_days": "836",
+     "duration_waprice_days": "836",
      "effective_yield_pct": "17.6737",
      "effective_yield_waprice_pct": "17.6531",
      "gspread_bp": "241",
+     "icpi": null,
+     "ir": null,
      "yield_at_waprice_pct": "17.65",
      "yield_close_pct": "17.67",
      "yield_date": "2030-03-26",
      "yield_date_type": "MATDATE",
+     "yield_last_coupon_pct": null,
      "yield_to_offer_pct": null,
      "zspread_bp": "222"
     },
@@ -263,14 +305,20 @@
     "open_pct": "51.375",
     "secid": "SU26238RMFS4",
     "source_analytics": {
+     "bei": null,
+     "cbr": null,
      "duration_days": "2480",
+     "duration_waprice_days": "2479",
      "effective_yield_pct": "16.2094",
      "effective_yield_waprice_pct": "16.2182",
      "gspread_bp": "-24",
+     "icpi": null,
+     "ir": null,
      "yield_at_waprice_pct": "16.22",
      "yield_close_pct": "16.21",
      "yield_date": "2041-05-15",
      "yield_date_type": "MATDATE",
+     "yield_last_coupon_pct": null,
      "yield_to_offer_pct": null,
      "zspread_bp": "-11"
     },
@@ -297,14 +345,20 @@
     "open_pct": "101.947",
     "secid": "SU29008RMFS8",
     "source_analytics": {
+     "bei": null,
+     "cbr": null,
      "duration_days": "906",
+     "duration_waprice_days": "906",
      "effective_yield_pct": "15.3449",
      "effective_yield_waprice_pct": "15.3144",
      "gspread_bp": "-6",
+     "icpi": null,
+     "ir": "14.3",
      "yield_at_waprice_pct": "0",
      "yield_close_pct": null,
      "yield_date": "2029-10-03",
      "yield_date_type": "MATDATE",
+     "yield_last_coupon_pct": null,
      "yield_to_offer_pct": null,
      "zspread_bp": "-18"
     },
@@ -331,14 +385,20 @@
     "open_pct": "61.14",
     "secid": "SU46020RMFS2",
     "source_analytics": {
+     "bei": null,
+     "cbr": null,
      "duration_days": "2128",
+     "duration_waprice_days": "2127",
      "effective_yield_pct": "15.7736",
      "effective_yield_waprice_pct": "15.7809",
      "gspread_bp": "-62",
+     "icpi": null,
+     "ir": null,
      "yield_at_waprice_pct": "15.78",
      "yield_close_pct": "15.77",
      "yield_date": "2036-02-06",
      "yield_date_type": "MATDATE",
+     "yield_last_coupon_pct": null,
      "yield_to_offer_pct": null,
      "zspread_bp": "-56"
     },
@@ -365,14 +425,20 @@
     "open_pct": "81.483",
     "secid": "SU52005RMFS4",
     "source_analytics": {
+     "bei": null,
+     "cbr": null,
      "duration_days": "2175",
+     "duration_waprice_days": "2174",
      "effective_yield_pct": "6.2557",
      "effective_yield_waprice_pct": "6.3169",
      "gspread_bp": "-1015",
+     "icpi": "9.53",
+     "ir": null,
      "yield_at_waprice_pct": "6.32",
      "yield_close_pct": "6.26",
      "yield_date": "2033-05-11",
      "yield_date_type": "MATDATE",
+     "yield_last_coupon_pct": null,
      "yield_to_offer_pct": null,
      "zspread_bp": "-1013"
     },
@@ -3478,6 +3544,7 @@
    {
     "effective_date": "2026-10-01",
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_DEPOSIT_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3490,6 +3557,7 @@
    {
     "effective_date": "2026-10-02",
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_DEPOSIT_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3502,6 +3570,7 @@
    {
     "effective_date": "2026-10-05",
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_DEPOSIT_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3514,6 +3583,7 @@
    {
     "effective_date": "2026-10-06",
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_DEPOSIT_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3526,6 +3596,7 @@
    {
     "effective_date": "2026-10-07",
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_DEPOSIT_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3538,6 +3609,7 @@
    {
     "effective_date": "2026-10-08",
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_DEPOSIT_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3550,6 +3622,7 @@
    {
     "effective_date": "2026-10-09",
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_DEPOSIT_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3562,6 +3635,7 @@
    {
     "effective_date": "2026-10-12",
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_DEPOSIT_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3574,6 +3648,7 @@
    {
     "effective_date": "2026-10-13",
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_DEPOSIT_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3586,6 +3661,7 @@
    {
     "effective_date": "2026-10-14",
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_DEPOSIT_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3598,6 +3674,7 @@
    {
     "effective_date": "2026-10-15",
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_DEPOSIT_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3610,6 +3687,7 @@
    {
     "effective_date": "2026-10-16",
     "fixing_date": "2026-10-16",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_DEPOSIT_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3622,6 +3700,7 @@
    {
     "effective_date": "2026-10-01",
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_LENDING_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3634,6 +3713,7 @@
    {
     "effective_date": "2026-10-02",
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_LENDING_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3646,6 +3726,7 @@
    {
     "effective_date": "2026-10-05",
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_LENDING_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3658,6 +3739,7 @@
    {
     "effective_date": "2026-10-06",
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_LENDING_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3670,6 +3752,7 @@
    {
     "effective_date": "2026-10-07",
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_LENDING_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3682,6 +3765,7 @@
    {
     "effective_date": "2026-10-08",
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_LENDING_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3694,6 +3778,7 @@
    {
     "effective_date": "2026-10-09",
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_LENDING_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3706,6 +3791,7 @@
    {
     "effective_date": "2026-10-12",
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_LENDING_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3718,6 +3804,7 @@
    {
     "effective_date": "2026-10-13",
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_LENDING_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3730,6 +3817,7 @@
    {
     "effective_date": "2026-10-14",
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_LENDING_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3742,6 +3830,7 @@
    {
     "effective_date": "2026-10-15",
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_LENDING_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3754,6 +3843,7 @@
    {
     "effective_date": "2026-10-16",
     "fixing_date": "2026-10-16",
+    "hub_ingested_at": "2026-10-16T08:42:57.050666Z",
     "index_code": "CBR_LENDING_STANDING",
     "labels": [],
     "origin": "md.fixing",
@@ -3766,6 +3856,7 @@
    {
     "effective_date": "2026-10-01",
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T08:42:51.668049Z",
     "index_code": "KEY_RATE",
     "labels": [],
     "origin": "md.fixing",
@@ -3778,6 +3869,7 @@
    {
     "effective_date": "2026-10-02",
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T08:42:51.668049Z",
     "index_code": "KEY_RATE",
     "labels": [],
     "origin": "md.fixing",
@@ -3790,6 +3882,7 @@
    {
     "effective_date": "2026-10-05",
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T08:42:51.668049Z",
     "index_code": "KEY_RATE",
     "labels": [],
     "origin": "md.fixing",
@@ -3802,6 +3895,7 @@
    {
     "effective_date": "2026-10-06",
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T08:42:51.668049Z",
     "index_code": "KEY_RATE",
     "labels": [],
     "origin": "md.fixing",
@@ -3814,6 +3908,7 @@
    {
     "effective_date": "2026-10-07",
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T08:42:51.668049Z",
     "index_code": "KEY_RATE",
     "labels": [],
     "origin": "md.fixing",
@@ -3826,6 +3921,7 @@
    {
     "effective_date": "2026-10-08",
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T08:42:51.668049Z",
     "index_code": "KEY_RATE",
     "labels": [],
     "origin": "md.fixing",
@@ -3838,6 +3934,7 @@
    {
     "effective_date": "2026-10-09",
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T08:42:51.668049Z",
     "index_code": "KEY_RATE",
     "labels": [],
     "origin": "md.fixing",
@@ -3850,6 +3947,7 @@
    {
     "effective_date": "2026-10-12",
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T08:42:51.668049Z",
     "index_code": "KEY_RATE",
     "labels": [],
     "origin": "md.fixing",
@@ -3862,6 +3960,7 @@
    {
     "effective_date": "2026-10-13",
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T08:42:51.668049Z",
     "index_code": "KEY_RATE",
     "labels": [],
     "origin": "md.fixing",
@@ -3874,6 +3973,7 @@
    {
     "effective_date": "2026-10-14",
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T08:42:51.668049Z",
     "index_code": "KEY_RATE",
     "labels": [],
     "origin": "md.fixing",
@@ -3886,6 +3986,7 @@
    {
     "effective_date": "2026-10-15",
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T08:42:51.668049Z",
     "index_code": "KEY_RATE",
     "labels": [],
     "origin": "md.fixing",
@@ -3898,6 +3999,7 @@
    {
     "effective_date": "2026-10-16",
     "fixing_date": "2026-10-16",
+    "hub_ingested_at": "2026-10-16T08:42:51.668049Z",
     "index_code": "KEY_RATE",
     "labels": [],
     "origin": "md.fixing",
@@ -3910,6 +4012,7 @@
    {
     "effective_date": "2026-10-01",
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T08:42:52.726220Z",
     "index_code": "RUONIA",
     "labels": [],
     "origin": "md.fixing",
@@ -3922,6 +4025,7 @@
    {
     "effective_date": "2026-10-02",
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T08:42:52.726220Z",
     "index_code": "RUONIA",
     "labels": [],
     "origin": "md.fixing",
@@ -3934,6 +4038,7 @@
    {
     "effective_date": "2026-10-05",
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T08:42:52.726220Z",
     "index_code": "RUONIA",
     "labels": [],
     "origin": "md.fixing",
@@ -3946,6 +4051,7 @@
    {
     "effective_date": "2026-10-06",
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T08:42:52.726220Z",
     "index_code": "RUONIA",
     "labels": [],
     "origin": "md.fixing",
@@ -3958,6 +4064,7 @@
    {
     "effective_date": "2026-10-07",
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T08:42:52.726220Z",
     "index_code": "RUONIA",
     "labels": [],
     "origin": "md.fixing",
@@ -3970,6 +4077,7 @@
    {
     "effective_date": "2026-10-08",
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T08:42:52.726220Z",
     "index_code": "RUONIA",
     "labels": [],
     "origin": "md.fixing",
@@ -3982,6 +4090,7 @@
    {
     "effective_date": "2026-10-09",
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T08:42:52.726220Z",
     "index_code": "RUONIA",
     "labels": [],
     "origin": "md.fixing",
@@ -3994,6 +4103,7 @@
    {
     "effective_date": "2026-10-12",
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T08:42:52.726220Z",
     "index_code": "RUONIA",
     "labels": [],
     "origin": "md.fixing",
@@ -4006,6 +4116,7 @@
    {
     "effective_date": "2026-10-13",
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T08:42:52.726220Z",
     "index_code": "RUONIA",
     "labels": [],
     "origin": "md.fixing",
@@ -4018,6 +4129,7 @@
    {
     "effective_date": "2026-10-14",
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T08:42:52.726220Z",
     "index_code": "RUONIA",
     "labels": [],
     "origin": "md.fixing",
@@ -4030,6 +4142,7 @@
    {
     "effective_date": "2026-10-01",
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "RUONIA_INDEX",
     "labels": [],
     "origin": "md.fixing",
@@ -4042,6 +4155,7 @@
    {
     "effective_date": "2026-10-02",
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "RUONIA_INDEX",
     "labels": [],
     "origin": "md.fixing",
@@ -4054,6 +4168,7 @@
    {
     "effective_date": "2026-10-03",
     "fixing_date": "2026-10-03",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "RUONIA_INDEX",
     "labels": [],
     "origin": "md.fixing",
@@ -4066,6 +4181,7 @@
    {
     "effective_date": "2026-10-04",
     "fixing_date": "2026-10-04",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "RUONIA_INDEX",
     "labels": [],
     "origin": "md.fixing",
@@ -4078,6 +4194,7 @@
    {
     "effective_date": "2026-10-05",
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "RUONIA_INDEX",
     "labels": [],
     "origin": "md.fixing",
@@ -4090,6 +4207,7 @@
    {
     "effective_date": "2026-10-06",
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "RUONIA_INDEX",
     "labels": [],
     "origin": "md.fixing",
@@ -4102,6 +4220,7 @@
    {
     "effective_date": "2026-10-07",
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "RUONIA_INDEX",
     "labels": [],
     "origin": "md.fixing",
@@ -4114,6 +4233,7 @@
    {
     "effective_date": "2026-10-08",
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "RUONIA_INDEX",
     "labels": [],
     "origin": "md.fixing",
@@ -4126,6 +4246,7 @@
    {
     "effective_date": "2026-10-09",
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "RUONIA_INDEX",
     "labels": [],
     "origin": "md.fixing",
@@ -4138,6 +4259,7 @@
    {
     "effective_date": "2026-10-10",
     "fixing_date": "2026-10-10",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "RUONIA_INDEX",
     "labels": [],
     "origin": "md.fixing",
@@ -4150,6 +4272,7 @@
    {
     "effective_date": "2026-10-11",
     "fixing_date": "2026-10-11",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "RUONIA_INDEX",
     "labels": [],
     "origin": "md.fixing",
@@ -4162,6 +4285,7 @@
    {
     "effective_date": "2026-10-12",
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "RUONIA_INDEX",
     "labels": [],
     "origin": "md.fixing",
@@ -4174,6 +4298,7 @@
    {
     "effective_date": "2026-10-13",
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "RUONIA_INDEX",
     "labels": [],
     "origin": "md.fixing",
@@ -4186,6 +4311,7 @@
    {
     "effective_date": "2026-10-14",
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "RUONIA_INDEX",
     "labels": [],
     "origin": "md.fixing",
@@ -4198,6 +4324,7 @@
    {
     "effective_date": "2026-10-15",
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "RUONIA_INDEX",
     "labels": [],
     "origin": "md.fixing",
@@ -4210,6 +4337,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T13:19:05.977134Z",
     "index_code": "RUSFAR",
     "labels": [],
     "origin": "md.index_eod",
@@ -4222,6 +4350,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T13:19:08.139890Z",
     "index_code": "RUSFAR",
     "labels": [],
     "origin": "md.index_eod",
@@ -4234,6 +4363,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T13:19:10.610038Z",
     "index_code": "RUSFAR",
     "labels": [],
     "origin": "md.index_eod",
@@ -4246,6 +4376,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T13:19:12.655354Z",
     "index_code": "RUSFAR",
     "labels": [],
     "origin": "md.index_eod",
@@ -4258,6 +4389,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T13:19:14.601566Z",
     "index_code": "RUSFAR",
     "labels": [],
     "origin": "md.index_eod",
@@ -4270,6 +4402,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFAR",
     "labels": [],
     "origin": "md.index_eod",
@@ -4282,6 +4415,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFAR",
     "labels": [],
     "origin": "md.index_eod",
@@ -4294,6 +4428,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFAR",
     "labels": [],
     "origin": "md.index_eod",
@@ -4306,6 +4441,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFAR",
     "labels": [],
     "origin": "md.index_eod",
@@ -4318,6 +4454,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFAR",
     "labels": [],
     "origin": "md.index_eod",
@@ -4330,6 +4467,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFAR",
     "labels": [],
     "origin": "md.index_eod",
@@ -4342,6 +4480,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T13:19:05.977134Z",
     "index_code": "RUSFAR1M",
     "labels": [],
     "origin": "md.index_eod",
@@ -4354,6 +4493,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T13:19:08.139890Z",
     "index_code": "RUSFAR1M",
     "labels": [],
     "origin": "md.index_eod",
@@ -4366,6 +4506,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T13:19:10.610038Z",
     "index_code": "RUSFAR1M",
     "labels": [],
     "origin": "md.index_eod",
@@ -4378,6 +4519,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T13:19:12.655354Z",
     "index_code": "RUSFAR1M",
     "labels": [],
     "origin": "md.index_eod",
@@ -4390,6 +4532,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T13:19:14.601566Z",
     "index_code": "RUSFAR1M",
     "labels": [],
     "origin": "md.index_eod",
@@ -4402,6 +4545,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFAR1M",
     "labels": [],
     "origin": "md.index_eod",
@@ -4414,6 +4558,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFAR1M",
     "labels": [],
     "origin": "md.index_eod",
@@ -4426,6 +4571,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFAR1M",
     "labels": [],
     "origin": "md.index_eod",
@@ -4438,6 +4584,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFAR1M",
     "labels": [],
     "origin": "md.index_eod",
@@ -4450,6 +4597,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFAR1M",
     "labels": [],
     "origin": "md.index_eod",
@@ -4462,6 +4610,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFAR1M",
     "labels": [],
     "origin": "md.index_eod",
@@ -4474,6 +4623,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T13:19:05.977134Z",
     "index_code": "RUSFAR1MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4486,6 +4636,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T13:19:08.139890Z",
     "index_code": "RUSFAR1MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4498,6 +4649,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T13:19:10.610038Z",
     "index_code": "RUSFAR1MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4510,6 +4662,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T13:19:12.655354Z",
     "index_code": "RUSFAR1MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4522,6 +4675,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T13:19:14.601566Z",
     "index_code": "RUSFAR1MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4534,6 +4688,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFAR1MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4546,6 +4701,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFAR1MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4558,6 +4714,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFAR1MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4570,6 +4727,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFAR1MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4582,6 +4740,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFAR1MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4594,6 +4753,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFAR1MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4606,6 +4766,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T13:19:05.977134Z",
     "index_code": "RUSFAR1MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -4618,6 +4779,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T13:19:08.139890Z",
     "index_code": "RUSFAR1MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -4630,6 +4792,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T13:19:10.610038Z",
     "index_code": "RUSFAR1MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -4642,6 +4805,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T13:19:12.655354Z",
     "index_code": "RUSFAR1MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -4654,6 +4818,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T13:19:14.601566Z",
     "index_code": "RUSFAR1MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -4666,6 +4831,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFAR1MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -4678,6 +4844,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFAR1MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -4690,6 +4857,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFAR1MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -4702,6 +4870,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFAR1MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -4714,6 +4883,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFAR1MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -4726,6 +4896,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFAR1MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -4738,6 +4909,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T13:19:05.977134Z",
     "index_code": "RUSFAR1W",
     "labels": [],
     "origin": "md.index_eod",
@@ -4750,6 +4922,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T13:19:08.139890Z",
     "index_code": "RUSFAR1W",
     "labels": [],
     "origin": "md.index_eod",
@@ -4762,6 +4935,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T13:19:10.610038Z",
     "index_code": "RUSFAR1W",
     "labels": [],
     "origin": "md.index_eod",
@@ -4774,6 +4948,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T13:19:12.655354Z",
     "index_code": "RUSFAR1W",
     "labels": [],
     "origin": "md.index_eod",
@@ -4786,6 +4961,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T13:19:14.601566Z",
     "index_code": "RUSFAR1W",
     "labels": [],
     "origin": "md.index_eod",
@@ -4798,6 +4974,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFAR1W",
     "labels": [],
     "origin": "md.index_eod",
@@ -4810,6 +4987,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFAR1W",
     "labels": [],
     "origin": "md.index_eod",
@@ -4822,6 +5000,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFAR1W",
     "labels": [],
     "origin": "md.index_eod",
@@ -4834,6 +5013,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFAR1W",
     "labels": [],
     "origin": "md.index_eod",
@@ -4846,6 +5026,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFAR1W",
     "labels": [],
     "origin": "md.index_eod",
@@ -4858,6 +5039,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFAR1W",
     "labels": [],
     "origin": "md.index_eod",
@@ -4870,6 +5052,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T13:19:05.977134Z",
     "index_code": "RUSFAR1WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4882,6 +5065,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T13:19:08.139890Z",
     "index_code": "RUSFAR1WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4894,6 +5078,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T13:19:10.610038Z",
     "index_code": "RUSFAR1WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4906,6 +5091,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T13:19:12.655354Z",
     "index_code": "RUSFAR1WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4918,6 +5104,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T13:19:14.601566Z",
     "index_code": "RUSFAR1WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4930,6 +5117,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFAR1WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4942,6 +5130,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFAR1WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4954,6 +5143,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFAR1WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4966,6 +5156,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFAR1WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4978,6 +5169,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFAR1WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -4990,6 +5182,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFAR1WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5002,6 +5195,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T13:19:05.977134Z",
     "index_code": "RUSFAR1WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5014,6 +5208,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T13:19:08.139890Z",
     "index_code": "RUSFAR1WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5026,6 +5221,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T13:19:10.610038Z",
     "index_code": "RUSFAR1WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5038,6 +5234,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T13:19:12.655354Z",
     "index_code": "RUSFAR1WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5050,6 +5247,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T13:19:14.601566Z",
     "index_code": "RUSFAR1WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5062,6 +5260,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFAR1WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5074,6 +5273,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFAR1WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5086,6 +5286,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFAR1WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5098,6 +5299,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFAR1WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5110,6 +5312,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFAR1WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5122,6 +5325,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFAR1WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5134,6 +5338,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T13:19:05.977134Z",
     "index_code": "RUSFAR2W",
     "labels": [],
     "origin": "md.index_eod",
@@ -5146,6 +5351,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T13:19:08.139890Z",
     "index_code": "RUSFAR2W",
     "labels": [],
     "origin": "md.index_eod",
@@ -5158,6 +5364,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T13:19:10.610038Z",
     "index_code": "RUSFAR2W",
     "labels": [],
     "origin": "md.index_eod",
@@ -5170,6 +5377,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T13:19:12.655354Z",
     "index_code": "RUSFAR2W",
     "labels": [],
     "origin": "md.index_eod",
@@ -5182,6 +5390,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T13:19:14.601566Z",
     "index_code": "RUSFAR2W",
     "labels": [],
     "origin": "md.index_eod",
@@ -5194,6 +5403,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFAR2W",
     "labels": [],
     "origin": "md.index_eod",
@@ -5206,6 +5416,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFAR2W",
     "labels": [],
     "origin": "md.index_eod",
@@ -5218,6 +5429,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFAR2W",
     "labels": [],
     "origin": "md.index_eod",
@@ -5230,6 +5442,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFAR2W",
     "labels": [],
     "origin": "md.index_eod",
@@ -5242,6 +5455,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFAR2W",
     "labels": [],
     "origin": "md.index_eod",
@@ -5254,6 +5468,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFAR2W",
     "labels": [],
     "origin": "md.index_eod",
@@ -5266,6 +5481,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T13:19:05.977134Z",
     "index_code": "RUSFAR2WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5278,6 +5494,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T13:19:08.139890Z",
     "index_code": "RUSFAR2WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5290,6 +5507,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T13:19:10.610038Z",
     "index_code": "RUSFAR2WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5302,6 +5520,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T13:19:12.655354Z",
     "index_code": "RUSFAR2WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5314,6 +5533,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T13:19:14.601566Z",
     "index_code": "RUSFAR2WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5326,6 +5546,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFAR2WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5338,6 +5559,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFAR2WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5350,6 +5572,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFAR2WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5362,6 +5585,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFAR2WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5374,6 +5598,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFAR2WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5386,6 +5611,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFAR2WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5398,6 +5624,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T13:19:05.977134Z",
     "index_code": "RUSFAR2WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5410,6 +5637,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T13:19:08.139890Z",
     "index_code": "RUSFAR2WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5422,6 +5650,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T13:19:10.610038Z",
     "index_code": "RUSFAR2WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5434,6 +5663,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T13:19:12.655354Z",
     "index_code": "RUSFAR2WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5446,6 +5676,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T13:19:14.601566Z",
     "index_code": "RUSFAR2WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5458,6 +5689,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFAR2WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5470,6 +5702,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFAR2WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5482,6 +5715,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFAR2WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5494,6 +5728,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFAR2WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5506,6 +5741,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFAR2WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5518,6 +5754,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFAR2WRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5530,6 +5767,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T13:19:05.977134Z",
     "index_code": "RUSFAR3M",
     "labels": [],
     "origin": "md.index_eod",
@@ -5542,6 +5780,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T13:19:08.139890Z",
     "index_code": "RUSFAR3M",
     "labels": [],
     "origin": "md.index_eod",
@@ -5554,6 +5793,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T13:19:10.610038Z",
     "index_code": "RUSFAR3M",
     "labels": [],
     "origin": "md.index_eod",
@@ -5566,6 +5806,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T13:19:12.655354Z",
     "index_code": "RUSFAR3M",
     "labels": [],
     "origin": "md.index_eod",
@@ -5578,6 +5819,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T13:19:14.601566Z",
     "index_code": "RUSFAR3M",
     "labels": [],
     "origin": "md.index_eod",
@@ -5590,6 +5832,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFAR3M",
     "labels": [],
     "origin": "md.index_eod",
@@ -5602,6 +5845,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFAR3M",
     "labels": [],
     "origin": "md.index_eod",
@@ -5614,6 +5858,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFAR3M",
     "labels": [],
     "origin": "md.index_eod",
@@ -5626,6 +5871,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFAR3M",
     "labels": [],
     "origin": "md.index_eod",
@@ -5638,6 +5884,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFAR3M",
     "labels": [],
     "origin": "md.index_eod",
@@ -5650,6 +5897,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFAR3M",
     "labels": [],
     "origin": "md.index_eod",
@@ -5662,6 +5910,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T13:19:05.977134Z",
     "index_code": "RUSFAR3MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5674,6 +5923,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T13:19:08.139890Z",
     "index_code": "RUSFAR3MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5686,6 +5936,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T13:19:10.610038Z",
     "index_code": "RUSFAR3MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5698,6 +5949,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T13:19:12.655354Z",
     "index_code": "RUSFAR3MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5710,6 +5962,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T13:19:14.601566Z",
     "index_code": "RUSFAR3MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5722,6 +5975,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFAR3MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5734,6 +5988,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFAR3MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5746,6 +6001,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFAR3MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5758,6 +6014,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFAR3MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5770,6 +6027,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFAR3MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5782,6 +6040,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFAR3MN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5794,6 +6053,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T13:19:05.977134Z",
     "index_code": "RUSFAR3MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5806,6 +6066,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T13:19:08.139890Z",
     "index_code": "RUSFAR3MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5818,6 +6079,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T13:19:10.610038Z",
     "index_code": "RUSFAR3MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5830,6 +6092,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T13:19:12.655354Z",
     "index_code": "RUSFAR3MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5842,6 +6105,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T13:19:14.601566Z",
     "index_code": "RUSFAR3MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5854,6 +6118,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFAR3MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5866,6 +6131,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFAR3MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5878,6 +6144,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFAR3MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5890,6 +6157,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFAR3MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5902,6 +6170,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFAR3MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5914,6 +6183,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFAR3MRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -5926,6 +6196,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFARC1WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5938,6 +6209,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFARC1WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5950,6 +6222,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFARC1WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5962,6 +6235,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFARC1WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5974,6 +6248,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFARC1WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5986,6 +6261,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFARC1WN",
     "labels": [],
     "origin": "md.index_eod",
@@ -5998,6 +6274,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T13:19:05.977134Z",
     "index_code": "RUSFARC1WR",
     "labels": [],
     "origin": "md.index_eod",
@@ -6010,6 +6287,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T13:19:08.139890Z",
     "index_code": "RUSFARC1WR",
     "labels": [],
     "origin": "md.index_eod",
@@ -6022,6 +6300,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T13:19:10.610038Z",
     "index_code": "RUSFARC1WR",
     "labels": [],
     "origin": "md.index_eod",
@@ -6034,6 +6313,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T13:19:12.655354Z",
     "index_code": "RUSFARC1WR",
     "labels": [],
     "origin": "md.index_eod",
@@ -6046,6 +6326,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T13:19:14.601566Z",
     "index_code": "RUSFARC1WR",
     "labels": [],
     "origin": "md.index_eod",
@@ -6058,6 +6339,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFARC1WR",
     "labels": [],
     "origin": "md.index_eod",
@@ -6070,6 +6352,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFARC1WR",
     "labels": [],
     "origin": "md.index_eod",
@@ -6082,6 +6365,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFARC1WR",
     "labels": [],
     "origin": "md.index_eod",
@@ -6094,6 +6378,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFARC1WR",
     "labels": [],
     "origin": "md.index_eod",
@@ -6106,6 +6391,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFARC1WR",
     "labels": [],
     "origin": "md.index_eod",
@@ -6118,6 +6404,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFARC1WR",
     "labels": [],
     "origin": "md.index_eod",
@@ -6130,6 +6417,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFARCN1W",
     "labels": [],
     "origin": "md.index_eod",
@@ -6142,6 +6430,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFARCN1W",
     "labels": [],
     "origin": "md.index_eod",
@@ -6154,6 +6443,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFARCN1W",
     "labels": [],
     "origin": "md.index_eod",
@@ -6166,6 +6456,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFARCN1W",
     "labels": [],
     "origin": "md.index_eod",
@@ -6178,6 +6469,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFARCN1W",
     "labels": [],
     "origin": "md.index_eod",
@@ -6190,6 +6482,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFARCN1W",
     "labels": [],
     "origin": "md.index_eod",
@@ -6202,6 +6495,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFARCNN",
     "labels": [],
     "origin": "md.index_eod",
@@ -6214,6 +6508,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFARCNN",
     "labels": [],
     "origin": "md.index_eod",
@@ -6226,6 +6521,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFARCNN",
     "labels": [],
     "origin": "md.index_eod",
@@ -6238,6 +6534,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFARCNN",
     "labels": [],
     "origin": "md.index_eod",
@@ -6250,6 +6547,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFARCNN",
     "labels": [],
     "origin": "md.index_eod",
@@ -6262,6 +6560,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFARCNN",
     "labels": [],
     "origin": "md.index_eod",
@@ -6274,6 +6573,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T13:19:05.977134Z",
     "index_code": "RUSFARCNRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6286,6 +6586,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T13:19:08.139890Z",
     "index_code": "RUSFARCNRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6298,6 +6599,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T13:19:10.610038Z",
     "index_code": "RUSFARCNRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6310,6 +6612,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T13:19:12.655354Z",
     "index_code": "RUSFARCNRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6322,6 +6625,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T13:19:14.601566Z",
     "index_code": "RUSFARCNRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6334,6 +6638,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFARCNRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6346,6 +6651,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFARCNRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6358,6 +6664,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFARCNRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6370,6 +6677,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFARCNRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6382,6 +6690,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFARCNRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6394,6 +6703,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFARCNRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6406,6 +6716,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFARCNY",
     "labels": [],
     "origin": "md.index_eod",
@@ -6418,6 +6729,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFARCNY",
     "labels": [],
     "origin": "md.index_eod",
@@ -6430,6 +6742,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFARCNY",
     "labels": [],
     "origin": "md.index_eod",
@@ -6442,6 +6755,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFARCNY",
     "labels": [],
     "origin": "md.index_eod",
@@ -6454,6 +6768,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFARCNY",
     "labels": [],
     "origin": "md.index_eod",
@@ -6466,6 +6781,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFARCNY",
     "labels": [],
     "origin": "md.index_eod",
@@ -6478,138 +6794,150 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T13:19:05.977134Z",
     "index_code": "RUSFARIND",
     "labels": [],
     "origin": "md.index_eod",
     "published_at": null,
     "published_on": null,
     "source": "moex_iss",
-    "unit": "pct",
+    "unit": "index",
     "value": "2508.17"
    },
    {
     "effective_date": null,
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T13:19:08.139890Z",
     "index_code": "RUSFARIND",
     "labels": [],
     "origin": "md.index_eod",
     "published_at": null,
     "published_on": null,
     "source": "moex_iss",
-    "unit": "pct",
+    "unit": "index",
     "value": "2509.14"
    },
    {
     "effective_date": null,
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T13:19:10.610038Z",
     "index_code": "RUSFARIND",
     "labels": [],
     "origin": "md.index_eod",
     "published_at": null,
     "published_on": null,
     "source": "moex_iss",
-    "unit": "pct",
+    "unit": "index",
     "value": "2511.99"
    },
    {
     "effective_date": null,
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T13:19:12.655354Z",
     "index_code": "RUSFARIND",
     "labels": [],
     "origin": "md.index_eod",
     "published_at": null,
     "published_on": null,
     "source": "moex_iss",
-    "unit": "pct",
+    "unit": "index",
     "value": "2512.94"
    },
    {
     "effective_date": null,
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T13:19:14.601566Z",
     "index_code": "RUSFARIND",
     "labels": [],
     "origin": "md.index_eod",
     "published_at": null,
     "published_on": null,
     "source": "moex_iss",
-    "unit": "pct",
+    "unit": "index",
     "value": "2513.88"
    },
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFARIND",
     "labels": [],
     "origin": "md.index_eod",
     "published_at": null,
     "published_on": null,
     "source": "moex_iss",
-    "unit": "pct",
+    "unit": "index",
     "value": "2514.82"
    },
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFARIND",
     "labels": [],
     "origin": "md.index_eod",
     "published_at": null,
     "published_on": null,
     "source": "moex_iss",
-    "unit": "pct",
+    "unit": "index",
     "value": "2515.79"
    },
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFARIND",
     "labels": [],
     "origin": "md.index_eod",
     "published_at": null,
     "published_on": null,
     "source": "moex_iss",
-    "unit": "pct",
+    "unit": "index",
     "value": "2518.68"
    },
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFARIND",
     "labels": [],
     "origin": "md.index_eod",
     "published_at": null,
     "published_on": null,
     "source": "moex_iss",
-    "unit": "pct",
+    "unit": "index",
     "value": "2519.63"
    },
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFARIND",
     "labels": [],
     "origin": "md.index_eod",
     "published_at": null,
     "published_on": null,
     "source": "moex_iss",
-    "unit": "pct",
+    "unit": "index",
     "value": "2520.57"
    },
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFARIND",
     "labels": [],
     "origin": "md.index_eod",
     "published_at": null,
     "published_on": null,
     "source": "moex_iss",
-    "unit": "pct",
+    "unit": "index",
     "value": "2521.53"
    },
    {
     "effective_date": null,
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T13:19:05.977134Z",
     "index_code": "RUSFARN",
     "labels": [],
     "origin": "md.index_eod",
@@ -6622,6 +6950,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T13:19:08.139890Z",
     "index_code": "RUSFARN",
     "labels": [],
     "origin": "md.index_eod",
@@ -6634,6 +6963,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T13:19:10.610038Z",
     "index_code": "RUSFARN",
     "labels": [],
     "origin": "md.index_eod",
@@ -6646,6 +6976,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T13:19:12.655354Z",
     "index_code": "RUSFARN",
     "labels": [],
     "origin": "md.index_eod",
@@ -6658,6 +6989,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T13:19:14.601566Z",
     "index_code": "RUSFARN",
     "labels": [],
     "origin": "md.index_eod",
@@ -6670,6 +7002,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFARN",
     "labels": [],
     "origin": "md.index_eod",
@@ -6682,6 +7015,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFARN",
     "labels": [],
     "origin": "md.index_eod",
@@ -6694,6 +7028,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFARN",
     "labels": [],
     "origin": "md.index_eod",
@@ -6706,6 +7041,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFARN",
     "labels": [],
     "origin": "md.index_eod",
@@ -6718,6 +7054,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFARN",
     "labels": [],
     "origin": "md.index_eod",
@@ -6730,6 +7067,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFARN",
     "labels": [],
     "origin": "md.index_eod",
@@ -6742,6 +7080,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T13:19:05.977134Z",
     "index_code": "RUSFARRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6754,6 +7093,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T13:19:08.139890Z",
     "index_code": "RUSFARRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6766,6 +7106,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T13:19:10.610038Z",
     "index_code": "RUSFARRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6778,6 +7119,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T13:19:12.655354Z",
     "index_code": "RUSFARRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6790,6 +7132,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T13:19:14.601566Z",
     "index_code": "RUSFARRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6802,6 +7145,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T13:19:16.934011Z",
     "index_code": "RUSFARRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6814,6 +7158,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T13:19:19.678543Z",
     "index_code": "RUSFARRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6826,6 +7171,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T13:19:21.655964Z",
     "index_code": "RUSFARRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6838,6 +7184,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T13:19:24.136903Z",
     "index_code": "RUSFARRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6850,6 +7197,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T13:19:26.878424Z",
     "index_code": "RUSFARRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6862,6 +7210,7 @@
    {
     "effective_date": null,
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T13:19:29.596300Z",
     "index_code": "RUSFARRT",
     "labels": [],
     "origin": "md.index_eod",
@@ -6874,6 +7223,7 @@
    {
     "effective_date": "2026-10-01",
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_1M",
     "labels": [],
     "origin": "md.fixing",
@@ -6886,6 +7236,7 @@
    {
     "effective_date": "2026-10-02",
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_1M",
     "labels": [],
     "origin": "md.fixing",
@@ -6898,6 +7249,7 @@
    {
     "effective_date": "2026-10-03",
     "fixing_date": "2026-10-03",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_1M",
     "labels": [],
     "origin": "md.fixing",
@@ -6910,6 +7262,7 @@
    {
     "effective_date": "2026-10-04",
     "fixing_date": "2026-10-04",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_1M",
     "labels": [],
     "origin": "md.fixing",
@@ -6922,6 +7275,7 @@
    {
     "effective_date": "2026-10-05",
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_1M",
     "labels": [],
     "origin": "md.fixing",
@@ -6934,6 +7288,7 @@
    {
     "effective_date": "2026-10-06",
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_1M",
     "labels": [],
     "origin": "md.fixing",
@@ -6946,6 +7301,7 @@
    {
     "effective_date": "2026-10-07",
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_1M",
     "labels": [],
     "origin": "md.fixing",
@@ -6958,6 +7314,7 @@
    {
     "effective_date": "2026-10-08",
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_1M",
     "labels": [],
     "origin": "md.fixing",
@@ -6970,6 +7327,7 @@
    {
     "effective_date": "2026-10-09",
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_1M",
     "labels": [],
     "origin": "md.fixing",
@@ -6982,6 +7340,7 @@
    {
     "effective_date": "2026-10-10",
     "fixing_date": "2026-10-10",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_1M",
     "labels": [],
     "origin": "md.fixing",
@@ -6994,6 +7353,7 @@
    {
     "effective_date": "2026-10-11",
     "fixing_date": "2026-10-11",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_1M",
     "labels": [],
     "origin": "md.fixing",
@@ -7006,6 +7366,7 @@
    {
     "effective_date": "2026-10-12",
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_1M",
     "labels": [],
     "origin": "md.fixing",
@@ -7018,6 +7379,7 @@
    {
     "effective_date": "2026-10-13",
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_1M",
     "labels": [],
     "origin": "md.fixing",
@@ -7030,6 +7392,7 @@
    {
     "effective_date": "2026-10-14",
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_1M",
     "labels": [],
     "origin": "md.fixing",
@@ -7042,6 +7405,7 @@
    {
     "effective_date": "2026-10-15",
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_1M",
     "labels": [],
     "origin": "md.fixing",
@@ -7054,6 +7418,7 @@
    {
     "effective_date": "2026-10-01",
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_3M",
     "labels": [],
     "origin": "md.fixing",
@@ -7066,6 +7431,7 @@
    {
     "effective_date": "2026-10-02",
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_3M",
     "labels": [],
     "origin": "md.fixing",
@@ -7078,6 +7444,7 @@
    {
     "effective_date": "2026-10-03",
     "fixing_date": "2026-10-03",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_3M",
     "labels": [],
     "origin": "md.fixing",
@@ -7090,6 +7457,7 @@
    {
     "effective_date": "2026-10-04",
     "fixing_date": "2026-10-04",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_3M",
     "labels": [],
     "origin": "md.fixing",
@@ -7102,6 +7470,7 @@
    {
     "effective_date": "2026-10-05",
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_3M",
     "labels": [],
     "origin": "md.fixing",
@@ -7114,6 +7483,7 @@
    {
     "effective_date": "2026-10-06",
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_3M",
     "labels": [],
     "origin": "md.fixing",
@@ -7126,6 +7496,7 @@
    {
     "effective_date": "2026-10-07",
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_3M",
     "labels": [],
     "origin": "md.fixing",
@@ -7138,6 +7509,7 @@
    {
     "effective_date": "2026-10-08",
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_3M",
     "labels": [],
     "origin": "md.fixing",
@@ -7150,6 +7522,7 @@
    {
     "effective_date": "2026-10-09",
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_3M",
     "labels": [],
     "origin": "md.fixing",
@@ -7162,6 +7535,7 @@
    {
     "effective_date": "2026-10-10",
     "fixing_date": "2026-10-10",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_3M",
     "labels": [],
     "origin": "md.fixing",
@@ -7174,6 +7548,7 @@
    {
     "effective_date": "2026-10-11",
     "fixing_date": "2026-10-11",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_3M",
     "labels": [],
     "origin": "md.fixing",
@@ -7186,6 +7561,7 @@
    {
     "effective_date": "2026-10-12",
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_3M",
     "labels": [],
     "origin": "md.fixing",
@@ -7198,6 +7574,7 @@
    {
     "effective_date": "2026-10-13",
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_3M",
     "labels": [],
     "origin": "md.fixing",
@@ -7210,6 +7587,7 @@
    {
     "effective_date": "2026-10-14",
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_3M",
     "labels": [],
     "origin": "md.fixing",
@@ -7222,6 +7600,7 @@
    {
     "effective_date": "2026-10-15",
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_3M",
     "labels": [],
     "origin": "md.fixing",
@@ -7234,6 +7613,7 @@
    {
     "effective_date": "2026-10-01",
     "fixing_date": "2026-10-01",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_6M",
     "labels": [],
     "origin": "md.fixing",
@@ -7246,6 +7626,7 @@
    {
     "effective_date": "2026-10-02",
     "fixing_date": "2026-10-02",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_6M",
     "labels": [],
     "origin": "md.fixing",
@@ -7258,6 +7639,7 @@
    {
     "effective_date": "2026-10-03",
     "fixing_date": "2026-10-03",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_6M",
     "labels": [],
     "origin": "md.fixing",
@@ -7270,6 +7652,7 @@
    {
     "effective_date": "2026-10-04",
     "fixing_date": "2026-10-04",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_6M",
     "labels": [],
     "origin": "md.fixing",
@@ -7282,6 +7665,7 @@
    {
     "effective_date": "2026-10-05",
     "fixing_date": "2026-10-05",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_6M",
     "labels": [],
     "origin": "md.fixing",
@@ -7294,6 +7678,7 @@
    {
     "effective_date": "2026-10-06",
     "fixing_date": "2026-10-06",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_6M",
     "labels": [],
     "origin": "md.fixing",
@@ -7306,6 +7691,7 @@
    {
     "effective_date": "2026-10-07",
     "fixing_date": "2026-10-07",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_6M",
     "labels": [],
     "origin": "md.fixing",
@@ -7318,6 +7704,7 @@
    {
     "effective_date": "2026-10-08",
     "fixing_date": "2026-10-08",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_6M",
     "labels": [],
     "origin": "md.fixing",
@@ -7330,6 +7717,7 @@
    {
     "effective_date": "2026-10-09",
     "fixing_date": "2026-10-09",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_6M",
     "labels": [],
     "origin": "md.fixing",
@@ -7342,6 +7730,7 @@
    {
     "effective_date": "2026-10-10",
     "fixing_date": "2026-10-10",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_6M",
     "labels": [],
     "origin": "md.fixing",
@@ -7354,6 +7743,7 @@
    {
     "effective_date": "2026-10-11",
     "fixing_date": "2026-10-11",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_6M",
     "labels": [],
     "origin": "md.fixing",
@@ -7366,6 +7756,7 @@
    {
     "effective_date": "2026-10-12",
     "fixing_date": "2026-10-12",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_6M",
     "labels": [],
     "origin": "md.fixing",
@@ -7378,6 +7769,7 @@
    {
     "effective_date": "2026-10-13",
     "fixing_date": "2026-10-13",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_6M",
     "labels": [],
     "origin": "md.fixing",
@@ -7390,6 +7782,7 @@
    {
     "effective_date": "2026-10-14",
     "fixing_date": "2026-10-14",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_6M",
     "labels": [],
     "origin": "md.fixing",
@@ -7402,6 +7795,7 @@
    {
     "effective_date": "2026-10-15",
     "fixing_date": "2026-10-15",
+    "hub_ingested_at": "2026-10-16T08:42:56.363476Z",
     "index_code": "TERM_RUONIA_6M",
     "labels": [],
     "origin": "md.fixing",
@@ -14964,7 +15358,7 @@
    },
    "name": "bond_quotes",
    "rows": 11,
-   "sha256": "d06d2088cde336e4640c4cc647c0cadaaac2b81e981167e3b3b9aff5a39f9a74",
+   "sha256": "fa4701c9976f8553276237d325aa5672eca1502c5ae665d0aaf759f7c0e46ea9",
    "stale": false,
    "stale_reasons": []
   },
@@ -15070,7 +15464,7 @@
    },
    "name": "fixings",
    "rows": 328,
-   "sha256": "de6fca4dd96a3c026429042b44c2abbd2d54d052a7a79a9e278891a4b2529653",
+   "sha256": "a4dea2a93999a79c32fadfecfc8414278cc9787ab7d9393d018e9110c1e65529",
    "stale": false,
    "stale_reasons": []
   },
@@ -19935,7 +20329,7 @@
   "name": "market-data-hub",
   "version": "0.1.0"
  },
- "schema_version": "market_snapshot/1.1",
+ "schema_version": "market_snapshot/1.2",
  "sources": [
   {
    "dataset": "bond_quotes",
@@ -20048,6 +20442,6 @@
    "source": "moex_iss"
   }
  ],
- "static_snapshot_id": "3a1d780c5364d29368cf3a7d93efb1ed5ab3b2b26c6bae14f78b34cec4355680",
+ "static_snapshot_id": "1a6b97eefe92ff8f4133cc9f6b8493fbc40de3149df8e665b9ac6d550619aa77",
  "supersedes": null
 }
