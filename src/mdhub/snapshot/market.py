@@ -10,7 +10,10 @@ date (dated datasets carry each row's own date inside an explicit window).
 Bond quotes are published only for instruments of the referenced static snapshot; quotes of
 other SECIDs are listed in ``excluded`` (reason ``not_in_static_snapshot``). RUB FX is RUB per
 1 unit; MOEX FX rows that are swaps, non-RUB pairs or precious metals are excluded with a
-reason. Non-RUB cross rates come from the ECB only.
+reason. Non-RUB cross rates: the ECB reference rates (``md.ecb_fx``) and, as separate kinds,
+the CBR / MOEX derived, MOEX CETS and FRED H.10 crosses of ``md.fx_cross`` (contract 1.3).
+Curve quote sets of proxy datasets (government par yields, ``meta.proxy``) carry the label
+``proxy_<meta.proxy>``: they are not OIS curves.
 """
 
 from __future__ import annotations
@@ -331,10 +334,13 @@ def _curve_sets(conn: DictConnection, t: datetime, d: date, prov: Provenance) ->
     for s in snaps:
         clock_day = s["source_ts"].astimezone(MSK).date() if s["source_ts"] else None
         off_day = clock_day is not None and clock_day != d
+        meta = json_decimal(s["meta_text"]) or {}
+        proxy = meta.get("proxy") if isinstance(meta, dict) else None
         labels = sorted_labels(
             "mid_only" if s["quote_basis"] == "mid_only" else None,
             "market_closed" if s["market_closed"] else None,
             "source_clock_not_on_business_date" if off_day else None,
+            f"proxy_{proxy}" if isinstance(proxy, str) else None,
         )
         series = f"{s['source']}/{s['dataset']}"
         if off_day:
@@ -669,28 +675,62 @@ def _fx(
     )
 
 
+CROSS_DERIVED_KINDS: Final = frozenset({"cbr_cross", "moex_indicative_cross"})
+
+
 def _cross(conn: DictConnection, t: datetime, d: date, lookback: int, prov: Provenance) -> Dataset:
     lo = d - timedelta(days=lookback)
     rows = conn.execute(
         "SELECT * FROM md.ecb_fx_known_at(%(t)s, %(lo)s, %(d)s) ORDER BY rate_date, ccy",
         {"t": t, "lo": lo, "d": d},
     ).fetchall()
+    out: list[dict[str, Any]] = []
     for r in rows:
         prov.add("cross_rates", "ecb", r["run_id"], r["ingested_at"])
-    latest = max((r["rate_date"] for r in rows), default=None)
-    return Dataset(
-        "cross_rates",
-        [
+        out.append(
             {
                 "kind": "ecb",
                 "base_ccy": "EUR",
                 "ccy": r["ccy"],
                 "rate_per_base": r["rate_per_eur"],
                 "rate_date": r["rate_date"],
+                "source": "ecb",
+                "labels": [],
             }
-            for r in rows
-        ],
-        {"window_from": lo, "window_to": d, "latest_rate_date": latest},
+        )
+    for r in conn.execute(
+        "SELECT * FROM md.fx_cross_known_at(%(t)s, %(lo)s, %(d)s)",
+        {"t": t, "lo": lo, "d": d},
+    ).fetchall():
+        prov.add("cross_rates", r["source"], r["run_id"], r["ingested_at"])
+        out.append(
+            {
+                "kind": r["kind"],
+                "base_ccy": r["base_ccy"],
+                "ccy": r["quote_ccy"],
+                "rate_per_base": r["rate"],
+                "rate_date": r["rate_date"],
+                "source": r["source"],
+                "labels": sorted_labels(
+                    "derived_cross" if r["kind"] in CROSS_DERIVED_KINDS else None
+                ),
+            }
+        )
+    out.sort(key=lambda r: (r["kind"], r["rate_date"], r["base_ccy"], r["ccy"]))
+    latest: dict[str, date] = {}
+    for r in out:
+        latest[r["kind"]] = max(latest.get(r["kind"], r["rate_date"]), r["rate_date"])
+    stale = [] if out else [f"no cross rate of any kind in [{lo}, {d}]"]
+    return Dataset(
+        "cross_rates",
+        out,
+        {
+            "window_from": lo,
+            "window_to": d,
+            "latest_rate_date": latest.get("ecb"),
+            "latest_by_kind": dict(sorted(latest.items())),
+        },
+        stale,
     )
 
 

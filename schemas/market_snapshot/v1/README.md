@@ -14,7 +14,7 @@ are in [`docs/DESIGN.md`](../../../docs/DESIGN.md) §11.
 | `common.schema.json` | Shared definitions: decimal strings, dates, UTC instants, sha256, labels |
 | `fixtures/` | Golden bundles built from public data (`index.json` lists their ids) |
 
-`schema_version` is `market_snapshot/1.2`. Every schema object has
+`schema_version` is `market_snapshot/1.3`. Every schema object has
 `additionalProperties: false`: a new field is a schema version bump, so a consumer pinned to
 an older version fails its conformance tests instead of silently ignoring it.
 
@@ -27,6 +27,7 @@ reads `1.x` and ignores unknown additive fields stays correct; a new major (`2.0
 | 1.0 | initial contract |
 | 1.1 (WEB-13, TDM brief R9) | Instrument `lat_name` (HS12), `coupon_frequency_schedule` (HS7), `face_value_date` (HS11); Issuer `sector_source`, `okved`, `okved_version` (HS3), `group_id`, `group_name`, `group_relation`, `is_state_owned` (HS4); dataset `ratings` (HS5) |
 | 1.2 (WEB-15, hub review for the desk monitor §6.1, H20) | BondQuote (EOD) `source_analytics`: `duration_waprice_days`, `yield_last_coupon_pct`, `icpi`, `ir`, `bei`, `cbr` (MOEX yields fields verbatim); Fixing `hub_ingested_at`; RUSFAR units: only the explicit RUSFAR rate lists are `unit = pct`, `RUSFARIND` (accumulated return index) is `unit = index`, any other `RUSFAR*` index is excluded with reason `rusfar_series_unit_unknown` (1.0/1.1 published every `RUSFAR%` index as a rate, so RUSFARIND appeared as ~2,500 % p.a.). Exclusion reason `rusfar_series_unit_unknown` |
+| 1.3 (WEB-16, review P1-2 / P2-1) | CrossRate: `kind` adds `cbr_cross`, `moex_indicative_cross`, `moex_cets`, `fred_h10` (independent cross-rate series besides the ECB reference rates, which do not reach the hub VPS); `base_ccy` any currency (was `EUR` only); optional `source`, `labels`. Data only, no schema change: fixings `ESTR`, `SOFR`, `SOFR30DAVG`, `SOFR90DAVG`, `SOFR180DAVG`, `SOFRINDEX` (`unit = index`), `CPI_RU_YOY` (`unit = pct`); curve quote sets `usd_ust_par`, `eur_aaa_par`, `eur_bund_par` labelled `proxy_ust_par` / `proxy_ecb_aaa_par` / `proxy_bund_par` - government par yields, **not OIS** |
 
 ## Identity
 
