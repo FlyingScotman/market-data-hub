@@ -21,7 +21,8 @@ Sources and requests (:data:`PROBES`): ``moex_iss`` ``/iss/engines.json``, ``moe
 (Basic auth; only Mon-Fri 08:50-23:00 MSK, when the service answers), ``otc_monitor``
 ``/api/bond/`` (bearer), ``cbonds`` one ``get_emissions`` query with ``limit=1`` - at most
 hourly (:attr:`ProbeSpec.min_interval_s`), so a rejected login does not hit the provider 288
-times a day.
+times a day; the rating agencies ``nkr``, ``nra``, ``raexpert`` (WEB-16) their ``robots.txt``,
+at most hourly.
 """
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ from mdhub.core.redact import redact_url, sanitize_text
 from mdhub.core.timeutil import MSK
 from mdhub.credentials import REGISTRY as CREDENTIALS
 from mdhub.jobs import JobContext, JobParamError, job
-from mdhub.sources import cbonds, cbr, ecb, otc_monitor, ratescalcs, rosstat
+from mdhub.sources import cbonds, cbr, ecb, nkr, nra, otc_monitor, raexpert, ratescalcs, rosstat
 from mdhub.sources.moex_apim import apim_headers
 
 __all__ = ["PROBES", "PROBE_TIMEOUT_S", "ProbeRequest", "ProbeResult", "ProbeSpec", "probe"]
@@ -156,6 +157,10 @@ PROBES: Final = (
     ProbeSpec("ratescalcs", _ratescalcs, active=ratescalcs_hours),
     ProbeSpec("otc_monitor", _otc_monitor),
     ProbeSpec("cbonds", _cbonds, min_interval_s=3600.0),
+    # rating agencies (WEB-16): robots.txt, at most hourly (their pages are read once a day)
+    ProbeSpec("nkr", _public(nkr.BASE_URL + "/robots.txt"), min_interval_s=3600.0),
+    ProbeSpec("nra", _public(nra.BASE_URL + "/robots.txt"), min_interval_s=3600.0),
+    ProbeSpec("raexpert", _public(raexpert.BASE_URL + "/robots.txt"), min_interval_s=3600.0),
 )
 """One probe per source, in probe order."""
 

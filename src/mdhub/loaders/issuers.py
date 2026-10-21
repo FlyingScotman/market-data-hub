@@ -21,7 +21,9 @@
    clear the group: a versioned change).
 5. **Sector** (HS3) of every issuer in scope from the versioned rules of
    ``mdhub/data/sector_map.json`` (:mod:`mdhub.loaders._issuer_rules`): ``sector`` and
-   ``sector_source`` (``curated`` / ``group`` / ``okved`` / ``rule``); no rule -> NULL.
+   ``sector_source`` (``curated`` / ``group`` / ``okved`` / ``rule`` / ``agency``: the
+   industry a rating agency publishes for the issuer's INN, ``ref.agency_rating``, WEB-16);
+   no rule -> NULL.
 
 A failing card is logged and the run ends ``partial``; the other cards are kept. Changes of
 both tables are versioned in ``ops.row_history`` (as-known-at readers 0520).
@@ -229,6 +231,12 @@ def _apply_issuer_fields(
          "since": today - timedelta(days=MATURED_SCOPE_DAYS)},
     ).fetchall():  # fmt: skip
         classes.setdefault(int(r["issuer_id"]), set()).add(str(r["bond_class"]))
+    industries: dict[str, set[tuple[str, str]]] = {}
+    for r in conn.execute(
+        "SELECT DISTINCT inn, agency, industry FROM ref.agency_rating "
+        "WHERE object_kind = 'issuer' AND inn IS NOT NULL AND industry IS NOT NULL"
+    ).fetchall():
+        industries.setdefault(str(r["inn"]), set()).add((str(r["agency"]), str(r["industry"])))
     out: list[dict[str, Any]] = []
     assigned = unassigned = grouped = 0
     for i in conn.execute(
@@ -266,6 +274,7 @@ def _apply_issuer_fields(
                 okved=i["okved"],
                 group_sector=group.sector if group else None,
                 group_relation=group.group_relation if group else None,
+                agency_industries=industries.get(i["inn"], ()) if i["inn"] else (),
             )
             row.update(
                 sector=res.sector if res else None, sector_source=res.source if res else None

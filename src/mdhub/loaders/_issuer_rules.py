@@ -21,6 +21,7 @@ __all__ = [
     "GroupAssignment",
     "SectorMap",
     "SectorResult",
+    "agency_sector",
     "assign_sector",
     "groups_version",
     "issuer_groups",
@@ -35,7 +36,8 @@ SECTOR_RESOURCE: Final = "sector_map.json"
 class SectorResult:
     sector: str
     source: str
-    """``curated`` | ``group`` | ``okved`` | ``rule`` (``ref.issuer.sector_source``)."""
+    """``curated`` | ``group`` | ``okved`` | ``rule`` | ``agency``
+    (``ref.issuer.sector_source``)."""
     basis: str
     """Human-readable reason, e.g. ``name_rule:banks`` or ``class:subfederal``."""
 
@@ -48,6 +50,8 @@ class SectorMap:
     okved_prefixes: tuple[tuple[str, str], ...]
     class_rules: tuple[tuple[frozenset[str], str, str], ...]
     name_rules: tuple[tuple[re.Pattern[str], str], ...]
+    agency_rules: tuple[tuple[str, re.Pattern[str], str], ...] = ()
+    """``(agency, pattern, sector)`` on the industry an agency publishes (WEB-16)."""
 
 
 def _load(doc: Mapping[str, Any]) -> SectorMap:
@@ -78,7 +82,29 @@ def _load(doc: Mapping[str, Any]) -> SectorMap:
         (re.compile(str(r["pattern"]), re.IGNORECASE), check(str(r["sector"]), "name rule"))
         for r in doc["name_rules"]
     )
-    return SectorMap(str(doc["version"]), codes, issuers, okved, tuple(classes), names)
+    agency = tuple(
+        (str(r["agency"]), re.compile(str(r["pattern"]), re.IGNORECASE),
+         check(str(r["sector"]), f"agency rule {r['agency']}"))
+        for r in doc.get("agency_industry_rules", ())
+    )  # fmt: skip
+    return SectorMap(str(doc["version"]), codes, issuers, okved, tuple(classes), names, agency)
+
+
+def agency_sector(industries: Iterable[tuple[str, str]], m: SectorMap) -> tuple[str, str] | None:
+    """``(sector, basis)`` from the agencies' published industries ``(agency, industry)``:
+    per agency the first matching rule; ``None`` without a match or when agencies disagree."""
+    hits: dict[str, tuple[str, str]] = {}
+    for agency, industry in sorted(set(industries)):
+        if agency in hits:
+            continue
+        for rule_agency, pattern, sector in m.agency_rules:
+            if rule_agency == agency and pattern.search(industry):
+                hits[agency] = (sector, f"agency:{agency}:{industry}")
+                break
+    sectors = {sector for sector, _ in hits.values()}
+    if len(sectors) != 1:
+        return None
+    return min(hits.values(), key=lambda t: t[1])
 
 
 @cache
@@ -96,6 +122,7 @@ def assign_sector(
     okved: str | None = None,
     group_sector: str | None = None,
     group_relation: str | None = None,
+    agency_industries: Iterable[tuple[str, str]] = (),
     smap: SectorMap | None = None,
 ) -> SectorResult | None:
     """Sector of one issuer by the precedence of ``sector_map.json`` (``None``: no rule)."""
@@ -115,6 +142,9 @@ def assign_sector(
             hit = classes <= rule_classes if when == "all" else bool(classes & rule_classes)
             if hit:
                 return SectorResult(sector, "rule", f"class:{sector}")
+    by_agency = agency_sector(agency_industries, m)
+    if by_agency is not None:
+        return SectorResult(by_agency[0], "agency", by_agency[1])
     text = " | ".join(t for t in (name, short_name) if t)
     if text:
         for pattern, sector in m.name_rules:

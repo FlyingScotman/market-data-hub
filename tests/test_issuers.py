@@ -326,6 +326,33 @@ def test_issuers_static_assigns_sectors(
     assert rows[5] == (None, None)  # out of scope: untouched
 
 
+def test_issuers_static_agency_industry_sector(
+    respx_mock: respx.Router, conn: Conn, settings: Settings, db: Database
+) -> None:
+    """WEB-16: the industry a rating agency publishes (ref.agency_rating by INN) assigns the
+    sector after OKVED and the class rules, before the name rules; curated still wins."""
+    _seed(conn, _today())
+    conn.execute(
+        """
+        INSERT INTO ref.agency_rating (agency, object_kind, object_key, rating_type, scale, inn,
+                                       industry)
+        VALUES ('nkr', 'issuer', '5504036333', 'Рейтинги эмитентов', 'national_ru',
+                '5504036333', 'Химия и нефтехимия'),
+               ('nkr', 'issuer', '7708503727', 'Рейтинги эмитентов', 'national_ru',
+                '7708503727', 'Банки')
+        """
+    )
+    conn.commit()
+    _mock(respx_mock, {1039: load("emitter_1039.json"), 712: load("emitter_712.json")})
+    assert _run(settings, db).status == "succeeded"
+    rows = {
+        r["issuer_id"]: (r["sector"], r["sector_source"])
+        for r in conn.execute("SELECT * FROM ref.issuer").fetchall()
+    }
+    assert rows[1039] == ("chemicals", "agency")  # beats the name rule (oil_gas)
+    assert rows[712] == ("transport", "curated")  # curated beats the agency
+
+
 # -------------------------------------------------------------------------- HS4 groups
 
 
