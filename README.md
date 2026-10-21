@@ -16,5 +16,6 @@ uv run mdhub migrate          # apply schema migrations
 uv run mdhub jobs list        # registered jobs and their schedule
 uv run mdhub run <job> -p key=value
 uv run mdhub scheduler        # run the schedule (Europe/Moscow)
+uv run mdhub probe-sources    # which external rate/FX/CPI sources answer from this machine
 uv run pytest -q              # tests (throw-away PostgreSQL via pgserver)
 ```
