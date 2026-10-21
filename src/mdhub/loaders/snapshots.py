@@ -9,6 +9,12 @@ Jobs (names fixed by :data:`mdhub.schedule.KNOWN_JOBS`; cut times from settings,
   ``eod_final`` (next morning, D = previous business day), ``intraday`` (every
   ``MDHUB_SNAPSHOT_INTRADAY_MINUTES`` inside ``MDHUB_SNAPSHOT_INTRADAY_WINDOW``).
 
+Locks (review §6.5): :func:`market_lock` - intraday cuts, scheduled EOD cuts and rebuilds /
+replays (explicit ``day`` or ``known_at``) hold separate locks, so a manual history rebuild never
+skips a scheduled cut. A scheduled intraday cut that still cannot run opens an ``ops.data_gap``
+(:data:`mdhub.schedule.INTRADAY_CUT_GAP_DATASET`, key ``cut``) that the publication of that cut
+(a replay with ``day``, ``cut`` and ``known_at``) closes.
+
 * ``snapshot_rebuild`` (not scheduled; the backfill job of dataset ``snapshot_eod_final``) -
   rebuilds the ``eod_final`` cuts of ``date_from..date_to`` that are already published, as
   known now: unchanged content publishes nothing, different content publishes a correction
@@ -28,16 +34,19 @@ that supersedes the earlier snapshot.
 from __future__ import annotations
 
 import time as _time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import date, datetime, time
 from typing import Any, Final
 
 from mdhub.config import parse_hhmm
+from mdhub.core.gaps import close_gap
 from mdhub.core.timeutil import MSK, add_business_days, utc_now
 from mdhub.core.upsert import UpsertResult
 from mdhub.datasets import DatasetSpec, register_dataset
 from mdhub.jobs import JobContext, JobParamError, job
 from mdhub.loaders.bonds_eod import resolve_trade_dates
+from mdhub.schedule import INTRADAY_CUT_GAP_DATASET
+from mdhub.snapshot.market import MarketParams
 from mdhub.snapshot.readiness import (
     EOD_FINAL_DATASET,
     InputRule,
@@ -47,7 +56,14 @@ from mdhub.snapshot.readiness import (
 from mdhub.snapshot.runner import publish_market_snapshot, publish_static_snapshot
 from mdhub.snapshot.static import BOND_CALENDAR
 
-__all__ = ["EOD_FINAL_DATASET", "snapshot_market", "snapshot_rebuild", "snapshot_static"]
+__all__ = [
+    "EOD_FINAL_DATASET",
+    "market_lock",
+    "market_params",
+    "snapshot_market",
+    "snapshot_rebuild",
+    "snapshot_static",
+]
 
 MARKET_MODES: Final = {"eod_preliminary": [0], "eod_final": [1], "intraday": [0]}
 INPUT_POLL_S: Final = 30.0
@@ -130,6 +146,14 @@ def _wait_for_inputs(ctx: JobContext, day: date, wait_minutes: int) -> list[Inpu
         _sleep(min(INPUT_POLL_S, remaining))
 
 
+def market_params(ctx: JobContext) -> MarketParams:
+    """Builder parameters from the settings (prelim bond threshold, curve EOD cutoff)."""
+    return MarketParams(
+        prelim_bond_min_rows=ctx.settings.bonds_eod_prelim_min_rows,
+        curve_eod_cutoff=ctx.settings.curve_eod_cutoff,
+    )
+
+
 def _result(res: Any) -> dict[str, Any]:
     return {
         "id": res.id,
@@ -174,7 +198,24 @@ def snapshot_static(
     return _result(res)
 
 
-@job("snapshot_market", "Publish a market snapshot cut (EOD preliminary / final, intraday)")
+def market_lock(params: Mapping[str, Any]) -> str:
+    """Lock class of a ``snapshot_market`` run (review §6.5: intraday cuts were skipped with
+    ``lock_busy`` for 2.5 hours while ~170 manual ``eod_final`` rebuilds held the job's single
+    lock): ``snapshot_market:intraday`` (scheduled intraday cuts), ``snapshot_market:eod``
+    (scheduled EOD cuts: ``days_back``) and ``snapshot_market:rebuild`` (explicit ``day`` or
+    ``known_at``: manual rebuilds and replays). Classes run side by side - builds only read and
+    publishing is serialized by the publish lock - and runs of one class stay exclusive."""
+    if params.get("day") is not None or params.get("known_at") is not None:
+        return "snapshot_market:rebuild"
+    mode = str(params.get("mode") or "eod_preliminary")
+    return "snapshot_market:intraday" if mode == "intraday" else "snapshot_market:eod"
+
+
+@job(
+    "snapshot_market",
+    "Publish a market snapshot cut (EOD preliminary / final, intraday)",
+    lock_key=market_lock,
+)
 def snapshot_market(
     ctx: JobContext,
     *,
@@ -233,12 +274,24 @@ def snapshot_market(
         cut_ts=cut_ts,
         known_at=ka,
         run_id=ctx.run.id,
+        params=market_params(ctx),
         extra_stale=extra_stale,
     )
     if missing:
         ctx.run.mark_partial(
             f"eod_final {day} published without final inputs: " + ", ".join(m.job for m in missing)
         )
+    if mode == "intraday":
+        # a scheduled cut that did not run left a gap (mdhub.schedule.Rule.missed_gap); the
+        # cut published now - scheduled or a replay with cut= / known_at= - closes it
+        with ctx.connection() as conn:
+            close_gap(
+                conn,
+                INTRADAY_CUT_GAP_DATASET,
+                day,
+                key={"cut": cut_ts.astimezone(MSK).strftime("%H:%M")},
+                note=f"cut published: snapshot {out.market.id} ({out.market.status})",
+            )
     ctx.logger.info(
         "market snapshot %s %s: %s %s (static %s: %s)",
         mode,
@@ -299,6 +352,7 @@ def snapshot_rebuild(
             cut_ts=cut_ts,  # the published cut: a changed build supersedes it
             known_at=ka,
             run_id=ctx.run.id,
+            params=market_params(ctx),
         )
         results[f"{d.isoformat()} {cut_ts.isoformat()}"] = {
             "market": _result(out.market),

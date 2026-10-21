@@ -1,4 +1,4 @@
-"""Credit ratings from the agencies' public disclosure (WEB-17; review P1-1, TDM brief HS5).
+"""Credit ratings from the agencies' public disclosure (WEB-18; review P1-1, TDM brief HS5).
 
 Fixtures ``tests/fixtures/ratings/`` are public responses recorded on 2026-10-21:
 

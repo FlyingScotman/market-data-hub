@@ -1,4 +1,4 @@
--- Issue terms curated from issue documents, with evidence (WEB-17; TDM brief R9 HS8 floater
+-- Issue terms curated from issue documents, with evidence (WEB-18; TDM brief R9 HS8 floater
 -- conventions, HS9 call schedules of perpetuals, HS10 dated offers; review P1-6 replacement
 -- bonds by document, P1-9). Source file: mdhub/data/bond_terms_curated.json, job
 -- bond_terms_curated. Every row carries the document it was read from (URL, title, page,

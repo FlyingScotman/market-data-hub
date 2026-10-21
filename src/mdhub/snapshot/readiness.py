@@ -89,6 +89,11 @@ SNAPSHOT_INPUT_JOBS: Final = frozenset(
         "cbr_daily",
         "ecb_fx",
         "rosstat_cpi",
+        "cbr_inflation",
+        "estr_fixing",
+        "sofr_fixing",
+        "fx_cross",
+        "proxy_curves",
     }
 )
 """Backfill jobs whose rows of a date D are read by the ``eod_final`` cut of D: a backfill run

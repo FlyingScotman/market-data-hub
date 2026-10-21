@@ -127,6 +127,14 @@ def _mock_sources(router: respx.MockRouter) -> dict[str, respx.Route]:
         "raexpert": router.get("https://raexpert.ru/robots.txt").mock(
             side_effect=httpx.ConnectError("reset")
         ),
+        "ecb_data_portal": router.route(host="data-api.ecb.europa.eu").respond(200, text="KEY"),
+        "bundesbank": router.route(host="api.statistiken.bundesbank.de").respond(404),
+        "dbnomics": router.route(host="api.db.nomics.world").respond(200, json={}),
+        "fred": router.route(host="fred.stlouisfed.org").mock(
+            side_effect=httpx.ConnectError("blocked")
+        ),
+        "nyfed": router.route(host="markets.newyorkfed.org").respond(200, json={}),
+        "us_treasury": router.route(host="home.treasury.gov").respond(200, text="<feed/>"),
     }
 
 
@@ -164,6 +172,12 @@ def test_source_probe_job_records_every_source(
         "nkr": (True, "n/a", 200),
         "nra": (True, "n/a", 200),
         "raexpert": (False, "n/a", None),
+        "ecb_data_portal": (True, "n/a", 200),
+        "bundesbank": (False, "n/a", 404),
+        "dbnomics": (True, "n/a", 200),
+        "fred": (False, "n/a", None),
+        "nyfed": (True, "n/a", 200),
+        "us_treasury": (True, "n/a", 200),
     }
     assert rows["ecb"]["error"].startswith("TransportFailure: ConnectTimeout")
     assert rows["rosstat"]["error"] == "HTTP 503"

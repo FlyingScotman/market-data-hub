@@ -1,4 +1,4 @@
-"""Credit ratings from the agencies' public disclosure (WEB-17, review P1-1, TDM brief HS5).
+"""Credit ratings from the agencies' public disclosure (WEB-18, review P1-1, TDM brief HS5).
 
 Job ``ratings_agencies`` (daily 06:50 MSK, after ``bonds_static``; before ``issuers_static``,
 which reads the agencies' industries for sectors, and the 07:45 static snapshot):
@@ -12,7 +12,7 @@ which reads the agencies' industries for sectors, and the 07:45 static snapshot)
   (newest first) -> the company / region / bond pages they link, re-read when a newer
   release links them or after ``refresh_days``. Bookkeeping in ``ref.agency_page``;
   an initial load needs ~1,800 releases and as many object pages (run with a larger
-  ``max_requests`` once, see ROADMAP WEB-17), later runs read a few dozen pages.
+  ``max_requests`` once, see ROADMAP WEB-18), later runs read a few dozen pages.
 
 Every response is a raw capture (endpoints ``issues_xlsx``, ``issuers_xlsx``,
 ``ratings_page``, ``export_xlsx``, ``list``, ``sitemap``, ``release``, ``company``,

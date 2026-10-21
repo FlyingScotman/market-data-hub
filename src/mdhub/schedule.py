@@ -27,9 +27,10 @@ Lock contention (DESIGN §6): a scheduled fire waits up to :data:`SCHEDULED_LOCK
 the job's lock (a backfill of the same job, or a previous run, may hold it); backfill runs yield
 to a waiting fire. A fire that still cannot run is recorded in ``ops.job_run`` as ``skipped``
 with an error starting ``lock_busy:``; job health reports it as ``missed`` and the ``quality``
-job re-runs it (rules with ``catch_up``). Polling rules (``_poll``: intraday snapshots,
-AlgoPack, Ratescalcs, OTC Monitor, the backfill worker, source probes) neither wait nor catch
-up - the next fire supersedes a missed one.
+job re-runs it (rules with ``catch_up``). Polling rules (``_poll``: AlgoPack, Ratescalcs, OTC
+Monitor, the backfill worker, source probes) neither wait nor catch up - the next fire supersedes
+a missed one. Intraday snapshot cuts wait up to half their slot (:func:`intraday_lock_wait_s`),
+are not caught up, and a cut that still cannot run opens a gap (:attr:`Rule.missed_gap`).
 
 Drain (ADMIN_DESIGN §6.3): while ``ops.worker_control.drain`` is set the worker starts no run;
 non-polling fires are recorded as skipped with :data:`mdhub.jobs.DRAINING` (a ``lock_busy``
@@ -55,6 +56,7 @@ from apscheduler.triggers.cron import CronTrigger
 
 from mdhub.config import Settings, parse_hhmm, parse_window
 from mdhub.core.bizday import DEFAULT_CALENDAR, CalendarPredicate
+from mdhub.core.gaps import record_missed
 from mdhub.db.pool import Database
 from mdhub.jobs import (
     DRAINING,
@@ -67,6 +69,7 @@ from mdhub.jobs import (
 )
 
 __all__ = [
+    "INTRADAY_CUT_GAP_DATASET",
     "KNOWN_JOBS",
     "RULES",
     "SCHEDULED_LOCK_WAIT_S",
@@ -75,6 +78,7 @@ __all__ = [
     "build_scheduler",
     "check_rules",
     "effective_rules",
+    "intraday_lock_wait_s",
     "rule_applies",
     "snapshot_rules",
 ]
@@ -109,6 +113,11 @@ KNOWN_JOBS: Final = (
     "cbr_meetings",
     "ecb_fx",
     "rosstat_cpi",
+    "cbr_inflation",
+    "estr_fixing",
+    "sofr_fixing",
+    "fx_cross",
+    "proxy_curves",
     "swaps_ratescalcs",
     "swaps_otc_monitor",
     "quality",
@@ -139,6 +148,11 @@ class Rule:
     catch_up: bool = True
     """Re-run a fire that was skipped with ``lock_busy`` (the ``quality`` job does it).
     False for polling rules whose next fire supersedes a missed one."""
+    missed_gap: str | None = None
+    """Dataset of the ``ops.data_gap`` (key ``{"cut": "HH:MM"}``, the fire's minute) opened when
+    a fire of this rule does not run - lock still busy after ``lock_wait_s``, or the worker
+    draining - so a missed slot is visible in ``/v1/gaps`` (intraday snapshot cuts, review
+    §6.5)."""
 
 
 def _r(
@@ -171,6 +185,19 @@ def _poll(
     )
 
 
+INTRADAY_CUT_GAP_DATASET: Final = "snapshot_market_intraday"
+"""``ops.data_gap`` dataset of scheduled intraday cuts that did not run (key ``{"cut":
+"HH:MM"}``); closed when the cut is published later (``mdhub run snapshot_market -p
+mode=intraday -p day=D -p cut=HH:MM -p known_at=...``)."""
+INTRADAY_LOCK_WAIT_MAX_S: Final = 600
+
+
+def intraday_lock_wait_s(every_minutes: int) -> int:
+    """How long an intraday cut waits for its lock: half its slot, at most 10 minutes (a cut
+    that starts later than that is no longer the slot's cut)."""
+    return min(every_minutes * 30, INTRADAY_LOCK_WAIT_MAX_S)
+
+
 def _at(hhmm: str) -> str:
     h, m = parse_hhmm(hhmm)
     return f"{m} {h} * * *"
@@ -187,13 +214,24 @@ def snapshot_rules(settings: Settings | None = None) -> dict[str, tuple[Rule, ..
     if every:
         first, last = parse_window(cfg.snapshot_intraday_window)
         minutes = "0" if every == 60 else f"*/{every}"
-        intraday = (
-            _poll(
-                f"{minutes} {first}-{last - 1} * * *",
-                mode="intraday",
-                note=f"every {every} min {first:02d}:00-{last:02d}:00",
-            ),
-            _poll(f"0 {last} * * *", mode="intraday"),
+        wait = intraday_lock_wait_s(every)
+        intraday = tuple(
+            Rule(
+                cron=cron,
+                params={"mode": "intraday"},
+                note=note,
+                lock_wait_s=wait,
+                catch_up=False,
+                missed_gap=INTRADAY_CUT_GAP_DATASET,
+            )
+            for cron, note in (
+                (
+                    f"{minutes} {first}-{last - 1} * * *",
+                    f"every {every} min {first:02d}:00-{last:02d}:00; waits up to {wait} s "
+                    "inside its slot, a missed cut opens a gap",
+                ),
+                (f"0 {last} * * *", ""),
+            )
         )
     return {
         "snapshot_static": (
@@ -311,6 +349,27 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
         _r("5 10 * * *", days="all"),
         _r("35 19 * * *", days="all", note="monthly CPI release ~19:00 mid-month"),
     ),
+    "cbr_inflation": (
+        _r("15 10 * * *", days="all"),
+        _r("45 19 * * *", days="all", note="CBR republishes the Rosstat y/y after the release"),
+    ),
+    "estr_fixing": (
+        _r("20 10 * * *", days="all", note="ECB publishes D at 08:00 CET on D+1"),
+        _r("20 13 * * *", days="all"),
+    ),
+    "sofr_fixing": (
+        _r("30 16 * * *", days="all", note="NY Fed publishes D at ~08:00 New York on D+1"),
+        _r("30 22 * * *", days="all", note="after revisions (by 14:30 New York)"),
+    ),
+    "fx_cross": (
+        _r("15 9 * * *", days="all", note="after cbr_daily 09:00"),
+        _r("45 18 * * *", days="all", note="after cbr_daily 18:30 (rates set today)"),
+        _r("20 19 * * *", days="all", note="after fx_indicative 19:10"),
+    ),
+    "proxy_curves": (
+        _r("40 7 * * *", days="all", note="before eod_final 08:00: Treasury curve of D-1"),
+        _r("40 23 * * *", days="all", note="Treasury publishes ~23:00-01:00 MSK"),
+    ),
     "swaps_ratescalcs": (
         _poll("0,30 9-22 * * *", note="every 30 min 09:00-23:00; skip identical content"),
         _poll("0 23 * * *"),
@@ -423,8 +482,28 @@ class _RuleRunner:
         self.calendar = calendar
         self.lock = lock
 
+    def _missed(self, fired: datetime, reason: str) -> None:
+        """A fire of a rule with :attr:`Rule.missed_gap` did not run: open its gap."""
+        if self.rule.missed_gap is None:
+            return
+        cut = fired.strftime("%H:%M")
+        log.error("%s: scheduled %s fire did not run: %s", self.name, cut, reason)
+        try:
+            with self.db.connection() as conn:
+                record_missed(
+                    conn,
+                    self.rule.missed_gap,
+                    fired.date(),
+                    f"scheduled {self.name} {dict(self.rule.params)} at {cut} did not run: "
+                    f"{reason}",
+                    key={"cut": cut},
+                )
+        except Exception:
+            log.exception("%s: recording the missed fire failed", self.name)
+
     def __call__(self) -> None:
-        run_date = datetime.now(self.settings.zone).date()
+        fired = datetime.now(self.settings.zone).replace(second=0, microsecond=0)
+        run_date = fired.date()
         if not rule_applies(self.rule, run_date, self.calendar):
             log.debug("%s: %s not applicable on %s", self.name, self.rule.cron, run_date)
             return
@@ -433,16 +512,20 @@ class _RuleRunner:
         acquired = self.lock.acquire(timeout=wait) if wait > 0 else self.lock.acquire(False)
         if not acquired:
             log.warning("%s: previous run still in progress; skipping this trigger", self.name)
+            reason = (
+                f"{LOCK_BUSY}: job {self.name}: previous run in this process still in "
+                f"progress after {wait:g} s"
+            )
             if wait > 0:  # a fire that should have run: record it so health can flag it
                 record_skipped_run(
                     self.db,
                     self.name,
                     dict(self.rule.params),
-                    f"{LOCK_BUSY}: job {self.name}: previous run in this process still in "
-                    f"progress after {wait:g} s",
+                    reason,
                     settings=self.settings,
                     trigger="schedule",
                 )
+            self._missed(fired, reason)
             return
         try:
             # Checked after the lock wait: a fire that waited must not start once draining.
@@ -457,6 +540,7 @@ class _RuleRunner:
                         settings=self.settings,
                         trigger="schedule",
                     )
+                self._missed(fired, DRAINING)
                 return
             outcome = run_job(
                 self.name,
@@ -469,10 +553,22 @@ class _RuleRunner:
                 trigger="schedule",
             )
             log.info("%s finished: %s (run %s)", self.name, outcome.status, outcome.run_id)
+            if outcome.status == "skipped" and self.rule.missed_gap is not None:
+                error = _run_error(self.db, outcome.run_id)
+                if error.startswith(LOCK_BUSY):
+                    self._missed(fired, error)
         except Exception:
             log.exception("%s failed", self.name)
         finally:
             self.lock.release()
+
+
+def _run_error(db: Database, run_id: int | None) -> str:
+    if run_id is None:
+        return ""
+    with db.connection() as conn:
+        row = conn.execute("SELECT error FROM ops.job_run WHERE id = %s", (run_id,)).fetchone()
+    return str(row["error"] or "") if row else ""
 
 
 def build_scheduler(
@@ -508,8 +604,12 @@ def build_scheduler(
                 "job %s is not registered; its %d rule(s) are skipped", name, len(job_rules)
             )
             continue
-        lock = threading.Lock()
+        spec = registry.get(name)
+        locks: dict[str, threading.Lock] = {}
         for i, rule in enumerate(job_rules):
+            # one in-process lock per job lock name (JobSpec.lock_key: snapshot_market intraday
+            # cuts do not queue behind EOD cuts)
+            lock = locks.setdefault(spec.lock_name(rule.params), threading.Lock())
             scheduler.add_job(
                 _RuleRunner(
                     name,

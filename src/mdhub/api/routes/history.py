@@ -48,7 +48,14 @@ from mdhub.api.columnar import (
 from mdhub.api.common import bad_request, require_aware, split_list
 from mdhub.core.timeutil import msk_today
 from mdhub.db.pool import DictConnection
-from mdhub.snapshot.market import RUSFAR_INDEX_SERIES, RUSFAR_RATE_SERIES, rusfar_unit
+from mdhub.snapshot.market import (
+    CURVE_EOD_RULE,
+    DEFAULT_CURVE_EOD_CUTOFF,
+    RUSFAR_INDEX_SERIES,
+    RUSFAR_RATE_SERIES,
+    curve_eod_order,
+    rusfar_unit,
+)
 
 router = APIRouter(prefix="/history", tags=["history"])
 
@@ -408,6 +415,7 @@ CURVE_COLUMNS: Final = [
         "to_json(array_remove(ARRAY["
         "CASE WHEN s.market_closed THEN 'market_closed' END, "
         "CASE WHEN s.quote_basis = 'mid_only' THEN 'mid_only' END, "
+        "CASE WHEN s.meta ? 'proxy' THEN 'proxy_' || (s.meta ->> 'proxy') END, "
         "CASE WHEN (s.source_ts AT TIME ZONE 'Europe/Moscow')::date <> s.snapshot_date "
         "THEN 'source_clock_not_on_business_date' END]::text[], NULL))",
     ),
@@ -438,8 +446,10 @@ def history_curves(
     rule: Annotated[
         str,
         Query(
-            description="eod (default): per (snapshot_date, source) the latest snapshot of that "
-            "Moscow day - the eod_final rule; all: every stored snapshot"
+            description="eod (default): per (snapshot_date, source) the quote set of the EOD "
+            "market cuts - the latest one with bid/ask whose source clock is on that day at or "
+            "before MDHUB_CURVE_EOD_CUTOFF (MSK, default 19:00), else the latest one of the day; "
+            "all: every stored snapshot"
         ),
     ] = "eod",
     fields: Annotated[str | None, Query(description="comma list of columns")] = None,
@@ -458,18 +468,28 @@ def history_curves(
         raise bad_request("rule must be eod or all")
     sources = split_list(source)
     cols = _select_fields(CURVE_COLUMNS, CURVE_KEYS, fields)
+    settings = getattr(request.app.state, "settings", None)
+    cutoff = settings.curve_eod_cutoff if settings is not None else DEFAULT_CURVE_EOD_CUTOFF
     norm = {
         "dataset": ds,
         "from": d1,
         "to": d2,
         "sources": sorted(sources) if sources else None,
         "rule": rule,
+        "eod_cutoff": cutoff if rule == "eod" else None,
         "fields": [c.name for c in cols],
         "known_at": known,
     }
     qhash = query_hash("curves", norm)
     key = decode_cursor(cursor, qhash, 5)
-    params: dict[str, Any] = {"ds": ds, "d1": d1, "d2": d2, "sources": sources, "ka": known}
+    params: dict[str, Any] = {
+        "ds": ds,
+        "d1": d1,
+        "d2": d2,
+        "sources": sources,
+        "ka": known,
+        "eod_cutoff": cutoff,
+    }
     params.update(_cursor_params("c", key))
     where: list[sql.Composable] = [
         sql.SQL("s.dataset = %(ds)s AND s.snapshot_date BETWEEN %(d1)s AND %(d2)s")
@@ -481,7 +501,7 @@ def history_curves(
     cond = sql.SQL(" AND ").join(where)
     distinct = sql.SQL("DISTINCT ON (s.snapshot_date, s.source) ") if rule == "eod" else sql.SQL("")
     order = (
-        sql.SQL(" ORDER BY s.snapshot_date, s.source, s.fetched_at DESC, s.id DESC")
+        sql.SQL(" ORDER BY s.snapshot_date, s.source, ") + sql.SQL(curve_eod_order("s"))
         if rule == "eod"
         else sql.SQL("")
     )
@@ -552,6 +572,9 @@ def history_curves(
                 "from": d1,
                 "to": d2,
                 "rule": rule,
+                "eod_rule": (
+                    {"rule": CURVE_EOD_RULE, "cutoff_msk": cutoff} if rule == "eod" else None
+                ),
                 "sources": sorted(sources) if sources else None,
                 "order": ["snapshot_date", "source", "quote_set_id", "position"],
                 "units": "bid_pct / mid_pct / ask_pct in % p.a. (mid-only quotes: bid/ask null); "
@@ -875,7 +898,19 @@ def history_fixings(
 
 # ---------------------------------------------------------------------------------- FX
 
-FX_KINDS: Final = ("cbr_official", "moex_eod", "moex_indicative_14", "moex_indicative_19")
+FX_KINDS: Final = (
+    "cbr_official",
+    "moex_eod",
+    "moex_indicative_14",
+    "moex_indicative_19",
+    "ecb",
+    "cbr_cross",
+    "moex_indicative_cross",
+    "moex_cets",
+    "fred_h10",
+)
+CROSS_KINDS: Final = ("cbr_cross", "moex_indicative_cross", "moex_cets", "fred_h10")
+"""Kinds of ``md.fx_cross`` (WEB-16): separate cross-rate series besides the ECB rates."""
 FX_COLUMNS: Final = [
     Col("kind", "u.kind"),
     Col("pair", "u.pair"),
@@ -911,7 +946,9 @@ _WAPRICE_PER_UNIT: Final = sql.SQL(
 )
 
 
-@router.get("/fx", summary="FX history: CBR official, MOEX CETS EOD, MOEX indicative")
+@router.get(
+    "/fx", summary="FX history: CBR official, MOEX CETS EOD, MOEX indicative, ECB and crosses"
+)
 def history_fx(
     request: Request,
     date_from: FromQ,
@@ -939,7 +976,10 @@ def history_fx(
     calendar day in force), ``moex_indicative_14/19`` = MOEX indicative rate (14:00 tc / 19:00
     mc). ``moex_eod`` = CETS outrights (swaps excluded): raw ``close`` / ``waprice`` per
     ``quote_units`` and the exact ``*_per_unit`` (``null`` when the units are not a power of
-    ten); ``rate`` is null."""
+    ten); ``rate`` is null. ``ecb`` = ECB reference rate (EUR/ccy, TARGET day); cross kinds
+    (``md.fx_cross``): ``cbr_cross`` (two CBR official rates in force on the date, divided),
+    ``moex_indicative_cross`` (two MOEX 19:00 indicative rates), ``moex_cets`` (traded CETS
+    cross close per unit; ``secid`` / ``board`` set), ``fred_h10`` (Fed H.10 via FRED)."""
     known = _known(known_at)
     d1, d2 = _range(date_from, date_to)
     pairs_raw = split_list(pair, upper=True)
@@ -991,6 +1031,26 @@ def history_fx(
         else sql.SQL("")
     )
     pf_ind = sql.SQL(" AND n.ccy_pair = ANY(%(pairs)s)") if pairs else sql.SQL("")
+    ecb_src = (
+        sql.SQL("md.ecb_fx_known_at(%(ka)s, %(d1)s, %(d2)s) x WHERE true")
+        if k
+        else sql.SQL("md.ecb_fx x WHERE x.rate_date BETWEEN %(d1)s AND %(d2)s")
+    )
+    pf_ecb = sql.SQL(" AND ('EUR/' || x.ccy) = ANY(%(pairs)s)") if pairs else sql.SQL("")
+    cross_kinds = sorted(kinds_set & set(CROSS_KINDS))
+    params["xk"] = cross_kinds
+    cross_src = (
+        sql.SQL("md.fx_cross_known_at(%(ka)s, %(d1)s, %(d2)s) c WHERE c.kind = ANY(%(xk)s)")
+        if k
+        else sql.SQL(
+            "md.fx_cross c WHERE c.kind = ANY(%(xk)s) AND c.rate_date BETWEEN %(d1)s AND %(d2)s"
+        )
+    )
+    pf_cross = (
+        sql.SQL(" AND (c.base_ccy || '/' || c.quote_ccy) = ANY(%(pairs)s)")
+        if pairs
+        else sql.SQL("")
+    )
     tf = sql.SQL(" AND i.tenor = ANY(%(tenors)s)") if tenors else sql.SQL("")
     eod_where = sql.SQL(" WHERE i.kind = 'outright'{d}{p}{t}").format(
         d=sql.SQL("") if k else sql.SQL(" AND e.trade_date BETWEEN %(d1)s AND %(d2)s"),
@@ -1037,6 +1097,31 @@ def history_fx(
                     "FROM {ind} AND n.clearing = {cl}{p}"
                 ).format(kn=sql.Literal(kname), ind=ind, cl=sql.Literal(clearing), p=pf_ind)
             )
+    if "ecb" in kinds_set:
+        parts.append(
+            sql.SQL(
+                "SELECT 'ecb'::text AS kind, 'EUR/' || x.ccy AS pair, 'EUR'::text AS base_ccy, "
+                "x.ccy AS quote_ccy, x.rate_date AS d, x.rate_per_eur AS rate, "
+                "NULL::text AS secid, NULL::text AS board, NULL::text AS tenor, "
+                "NULL::numeric AS close, NULL::numeric AS waprice, NULL::numeric AS quote_units, "
+                "NULL::numeric AS close_per_unit, NULL::numeric AS waprice_per_unit, "
+                "NULL::integer AS num_trades, NULL::numeric AS nominal, NULL::date AS set_date, "
+                "NULL::text AS trade_time, x.ingested_at AS hub_ingested_at FROM {}{}"
+            ).format(ecb_src, pf_ecb)
+        )
+    if cross_kinds:
+        parts.append(
+            sql.SQL(
+                "SELECT c.kind, c.base_ccy || '/' || c.quote_ccy AS pair, c.base_ccy, "
+                "c.quote_ccy, c.rate_date AS d, c.rate, c.details ->> 'secid' AS secid, "
+                "c.details ->> 'board' AS board, NULL::text AS tenor, NULL::numeric AS close, "
+                "NULL::numeric AS waprice, NULL::numeric AS quote_units, "
+                "NULL::numeric AS close_per_unit, NULL::numeric AS waprice_per_unit, "
+                "(c.details ->> 'num_trades')::integer AS num_trades, NULL::numeric AS nominal, "
+                "NULL::date AS set_date, NULL::text AS trade_time, "
+                "c.ingested_at AS hub_ingested_at FROM {}{}"
+            ).format(cross_src, pf_cross)
+        )
     union = sql.SQL(" UNION ALL ").join(parts)
     cursor_sql = (
         sql.SQL(
@@ -1081,6 +1166,18 @@ def history_fx(
                 sql.SQL(
                     "(SELECT count(*) FROM {}{}), (SELECT max(n.ingested_at) FROM {}{})"
                 ).format(ind, pf_ind, ind, pf_ind)
+            )
+        if "ecb" in kinds_set:
+            vparts.append(
+                sql.SQL(
+                    "(SELECT count(*) FROM {}{}), (SELECT max(x.ingested_at) FROM {}{})"
+                ).format(ecb_src, pf_ecb, ecb_src, pf_ecb)
+            )
+        if cross_kinds:
+            vparts.append(
+                sql.SQL(
+                    "(SELECT count(*) FROM {}{}), (SELECT max(c.ingested_at) FROM {}{})"
+                ).format(cross_src, pf_cross, cross_src, pf_cross)
             )
         version_q = sql.SQL("SELECT ") + sql.SQL(", ").join(vparts)
     with history_connection(request) as conn:
@@ -1191,6 +1288,19 @@ SELECT j FROM (
          CASE clearing WHEN 'tc' THEN 'moex_indicative_14' ELSE 'moex_indicative_19' END ||
          '&pair=' || ccy_pair)::text AS j, ccy_pair, clearing
   FROM md.fx_indicative GROUP BY ccy_pair, clearing ORDER BY ccy_pair, clearing) n
+UNION ALL
+SELECT j FROM (
+  SELECT json_build_array('fx', 'EUR/' || ccy, 'ecb', 'ecb', min(rate_date), max(rate_date),
+         count(*), count(DISTINCT rate_date), NULL,
+         '/v1/history/fx?kind=ecb&pair=EUR/' || ccy)::text AS j, ccy
+  FROM md.ecb_fx GROUP BY ccy ORDER BY ccy) x
+UNION ALL
+SELECT j FROM (
+  SELECT json_build_array('fx', base_ccy || '/' || quote_ccy, min(source), kind,
+         min(rate_date), max(rate_date), count(*), count(DISTINCT rate_date), NULL,
+         '/v1/history/fx?kind=' || kind || '&pair=' || base_ccy || '/' || quote_ccy)::text AS j,
+         kind, base_ccy, quote_ccy
+  FROM md.fx_cross GROUP BY kind, base_ccy, quote_ccy ORDER BY kind, base_ccy, quote_ccy) c
 """
 
 
@@ -1198,7 +1308,9 @@ SELECT j FROM (
 def history_index(request: Request) -> Response:
     """One row per dataset / series: first and last date, rows, distinct days, number of bonds
     (bonds), the endpoint to read it. ``unit`` of fx rows names the kind (``cbr_official``,
-    ``moex_eod:<secid>:<board>``, ``moex_indicative_14/19``). Cached for 5 minutes."""
+    ``moex_eod:<secid>:<board>``, ``moex_indicative_14/19``, ``ecb``, the cross kinds
+    ``cbr_cross``, ``moex_indicative_cross``, ``moex_cets``, ``fred_h10``). Cached for 5
+    minutes."""
     state = request.app.state
     cached: tuple[float, Columnar] | None = getattr(state, "history_index_cache", None)
     now = time.monotonic()

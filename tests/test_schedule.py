@@ -19,7 +19,8 @@ EXPECTED_JOBS = {
     "bonds_intraday",
     "fx_moex_intraday", "fx_moex_eod", "fx_indicative", "futures_intraday", "futures_eod",
     "algopack_fx_futures", "indices_eod", "zcyc", "cbr_daily", "cbr_meetings", "ecb_fx",
-    "rosstat_cpi", "swaps_ratescalcs", "swaps_otc_monitor", "quality", "backfill_worker",
+    "rosstat_cpi", "cbr_inflation", "estr_fixing", "sofr_fixing", "fx_cross", "proxy_curves",
+    "swaps_ratescalcs", "swaps_otc_monitor", "quality", "backfill_worker",
     "maintenance", "source_probe",
     "snapshot_static", "snapshot_market",
 }  # fmt: skip

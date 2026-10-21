@@ -1,10 +1,70 @@
 {
   "format": 1,
-  "version": "2026-10-21.1",
+  "version": "2026-10-21.2",
   "known_at": "2026-10-21T00:00:00+03:00",
-  "description": "Curated business-day calendars for days not yet observed. Per year: weekdays that are NOT business days (non_working) and weekend days that ARE business days (working_weekends); every other day follows Monday-Friday. Past days are superseded by observed trading (ref.calendar_day source observed_*), current-year MOEX days by the MOEX ISS calendar (source moex_iss_calendar).",
+  "description": "Curated business-day calendars for days not yet observed. Per year: weekdays that are NOT business days (non_working) and weekend days that ARE business days (working_weekends); every other day follows Monday-Friday. MOEX calendars: past days are superseded by observed trading (ref.calendar_day source observed_*), current-year days by the MOEX ISS calendar (source moex_iss_calendar). RU_PRODUCTION is the official production calendar (Labour Code art. 112 + Government transfer decrees) for every listed year, past days included; RUONIA fixings only cross-check it.",
   "calendars": {
     "RU_PRODUCTION": [
+      {
+        "year": 2019,
+        "source": "curated",
+        "reference": "Labour Code art. 112 + Government transfer decree for 2019; days as in the ConsultantPlus production calendar (checked 2026-10-21; equal to the hub's RUONIA observation days except the business days without a RUONIA fixing)",
+        "non_working": ["2019-01-01", "2019-01-02", "2019-01-03", "2019-01-04", "2019-01-07", "2019-01-08", "2019-03-08",
+                        "2019-05-01", "2019-05-02", "2019-05-03", "2019-05-09", "2019-05-10", "2019-06-12", "2019-11-04"],
+        "working_weekends": []
+      },
+      {
+        "year": 2020,
+        "source": "curated",
+        "reference": "Labour Code art. 112 + Government transfer decree for 2020; days as in the ConsultantPlus production calendar (checked 2026-10-21; equal to the hub's RUONIA observation days except the business days without a RUONIA fixing; the presidential non-working days 30.03-30.04, 06-08.05 and 24.06.2020 are not production-calendar holidays)",
+        "non_working": ["2020-01-01", "2020-01-02", "2020-01-03", "2020-01-06", "2020-01-07", "2020-01-08", "2020-02-24",
+                        "2020-03-09", "2020-05-01", "2020-05-04", "2020-05-05", "2020-05-11", "2020-06-12", "2020-07-01",
+                        "2020-11-04"],
+        "working_weekends": []
+      },
+      {
+        "year": 2021,
+        "source": "curated",
+        "reference": "Labour Code art. 112 + Government transfer decree for 2021; days as in the ConsultantPlus production calendar (checked 2026-10-21; equal to the hub's RUONIA observation days except the business days without a RUONIA fixing)",
+        "non_working": ["2021-01-01", "2021-01-04", "2021-01-05", "2021-01-06", "2021-01-07", "2021-01-08", "2021-02-22",
+                        "2021-02-23", "2021-03-08", "2021-05-03", "2021-05-10", "2021-06-14", "2021-11-04", "2021-11-05",
+                        "2021-12-31"],
+        "working_weekends": ["2021-02-20"]
+      },
+      {
+        "year": 2022,
+        "source": "curated",
+        "reference": "Labour Code art. 112 + Government transfer decree for 2022; days as in the ConsultantPlus production calendar (checked 2026-10-21; equal to the hub's RUONIA observation days except the business days without a RUONIA fixing)",
+        "non_working": ["2022-01-03", "2022-01-04", "2022-01-05", "2022-01-06", "2022-01-07", "2022-02-23", "2022-03-07",
+                        "2022-03-08", "2022-05-02", "2022-05-03", "2022-05-09", "2022-05-10", "2022-06-13", "2022-11-04"],
+        "working_weekends": ["2022-03-05"]
+      },
+      {
+        "year": 2023,
+        "source": "curated",
+        "reference": "Labour Code art. 112 + Government transfer decree for 2023; days as in the ConsultantPlus production calendar (checked 2026-10-21; equal to the hub's RUONIA observation days except the business days without a RUONIA fixing)",
+        "non_working": ["2023-01-02", "2023-01-03", "2023-01-04", "2023-01-05", "2023-01-06", "2023-02-23", "2023-02-24",
+                        "2023-03-08", "2023-05-01", "2023-05-08", "2023-05-09", "2023-06-12", "2023-11-06"],
+        "working_weekends": []
+      },
+      {
+        "year": 2024,
+        "source": "curated",
+        "reference": "Labour Code art. 112 + Government transfer decree for 2024; days as in the ConsultantPlus production calendar (checked 2026-10-21; equal to the hub's RUONIA observation days except the business days without a RUONIA fixing)",
+        "non_working": ["2024-01-01", "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-08", "2024-02-23",
+                        "2024-03-08", "2024-04-29", "2024-04-30", "2024-05-01", "2024-05-09", "2024-05-10", "2024-06-12",
+                        "2024-11-04", "2024-12-30", "2024-12-31"],
+        "working_weekends": ["2024-04-27", "2024-11-02", "2024-12-28"]
+      },
+      {
+        "year": 2025,
+        "source": "curated",
+        "reference": "Labour Code art. 112 + Government transfer decree for 2025; days as in the ConsultantPlus production calendar (checked 2026-10-21; equal to the hub's RUONIA observation days except the business days without a RUONIA fixing)",
+        "non_working": ["2025-01-01", "2025-01-02", "2025-01-03", "2025-01-06", "2025-01-07", "2025-01-08", "2025-05-01",
+                        "2025-05-02", "2025-05-08", "2025-05-09", "2025-06-12", "2025-06-13", "2025-11-03", "2025-11-04",
+                        "2025-12-31"],
+        "working_weekends": ["2025-11-01"]
+      },
       {
         "year": 2026,
         "source": "curated",

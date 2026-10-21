@@ -1,4 +1,4 @@
-"""Эксперт РА (raexpert.ru): credit ratings from press releases and rating pages (WEB-17).
+"""Эксперт РА (raexpert.ru): credit ratings from press releases and rating pages (WEB-18).
 
 The agency has no free list export (its Excel export and SOAP/REST service are paid
 subscriptions, and its rating lists paginate through a session hash). Its public pages are

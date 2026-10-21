@@ -52,9 +52,13 @@ revalidation. It reads the VPS database directly, so it is a VPS endpoint, not p
 replicated snapshot path of ADR-001; immutable history packages for the inside replica (review
 §7.1, `kind = history`) are not built yet. Contract `market_snapshot/1.2` adds the MOEX linker / WAP
 analytics, `Fixing.hub_ingested_at` and explicit RUSFAR units; the interface catalogue in
-`trading_desk_monitor/docs/architecture/README.md` still needs the 1.2 entry.
+`trading_desk_monitor/docs/architecture/README.md` still needs the 1.2 entry. Contract
+`market_snapshot/1.3` (WEB-16) adds the cross-rate kinds `cbr_cross`, `moex_indicative_cross`,
+`moex_cets`, `fred_h10` (the ECB rates do not reach the VPS); €STR, SOFR, `CPI_RU_YOY` and the
+proxy curves `usd_ust_par` / `eur_aaa_par` (labelled `proxy_*`, not OIS) ride the existing
+datasets - the catalogue needs the 1.3 entry too.
 
-**Static terms and ratings (WEB-17, 21 October 2026).** Contract `market_snapshot/1.3` (additive):
+**Static terms and ratings (WEB-18, 21 October 2026).** Contract `market_snapshot/1.3` (additive):
 credit ratings from the agencies' public disclosure (НКР, НРА, Эксперт РА; issue scope by ISIN,
 issuer scope by INN) with a normalized `grade`, the replacement-bond flag with its basis
 (`document` / `name_rule`), `issue_size_moex` (MOEX count, not the amount outstanding), document

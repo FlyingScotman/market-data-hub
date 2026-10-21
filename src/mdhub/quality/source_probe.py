@@ -9,7 +9,8 @@ certificate's ``notAfter`` and a sanitized error. Probe payloads are not stored 
 
 ``auth``:
 
-* ``n/a`` - public source (MOEX ISS, CBR, ECB, Rosstat): ``ok`` = 2xx/3xx,
+* ``n/a`` - public source (MOEX ISS, CBR, ECB, Rosstat, reference-rate sources): ``ok`` =
+  2xx/3xx,
 * ``ok`` / ``rejected`` - credentials configured and the answer was 2xx / 401 or 403
   (``rejected`` is never ``ok``),
 * ``not_configured`` - the source needs credentials that are not set: the same request goes out
@@ -17,11 +18,14 @@ certificate's ``notAfter`` and a sanitized error. Probe payloads are not stored 
 
 Sources and requests (:data:`PROBES`): ``moex_iss`` ``/iss/engines.json``, ``moex_apim``
 ``/iss/engines.json`` with ``MOEX_API_KEY``, ``cbr`` ``XML_daily.asp``, ``ecb``
-``eurofxref-daily.xml``, ``rosstat`` ``/statistics/price``, ``ratescalcs`` the JSON snapshot
+``eurofxref-daily.xml``, ``rosstat`` ``/statistics/price``, the reference-rate sources (WEB-16:
+``ecb_data_portal`` / ``bundesbank`` / ``dbnomics`` the latest €STR, ``fred`` SOFR of the last 10
+days, ``nyfed`` the latest SOFR, ``us_treasury`` the par-curve feed of the month - at most hourly,
+the feed is slow), ``ratescalcs`` the JSON snapshot
 (Basic auth; only Mon-Fri 08:50-23:00 MSK, when the service answers), ``otc_monitor``
 ``/api/bond/`` (bearer), ``cbonds`` one ``get_emissions`` query with ``limit=1`` - at most
 hourly (:attr:`ProbeSpec.min_interval_s`), so a rejected login does not hit the provider 288
-times a day; the rating agencies ``nkr``, ``nra``, ``raexpert`` (WEB-17) their ``robots.txt``,
+times a day; the rating agencies ``nkr``, ``nra``, ``raexpert`` (WEB-18) their ``robots.txt``,
 at most hourly.
 """
 
@@ -32,7 +36,7 @@ import ssl
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from datetime import time as dtime
 from typing import Any, Final
 
@@ -45,7 +49,23 @@ from mdhub.core.redact import redact_url, sanitize_text
 from mdhub.core.timeutil import MSK
 from mdhub.credentials import REGISTRY as CREDENTIALS
 from mdhub.jobs import JobContext, JobParamError, job
-from mdhub.sources import cbonds, cbr, ecb, nkr, nra, otc_monitor, raexpert, ratescalcs, rosstat
+from mdhub.sources import (
+    bundesbank,
+    cbonds,
+    cbr,
+    dbnomics,
+    ecb,
+    ecb_data,
+    fred,
+    nkr,
+    nra,
+    nyfed,
+    otc_monitor,
+    raexpert,
+    ratescalcs,
+    rosstat,
+    us_treasury,
+)
 from mdhub.sources.moex_apim import apim_headers
 
 __all__ = ["PROBES", "PROBE_TIMEOUT_S", "ProbeRequest", "ProbeResult", "ProbeSpec", "probe"]
@@ -142,6 +162,19 @@ def _cbonds(settings: Settings) -> ProbeRequest:
     )
 
 
+def _fred(_settings: Settings) -> ProbeRequest:
+    start = (datetime.now(UTC) - timedelta(days=10)).date().isoformat()
+    return ProbeRequest(url=f"{fred.BASE_URL}?id={fred.SOFR_SERIES}&cosd={start}")
+
+
+def _us_treasury(_settings: Settings) -> ProbeRequest:
+    month = datetime.now(UTC).strftime("%Y%m")
+    return ProbeRequest(
+        url=f"{us_treasury.XML_URL}?data=daily_treasury_yield_curve"
+        f"&field_tdr_date_value_month={month}"
+    )
+
+
 def ratescalcs_hours(now: datetime) -> bool:
     """Ratescalcs answers Mon-Fri 08:50-23:00 MSK."""
     local = now.astimezone(MSK)
@@ -154,10 +187,28 @@ PROBES: Final = (
     ProbeSpec("cbr", _public(cbr.BASE_URL + cbr.XML_DAILY_PATH)),
     ProbeSpec("ecb", _public(ecb.DAILY_URL)),
     ProbeSpec("rosstat", _public(rosstat.BASE_URL + rosstat.PRICE_PAGE_PATH)),
+    ProbeSpec(
+        "ecb_data_portal",
+        _public(
+            f"{ecb_data.BASE_URL}/{ecb_data.ESTR_FLOW_KEY}"
+            "?format=csvdata&detail=dataonly&lastNObservations=1"
+        ),
+    ),
+    ProbeSpec(
+        "bundesbank",
+        _public(
+            f"{bundesbank.BASE_URL}/{bundesbank.ESTR_FLOW}/{bundesbank.ESTR_KEY}"
+            "?format=csv&lang=en&lastNObservations=1"
+        ),
+    ),
+    ProbeSpec("dbnomics", _public(f"{dbnomics.BASE_URL}{dbnomics.ESTR_PATH}")),
+    ProbeSpec("fred", _fred),
+    ProbeSpec("nyfed", _public(f"{nyfed.BASE_URL}/sofr/last/1.json")),
+    ProbeSpec("us_treasury", _us_treasury, min_interval_s=3600.0),
     ProbeSpec("ratescalcs", _ratescalcs, active=ratescalcs_hours),
     ProbeSpec("otc_monitor", _otc_monitor),
     ProbeSpec("cbonds", _cbonds, min_interval_s=3600.0),
-    # rating agencies (WEB-17): robots.txt, at most hourly (their pages are read once a day)
+    # rating agencies (WEB-18): robots.txt, at most hourly (their pages are read once a day)
     ProbeSpec("nkr", _public(nkr.BASE_URL + "/robots.txt"), min_interval_s=3600.0),
     ProbeSpec("nra", _public(nra.BASE_URL + "/robots.txt"), min_interval_s=3600.0),
     ProbeSpec("raexpert", _public(raexpert.BASE_URL + "/robots.txt"), min_interval_s=3600.0),

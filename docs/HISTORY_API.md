@@ -98,7 +98,7 @@ Columns: `dataset`, `series`, `source`, `unit`, `date_from`, `date_to`, `rows`, 
 | `curves` | curve dataset (`ruonia_ois`, ...) | `pct` | one row per (dataset, source); `rows` = stored snapshots, `days` = days with a snapshot |
 | `zcyc` | null | null | `rows` = publications, `days` = days |
 | `fixings` | index code | `pct` / `index` | `md.fixing` per (code, source) and the served RUSFAR series |
-| `fx` | `BASE/QUOTE` | kind: `cbr_official`, `moex_eod:<secid>:<board>`, `moex_indicative_14`, `moex_indicative_19` | |
+| `fx` | `BASE/QUOTE` | kind: `cbr_official`, `moex_eod:<secid>:<board>`, `moex_indicative_14`, `moex_indicative_19`, `ecb`, `cbr_cross`, `moex_indicative_cross`, `moex_cets`, `fred_h10` | `source` = hub source code |
 
 Example rows (the examples on this page are actual responses for the test data set of
 `tests/test_api_seed.py`, a few columns trimmed with `...` where noted):
@@ -160,14 +160,14 @@ selected snapshot; ordered by `snapshot_date, source, quote_set_id, position, te
 
 | parameter | meaning |
 |---|---|
-| `rule` | `eod` (default): per (`snapshot_date`, `source`) the latest snapshot of that Moscow day - the rule of the `eod_final` cut (with `known_at`: only snapshots with `fetched_at` and `ingested_at` <= `known_at`, exactly as the cut built at `known_at`); `all`: every stored snapshot (intraday history; snapshots are stored only on change and on the first poll of each day) |
+| `rule` | `eod` (default): per (`snapshot_date`, `source`) the quote set of the EOD cuts - the latest one **with bid/ask** whose source clock (else `fetched_at`) is on that Moscow day at or before `MDHUB_CURVE_EOD_CUTOFF` (19:00 MSK), else the latest one of the day (mid-only, labelled `mid_only`); `meta.eod_rule` gives the rule and cutoff; same SQL as the snapshot builder, 0.3.1 (with `known_at`: only snapshots with `fetched_at` and `ingested_at` <= `known_at`, exactly as the cut built at `known_at`); `all`: every stored snapshot (intraday history; snapshots are stored only on change and on the first poll of each day) |
 | `source` | comma list (`otc_monitor`, `ratescalcs`, `andromeda`, ...); default all. Sources are separate series; pick per day as DESIGN §8 "Curve sources" describes |
 | `from`, `to` | range of `snapshot_date` (Moscow date of `fetched_at`) |
 
 Key columns: `snapshot_date`, `source`, `quote_set_id`, `position`, `tenor`. Columns:
 `snapshot_date`, `source`, `quote_set_id` (snapshot id), `fetched_at`, `source_ts` (source
 clock, may be null), `quote_basis` (`bid_ask_mid` / `mid_only`), `market_closed`, `label`,
-`content_sha256`, `labels` (`market_closed`, `mid_only`, `source_clock_not_on_business_date`,
+`content_sha256`, `labels` (`market_closed`, `mid_only`, `proxy_*`, `source_clock_not_on_business_date`,
 as in the snapshot), `meta` (snapshot meta JSON, e.g. andromeda `quality_flags`),
 `hub_ingested_at`, `tenor`, `position`, `tenor_months`, `tenor_days`, `pillar_date`, `bid_pct`,
 `mid_pct`, `ask_pct` (% p.a.; mid-only quotes have null bid/ask), `extra` (quote JSON).
@@ -175,6 +175,12 @@ as in the snapshot), `meta` (snapshot meta JSON, e.g. andromeda `quality_flags`)
 Example row:
 `["2026-10-15", "ratescalcs", 2, "2026-10-15T12:00:00+00:00", null, "bid_ask_mid", null, null, "000...001", [], null, "2026-10-15T12:00:00+00:00", "1Y", 0, 12, null, null, 15.2, 15.3, 15.4, null]`
 (`content_sha256` trimmed)
+
+Proxy curves (WEB-16): `usd_ust_par` (source `us_treasury`), `eur_aaa_par` (`ecb_data_portal`),
+`eur_bund_par` (`bundesbank`, only when it served as the EUR fallback) are government par yields,
+**not OIS**: `labels` contain `proxy_ust_par` / `proxy_ecb_aaa_par` / `proxy_bund_par`, `meta.proxy`
+names the proxy; one end-of-day snapshot per curve date (`snapshot_date` = the curve's own business
+date, `fetched_at` 23:59:59 Moscow time of it, synthetic).
 
 A day without a row for a source means that source stored nothing on that day; for
 `ruonia_ois` / `key_rate_swap` such days are also `ops.data_gap` rows of `curves_<dataset>`
@@ -219,7 +225,12 @@ else `ingested_at`; not a publication time), `origin` (`md.fixing` / `md.index_e
 Semantics as `/v1/fixings`: `KEY_RATE` per day in force (`fixing_date = effective_date`),
 `RUONIA` per observation date (published next business day, `published_on`), term RUONIA and
 `RUONIA_INDEX` per calendar day, `CPI_RU_MOM` = CPI of the month to the previous month in %
-(`unit = index`, `fixing_date` = first day of the month).
+(`unit = index`, `fixing_date` = first day of the month; `published_on` = Rosstat release date,
+newest months only), `CPI_RU_YOY` = official CPI y/y − 100 in % (`unit = pct`, source `cbr`,
+first day of the month), `ESTR` (% p.a., TARGET day; source = the host that served it:
+`ecb_data_portal`, `bundesbank`, `dbnomics`, `fred` - republications of the ECB figure, separate
+series: per day take the first present in that order), `SOFR`, `SOFR30DAVG`, `SOFR90DAVG`,
+`SOFR180DAVG` (% p.a.), `SOFRINDEX` (`unit = index`) (sources `nyfed`, then `fred`).
 
 RUSFAR (contract 1.2 rule): `RUSFAR`, `RUSFAR1W`, `RUSFAR2W`, `RUSFAR1M`, `RUSFAR3M`,
 `RUSFARCNY`, `RUSFARCN1W`, `RUSFARRT`, `RUSFAR1WRT`, `RUSFAR2WRT`, `RUSFAR1MRT`, `RUSFAR3MRT`,
@@ -239,7 +250,7 @@ RUB and cross rates; ordered by `kind, pair, date, secid, board`.
 | parameter | meaning |
 |---|---|
 | `pair` | comma list of `BASE/QUOTE` (`USD/RUB`, `CNY/RUB`, `EUR/USD`) or a bare currency (`USD` = `USD/RUB`), at most 100; default all |
-| `kind` | comma list of `cbr_official`, `moex_eod`, `moex_indicative_14`, `moex_indicative_19`; default all |
+| `kind` | comma list of `cbr_official`, `moex_eod`, `moex_indicative_14`, `moex_indicative_19`, `ecb`, `cbr_cross`, `moex_indicative_cross`, `moex_cets`, `fred_h10`; default all |
 | `tenor` | `moex_eod` only: comma list (`TOD`, `TOM`) |
 
 Key columns: `kind`, `pair`, `date`, `secid`, `board`. Columns: `kind`, `pair`, `base_ccy`,
@@ -252,6 +263,11 @@ Key columns: `kind`, `pair`, `date`, `secid`, `board`. Columns: `kind`, `pair`, 
 | `cbr_official` | `md.fx_official` | effective date: **every calendar day** the rate is in force (weekends included) | `rate` = RUB per 1 unit (`nominal` = CBR quotation units, `set_date` = day CBR set it) |
 | `moex_eod` | `md.fx_eod`, CETS **outrights** only (`ref.fx_instrument.kind = outright`; swaps never) | trade date | `close`, `waprice` = MOEX raw price per `quote_units` units of base; `close_per_unit`, `waprice_per_unit` = exact per-unit values when `quote_units` is a power of ten (else null); `rate` null |
 | `moex_indicative_14` / `_19` | `md.fx_indicative` (`tc` 14:00 / `mc` 19:00 clearing) | trade date | `rate` = quote currency per 1 unit of base; `trade_time` `HH:MM` MSK |
+| `ecb` | `md.ecb_fx` (eurofxref or the ECB Data Portal fallback host) | TARGET day | `rate` = units of quote per 1 EUR |
+| `cbr_cross` | `md.fx_cross` | effective date (every calendar day both CBR rates are in force) | `rate` = (RUB per base) / (RUB per quote), 10 significant digits |
+| `moex_indicative_cross` | `md.fx_cross` | trade date | two MOEX 19:00 indicative RUB rates, divided, 10 significant digits |
+| `moex_cets` | `md.fx_cross` | trade date | traded CETS cross close per unit; `secid`, `board`, `num_trades` set |
+| `fred_h10` | `md.fx_cross` | U.S. business day | Fed H.10 noon buying rate (FRED `DEX*`) |
 
 Example rows:
 `["cbr_official", "USD/RUB", "USD", "RUB", "2026-10-15", 81.1200, null, null, null, null, null, null, null, null, null, 1, "2026-10-14", null, "2026-10-14T12:30:00+00:00"]`,

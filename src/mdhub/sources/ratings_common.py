@@ -1,5 +1,5 @@
 """Shared model and normalization of credit ratings from the agencies' public disclosure
-(WEB-17; sources :mod:`mdhub.sources.nkr`, :mod:`mdhub.sources.nra`,
+(WEB-18; sources :mod:`mdhub.sources.nkr`, :mod:`mdhub.sources.nra`,
 :mod:`mdhub.sources.raexpert`). No network, no DB.
 
 Values are kept **verbatim** (``rating``, ``outlook``, ``watch``, ``action_raw``) next to two

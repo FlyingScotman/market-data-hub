@@ -1,4 +1,4 @@
-"""Curated issue terms with evidence (WEB-17; TDM brief HS8 / HS9 / HS10, review P1-6 / P1-9).
+"""Curated issue terms with evidence (WEB-18; TDM brief HS8 / HS9 / HS10, review P1-6 / P1-9).
 
 The packaged ``mdhub/data/bond_terms_curated.json`` is validated as shipped. The job tests use
 a synthetic document in the curated format (values and evidence below are test data, not

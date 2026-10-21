@@ -49,6 +49,7 @@ __all__ = [
     "STANDING_MAIN_MECHANISM_FROM",
     "FxRate",
     "FxRecord",
+    "InflationRow",
     "LiquidityRow",
     "Meeting",
     "RefinancingPeriod",
@@ -64,6 +65,7 @@ __all__ = [
     "fetch_xml_daily",
     "fetch_xml_dynamic",
     "parse_cbr_number",
+    "parse_inflation_page",
     "parse_key_rate_page",
     "parse_liquidity_page",
     "parse_meetings_page",
@@ -89,6 +91,7 @@ MEETINGS_PATH: Final = "/dkp/cal_mp/"
 XML_DAILY_PATH: Final = "/scripts/XML_daily.asp"
 XML_DYNAMIC_PATH: Final = "/scripts/XML_dynamic.asp"
 REFINANCING_PATH: Final = "/statistics/idkp_br/refinancing_rates1/"
+INFLATION_PATH: Final = "/hd_base/infl/"
 
 _MISSING = {"", "—", "-", "–", "н/д"}
 _DATE_RE = re.compile(r"^(\d{2})\.(\d{2})\.(\d{4})$")
@@ -258,6 +261,54 @@ def parse_key_rate_page(page: str) -> list[tuple[date, Decimal]]:
         out.append((parse_ru_date(cells[0]), rate))
     _unique_dates(out, "key rate")
     return sorted(out)
+
+
+# -------------------------------------------------------------------------- inflation
+
+_MONTH_RE = re.compile(r"^(\d{2})\.(\d{4})$")
+
+
+@dataclass(frozen=True, slots=True)
+class InflationRow:
+    period: date
+    """First day of the month."""
+    inflation_yoy_pct: Decimal
+    """CPI of the month to the same month of the previous year, minus 100 (``6.35``)."""
+    target_pct: Decimal | None
+    key_rate_pct: Decimal | None
+
+
+def parse_inflation_page(page: str) -> list[InflationRow]:
+    """``/hd_base/infl/`` table (``Дата`` ``MM.YYYY``, key rate, ``Инфляция, % г/г``, target)
+    -> rows sorted by month. CBR republishes Rosstat's official y/y CPI here (from 2013-09)."""
+    table = _find_table(page, "Дата", "Инфляция", what="inflation")
+    if table is None:
+        return []
+    header = next((cells for cells, is_header in table.rows if is_header), [])
+    expected = ["Дата", "Ключевая ставка, % годовых", "Инфляция, % г/г", "Цель по инфляции, %"]
+    if header != expected:
+        raise FormatDriftError(f"CBR inflation: header {header!r}")
+    out: list[InflationRow] = []
+    for cells in table.data_rows():
+        if len(cells) != 4:
+            raise FormatDriftError(f"CBR inflation: row with {len(cells)} cells: {cells!r}")
+        m = _MONTH_RE.match(cells[0].strip())
+        if not m:
+            raise FormatDriftError(f"CBR inflation: bad month {cells[0]!r}")
+        period = date(int(m.group(2)), int(m.group(1)), 1)
+        yoy = _require_number(cells[2], "inflation y/y")
+        if not Decimal(-20) <= yoy <= Decimal(300):
+            raise FormatDriftError(f"CBR inflation {period}: y/y out of range {yoy}")
+        out.append(
+            InflationRow(
+                period,
+                yoy,
+                parse_cbr_number(cells[3], field="inflation target"),
+                parse_cbr_number(cells[1], field="key rate"),
+            )
+        )
+    _unique_dates([(r.period, r) for r in out], "inflation")
+    return sorted(out, key=lambda r: r.period)
 
 
 # ----------------------------------------------------------------------------- RUONIA
