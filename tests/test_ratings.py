@@ -8,7 +8,8 @@ Fixtures ``tests/fixtures/ratings/`` are public responses recorded on 2026-10-21
 * ``raexpert/`` - raexpert.ru ``/sitemap.xml``, ``/sitemap0.xml`` (gzip), the list pages
   ``/ratings/debt_inst/`` and ``/ratings/credits/``, the press releases
   ``/releases/2026/oct20d`` and ``oct21a``-``oct21e``, and the object pages they link
-  (companies, the Amur region, two Amur bonds).
+  (companies, the Amur region, two Amur bonds), and ``company_1000042599`` (a non-resident
+  bank with Belarus and international-scale blocks) from the live crawl of the same day.
 
 Large HTML is stored gzipped, byte for byte as received. No test uses the network.
 """
@@ -268,6 +269,21 @@ def test_raexpert_region_and_bond() -> None:
         "https://raexpert.ru/database/companies/novolipetskii_metallur-_gicheskii_kombinat/",
     )
     assert nlmk.industry == "черная металлургия"
+
+
+def test_raexpert_only_russian_national_scale() -> None:
+    """A non-resident bank (recorded during the live crawl of 2026-10-21) with three blocks:
+    RF national scale (kept), Belarus national scale ``by…`` under the same header and an
+    international-scale table (both skipped, the page does not fail)."""
+    e = raexpert.parse_entity(
+        text("raexpert/company_1000042599.html.gz"),
+        "https://raexpert.ru/database/companies/1000042599/",
+    )
+    assert [(b.rating_type, b.rows[0].rating) for b in e.blocks] == [
+        ("Рейтинг кредитоспособности банка-нерезидента по нац. рейтинговой шкале РФ", "ruBBB-")
+    ]
+    (s,) = raexpert.entity_records(e)[0]
+    assert (s.object_key, s.grade) == ("raexpert:company:1000042599", "BBB-")  # no INN
 
 
 def test_raexpert_drift() -> None:

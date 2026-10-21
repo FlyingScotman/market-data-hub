@@ -12,7 +12,8 @@ and every review is a press release:
 3. **Object** pages carry, per rating type (credit ratings only), the full history table
    ``Национальная шкала | Прогноз | Рейтинг под наблюдением | Дата`` (newest first, each
    date linking its release). Company / region pages also link the pages of their rated
-   bonds.
+   bonds. Only the Russian national scale is loaded: international-scale tables and other
+   national scales (Belarus ``by…``, Kazakhstan) on the same pages are skipped.
 
 robots.txt forbids URLs with a query string and ``/search/``; the hub fetches only the paths
 above. Values are verbatim; ``отозван`` -> withdrawn (``rating = None``). The history rows
@@ -315,9 +316,27 @@ def _history(table: Node, base: str, what: str) -> list[HistoryRow]:
     return rows
 
 
-def _is_credit(rating_type: str) -> bool:
+_FOREIGN_SCALE_RE: Final = re.compile(
+    r"международн|шкал\w* РБ\b|беларус|казахстан|узбекистан|кыргыз|армени", re.IGNORECASE
+)
+
+
+def _is_russian_national_credit(rating_type: str, table: Node, what: str) -> bool:
+    """A credit rating on the Russian national scale: a credit list that names no other scale
+    (international, Belarus, Kazakhstan, ...) with a table headed ``Национальная шкала``. RA
+    Expert also shows ``Международная шкала`` tables and Belarus national-scale ``by…`` ratings
+    under the national header; the hub loads the Russian national scale only. Any other header
+    of a credit table is format drift (fail closed)."""
     t = rating_type.lower()
-    return "кредит" in t and "esg" not in t and "некредит" not in t
+    if "кредит" not in t or "esg" in t or "некредит" in t:
+        return False
+    first = table.find("th")
+    head = first.text() if first is not None else ""
+    if head == "Международная шкала" or _FOREIGN_SCALE_RE.search(t):
+        return False
+    if head != "Национальная шкала":
+        raise FormatDriftError(f"{what}: unexpected rating table header {head!r}")
+    return True
 
 
 def parse_entity(page: str, url: str) -> Entity:
@@ -343,8 +362,14 @@ def parse_entity(page: str, url: str) -> Entity:
         bond_links = [u for u in sub_links if page_kind(u) == "bond"]
         linked.extend(("bond", u) for u in bond_links)
         rating_type = sub.text()
-        if bond_links or table is None or not _is_credit(rating_type):
-            continue  # a bond's own page carries its history; non-credit ratings skipped
+        if (
+            bond_links
+            or table is None
+            or not _is_russian_national_credit(rating_type, table, f"RA Expert {url}")
+        ):
+            # a bond's own page carries its history; non-credit ratings and other scales
+            # (international, Belarus, ...) are not loaded
+            continue
         blocks.append(RatingBlock(rating_type, _history(table, url, f"RA Expert {url}")))
     if kind == "bond":
         name = req.get("Эмитент", (None, None))[0] or req.get("Регион", (None, None))[0] or name
