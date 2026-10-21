@@ -1,6 +1,6 @@
 # Roadmap и передача работы
 
-Обновлено 20.10.2026. Репозиторий: **FlyingScotman/market-data-hub**.
+Обновлено 21.10.2026. Репозиторий: **FlyingScotman/market-data-hub**.
 Этот файл переносит задачи из BB Tasks в Git: для продолжения не нужен доступ к истории чата
 или конкретному агентному инструменту. Ключи WEB-* оставлены для сопоставления с Tasks.
 Наблюдения production ниже сделаны **18.10.2026**; перед изменениями проверить текущее состояние.
@@ -31,6 +31,43 @@
 Старый workflow 0.1.2 отменён; теги 0.1.1/0.1.2 не означают опубликованные релизы.
 
 ## Незавершённые задачи
+
+### WEB-15 — история для монитора деска, контракт 1.2
+
+Статус: **review** (код готов), 21.10.2026, ветка `claude/hub-tdm-history-1-2` (от `main` 1563217).
+Источник — ревью хаба для монитора (`docs/reviews/HUB_REVIEW_FOR_DESK_MONITOR.md`, ветка
+`claude/hub-review-desk-monitor`, §6–§8). Предполагаемый релиз **0.2.0**; тег, релиз и установку
+делает владелец: [порядок обновления](deploy/UPGRADE_TO_0.2.0.md).
+
+- [x] P0-A read-API истории `/v1/history/{index,bonds,curves/{dataset},zcyc,fixings,fx}`:
+  колоночный JSON, курсоры, ETag/Last-Modified с 304 без чтения строк, gzip, `known_at`;
+  до 500 бумаг и 50 000 строк за вызов. [Справочник](docs/HISTORY_API.md). Миграция 0427 (индекс).
+  Тест: 500 бумаг × 250 дней (125 000 строк) — 3 вызова, ~3 с.
+- [x] P0-B контракт `market_snapshot/1.2`: RUSFARIND `unit = index`, явные списки RUSFAR,
+  прочие `RUSFAR*` в `excluded` (§6.1); `Fixing.hub_ingested_at` (H20); в `source_analytics`
+  `icpi`, `ir`, `bei`, `cbr`, `duration_waprice_days`, `yield_last_coupon_pct`. Золотые фикстуры
+  перегенерированы. НКД/номинал в `bond_quotes_intraday` не добавлены: блоки ISS, которые читает
+  `bonds_intraday` (`marketdata`, `marketdata_yields`), этих полей не содержат (P1-5 остаётся).
+- [x] P0-C пропуски кривых: наборы `curves_ruonia_ois`, `curves_key_rate_swap` (`business_daily`,
+  любой источник, с 05.01.2026) → `ops.data_gap`, `/v1/gaps`; тест с искусственно убранным днём.
+- [x] P1-4 готовность входов `eod_final` (ждёт до `MDHUB_SNAPSHOT_EOD_FINAL_WAIT_MINUTES` финальные
+  `bonds_eod`/`zcyc`, затем `stale_reasons` и `partial`).
+- [x] P1-3 автокоррекция: бэкфилл, изменивший входы даты с `eod_final`, ставит `snapshot_rebuild`;
+  `supersedes` только при другом `content_sha256` (`MDHUB_SNAPSHOT_AUTOCORRECT`).
+- [x] P1-8 (часть) календари до 2037 (`curated_unverified`, `provisional_from`), TARGET до 2037.
+  Календари публикаций RUONIA/СПФИ (H17) не делались.
+- [ ] P1-2 SOFR / €STR: не сделано — NY Fed и ECB Data Portal недоступны из среды разработки
+  (нет записанных ответов для тестов), доступ с VPS не проверен (WEB-4). Сначала с VPS записать
+  ответы `markets.newyorkfed.org/api/rates/secured/sofr/...` и
+  `data-api.ecb.europa.eu/service/data/EST/B.EU000A2X2A25.WT`.
+- [ ] P1-7 ИПЦ г/г не добавлен: цепочка округлённых `CPI_RU_MOM` не равна официальному г/г
+  Росстата; монитор может сцепить месяцы сам (`/v1/history/fixings?code=CPI_RU_MOM`).
+- Вне объёма (владелец/VPS/лицензии): 502 Ratescalcs (WEB-8), канал алертов (P0-4), рейтинги
+  (P1-1), USD/EUR OIS (P2-1). Пакеты истории `kind=history` (ревью §7.1) не делались: монитор
+  читает read-API напрямую; для реплики внутреннего контура (ADR-001) пакеты остаются P2-4.
+
+Готово: релиз 0.2.0 установлен через Updates, `/health/ready` = 0.2.0, токен `read` для монитора
+создан, `/v1/history/index` отдаёт наборы, `curves_*` видны в `/v1/coverage`.
 
 ### WEB-13 — статика для Trading Desk Monitor (HS1–HS13)
 

@@ -128,7 +128,13 @@
             "yield_date_type",
             "duration_days",
             "zspread_bp",
-            "gspread_bp"
+            "gspread_bp",
+            "duration_waprice_days",
+            "yield_last_coupon_pct",
+            "icpi",
+            "ir",
+            "bei",
+            "cbr"
           ],
           "properties": {
             "yield_close_pct": {
@@ -173,6 +179,54 @@
             },
             "gspread_bp": {
               "$ref": "common.schema.json#/$defs/decimal_or_null"
+            },
+            "duration_waprice_days": {
+              "description": "MOEX DURATIONWAPRICE: duration at the weighted average price, days (1.2)",
+              "allOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/decimal_or_null"
+                }
+              ]
+            },
+            "yield_last_coupon_pct": {
+              "description": "MOEX YIELDLASTCOUPON: yield to the end of the last known coupon period of a floater / bond with unknown future coupons, % p.a. (1.2)",
+              "allOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/decimal_or_null"
+                }
+              ]
+            },
+            "icpi": {
+              "description": "MOEX yields field ICPI verbatim (linker analytics; unit and meaning as MOEX defines them, not interpreted by the hub; e.g. 9.53 for SU52005RMFS4 on 2026-10-15) (1.2)",
+              "allOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/decimal_or_null"
+                }
+              ]
+            },
+            "ir": {
+              "description": "MOEX yields field IR verbatim (published for linkers and some floaters; not interpreted by the hub) (1.2)",
+              "allOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/decimal_or_null"
+                }
+              ]
+            },
+            "bei": {
+              "description": "MOEX yields field BEI verbatim (break-even inflation of linkers as MOEX publishes it; not interpreted by the hub) (1.2)",
+              "allOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/decimal_or_null"
+                }
+              ]
+            },
+            "cbr": {
+              "description": "MOEX yields field CBR verbatim (linker analytics as MOEX publishes it; not interpreted by the hub) (1.2)",
+              "allOf": [
+                {
+                  "$ref": "common.schema.json#/$defs/decimal_or_null"
+                }
+              ]
             }
           }
         }
@@ -573,7 +627,7 @@
       }
     },
     "fixing": {
-      "description": "Fixing; RUSFAR family from md.index_eod (origin md.index_eod)",
+      "description": "Fixing; RUSFAR family from md.index_eod (origin md.index_eod): rates of the explicit RUSFAR lists unit pct, RUSFARIND unit index, any other RUSFAR* series excluded with reason rusfar_series_unit_unknown (1.2)",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -583,6 +637,7 @@
         "effective_date",
         "published_on",
         "published_at",
+        "hub_ingested_at",
         "value",
         "unit",
         "origin",
@@ -611,6 +666,14 @@
         },
         "published_at": {
           "$ref": "common.schema.json#/$defs/utc_instant_or_null"
+        },
+        "hub_ingested_at": {
+          "description": "When the hub first stored the published value (version time: md.fixing.ingested_at; md.index_eod: updated_at, else ingested_at), UTC. Not the source's publication time (published_at stays null when the source states none). 1.2, H20",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/utc_instant"
+            }
+          ]
         },
         "value": {
           "description": "% p.a. (unit pct) or index level (unit index)",

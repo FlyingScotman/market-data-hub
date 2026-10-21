@@ -16,6 +16,7 @@ reason. Non-RUB cross rates come from the ECB only.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -32,13 +33,17 @@ from mdhub.snapshot.build import (
     json_decimal,
     sorted_labels,
 )
+from mdhub.sources.moex_market import INDEX_GROUPS
 
 __all__ = [
     "EXPECTED_CURVES",
     "PRECIOUS_METALS",
     "REQUIRED_CURVE_DATASETS",
+    "RUSFAR_INDEX_SERIES",
+    "RUSFAR_RATE_SERIES",
     "MarketParams",
     "build_market",
+    "rusfar_unit",
 ]
 
 EXPECTED_CURVES: Final = (
@@ -59,6 +64,17 @@ REQUIRED_CURVE_DATASETS: Final = ("key_rate_swap", "ruonia_ois")
 key-rate curves); a cut without any source of one is flagged stale, never filled."""
 
 PRECIOUS_METALS: Final = frozenset({"GLD", "SLV", "PLT", "PLD"})
+
+RUSFAR_RATE_SERIES: Final = (*INDEX_GROUPS["rusfar"], *INDEX_GROUPS["rusfarrt"])
+"""MOEX RUSFAR series published as rates in % p.a. (``unit = pct``): the explicit lists of the
+``indices_rusfar`` / ``indices_rusfarrt`` datasets (contract 1.2; 1.0/1.1 took every
+``RUSFAR%`` index as a rate)."""
+RUSFAR_INDEX_SERIES: Final = ("RUSFARIND",)
+"""MOEX RUSFAR series that are index levels (``unit = index``): RUSFARIND is the accumulated
+return index (~2,500), not a rate."""
+RUSFAR_UNKNOWN_REASON: Final = "rusfar_series_unit_unknown"
+"""Exclusion reason of an ``md.index_eod`` row whose SECID starts with RUSFAR but is in neither
+list: a new MOEX series is never published with a guessed unit."""
 _OIS_LIKE: Final = frozenset({"ruonia_ois", "key_rate_swap"})
 
 
@@ -88,6 +104,16 @@ class MarketParams:
             "fx_forward_days": self.fx_forward_days,
             "ecb_lookback_days": self.ecb_lookback_days,
         }
+
+
+def rusfar_unit(secid: str) -> str | None:
+    """Unit of a RUSFAR-family index (``pct`` / ``index``), ``None`` when the series is not
+    known to the hub (it is then excluded with :data:`RUSFAR_UNKNOWN_REASON`)."""
+    if secid in RUSFAR_RATE_SERIES:
+        return "pct"
+    if secid in RUSFAR_INDEX_SERIES:
+        return "index"
+    return None
 
 
 def _day_bounds(d: date) -> tuple[datetime, datetime]:
@@ -128,8 +154,11 @@ def _bond_quotes_eod(
                COALESCE(y.yield_to_offer_pct, e.yield_to_offer_pct) AS yield_to_offer_pct,
                COALESCE(y.duration_days, e.duration_days) AS duration_days,
                COALESCE(y.zspread_bp, e.zspread_bp) AS zspread_bp,
+               COALESCE(y.yield_last_coupon_pct, e.yield_last_coupon_pct)
+                   AS yield_last_coupon_pct,
                y.effective_yield_pct, y.effective_yield_waprice_pct, y.yield_date,
-               y.yield_date_type, y.gspread_bp,
+               y.yield_date_type, y.gspread_bp, y.duration_waprice_days, y.icpi, y.ir, y.bei,
+               y.cbr,
                e.run_id AS e_run, e.ingested_at AS e_at, e.updated_at AS e_upd,
                y.run_id AS y_run, y.ingested_at AS y_at, y.updated_at AS y_upd
         FROM md.bond_eod_known_at(%(t)s, %(d)s, %(d)s) e
@@ -185,6 +214,12 @@ def _bond_quotes_eod(
                     "duration_days": r["duration_days"],
                     "zspread_bp": r["zspread_bp"],
                     "gspread_bp": r["gspread_bp"],
+                    "duration_waprice_days": r["duration_waprice_days"],
+                    "yield_last_coupon_pct": r["yield_last_coupon_pct"],
+                    "icpi": r["icpi"],
+                    "ir": r["ir"],
+                    "bei": r["bei"],
+                    "cbr": r["cbr"],
                 },
             }
         )
@@ -416,7 +451,13 @@ def _zcyc(conn: DictConnection, t: datetime, d: date, eod: bool, prov: Provenanc
 
 
 def _fixings(
-    conn: DictConnection, t: datetime, d: date, lookback: int, forward: int, prov: Provenance
+    conn: DictConnection,
+    t: datetime,
+    d: date,
+    lookback: int,
+    forward: int,
+    prov: Provenance,
+    excluded: Excluded,
 ) -> Dataset:
     lo, hi = d - timedelta(days=lookback), d + timedelta(days=forward)
     fix = conn.execute(
@@ -441,6 +482,7 @@ def _fixings(
                 "effective_date": f["effective_date"],
                 "published_on": f["published_on"],
                 "published_at": f["published_at"],
+                "hub_ingested_at": f["ingested_at"],
                 "value": f["value"],
                 "unit": f["unit"],
                 "origin": "md.fixing",
@@ -448,7 +490,16 @@ def _fixings(
             }
         )
     for i in rusfar:
-        prov.add("fixings", "moex_iss", i["run_id"], i["updated_at"] or i["ingested_at"])
+        unit = rusfar_unit(i["secid"])
+        if unit is None:
+            excluded.add(
+                "fixings",
+                {"index_code": i["secid"], "fixing_date": i["trade_date"]},
+                RUSFAR_UNKNOWN_REASON,
+            )
+            continue
+        version = i["updated_at"] or i["ingested_at"]
+        prov.add("fixings", "moex_iss", i["run_id"], version)
         out.append(
             {
                 "index_code": i["secid"],
@@ -457,8 +508,9 @@ def _fixings(
                 "effective_date": None,
                 "published_on": None,
                 "published_at": None,
+                "hub_ingested_at": version,
                 "value": i["close"],
-                "unit": "pct",
+                "unit": unit,
                 "origin": "md.index_eod",
                 "labels": sorted_labels(
                     "moex_marketdata_preliminary" if i["basis"] == "marketdata" else None
@@ -671,10 +723,13 @@ def build_market(
     static: Build,
     static_snapshot_id: str | None = None,
     params: MarketParams | None = None,
+    extra_stale: Mapping[str, Sequence[str]] | None = None,
 ) -> Build:
     """Build the market snapshot of ``cut`` consistent with the static ``static`` build
     (its quotes are filtered by ``static.universe``). ``static_snapshot_id`` may be bound
-    later, once the static build is published (:func:`mdhub.snapshot.runner`)."""
+    later, once the static build is published (:func:`mdhub.snapshot.runner`).
+    ``extra_stale``: stale reasons per dataset found by the caller (e.g. inputs that were not
+    ready, :mod:`mdhub.snapshot.readiness`); they are manifest facts, not content."""
     if cut.kind != "market":
         raise ValueError("build_market needs a market cut")
     params = params or MarketParams()
@@ -695,11 +750,13 @@ def build_market(
         quotes_intraday,
         _curve_sets(conn, t, d, prov),
         _zcyc(conn, t, d, eod, prov),
-        _fixings(conn, t, d, lookback, params.fx_forward_days, prov),
+        _fixings(conn, t, d, lookback, params.fx_forward_days, prov, excluded),
         _fx(conn, t, d, params, eod, prov, excluded),
         _cross(conn, t, d, params.ecb_lookback_days, prov),
         _meetings(conn, t, prov),
     ]
+    for ds in datasets:
+        ds.stale_reasons.extend((extra_stale or {}).get(ds.name, ()))
     return Build(
         cut=cut,
         datasets=datasets,

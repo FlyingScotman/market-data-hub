@@ -59,6 +59,12 @@ Environment variables (DESIGN §7 plus a few operational knobs):
 ``MDHUB_SNAPSHOT_INTRADAY_MINUTES`` intraday cut interval (divides 60, or 60), 0 = off; default 30
 ``MDHUB_SNAPSHOT_INTRADAY_WINDOW``  intraday cuts ``HH:00-HH:00`` (MSK), default 10:00-19:00
 ``MDHUB_SNAPSHOT_RETENTION_DAYS_INTRADAY`` intraday market snapshot retention, default 30
+``MDHUB_SNAPSHOT_EOD_FINAL_WAIT_MINUTES`` ``eod_final``: wait up to N minutes for the final
+                                    ``bonds_eod`` / ``zcyc`` runs of D, then publish with
+                                    stale reasons; 0 = no wait; default 30
+``MDHUB_SNAPSHOT_AUTOCORRECT``      a backfill that changes inputs of a day with an
+                                    ``eod_final`` queues its rebuild (published only when
+                                    the content changes); default true
 =================================== ====================================================
 
 Snapshot cut times are an owner decision (system DEC04); the defaults above follow the
@@ -233,6 +239,18 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices(
             "MDHUB_SNAPSHOT_RETENTION_DAYS_INTRADAY", "snapshot_retention_days_intraday"
         ),
+    )
+    snapshot_eod_final_wait_minutes: int = Field(
+        default=30,
+        ge=0,
+        le=180,
+        validation_alias=AliasChoices(
+            "MDHUB_SNAPSHOT_EOD_FINAL_WAIT_MINUTES", "snapshot_eod_final_wait_minutes"
+        ),
+    )
+    snapshot_autocorrect: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("MDHUB_SNAPSHOT_AUTOCORRECT", "snapshot_autocorrect"),
     )
 
     hostmon_mounts: str = Field(

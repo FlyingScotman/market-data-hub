@@ -14,7 +14,7 @@ are in [`docs/DESIGN.md`](../../../docs/DESIGN.md) §11.
 | `common.schema.json` | Shared definitions: decimal strings, dates, UTC instants, sha256, labels |
 | `fixtures/` | Golden bundles built from public data (`index.json` lists their ids) |
 
-`schema_version` is `market_snapshot/1.1`. Every schema object has
+`schema_version` is `market_snapshot/1.2`. Every schema object has
 `additionalProperties: false`: a new field is a schema version bump, so a consumer pinned to
 an older version fails its conformance tests instead of silently ignoring it.
 
@@ -26,6 +26,7 @@ reads `1.x` and ignores unknown additive fields stays correct; a new major (`2.0
 |---|---|
 | 1.0 | initial contract |
 | 1.1 (WEB-13, TDM brief R9) | Instrument `lat_name` (HS12), `coupon_frequency_schedule` (HS7), `face_value_date` (HS11); Issuer `sector_source`, `okved`, `okved_version` (HS3), `group_id`, `group_name`, `group_relation`, `is_state_owned` (HS4); dataset `ratings` (HS5) |
+| 1.2 (WEB-15, hub review for the desk monitor §6.1, H20) | BondQuote (EOD) `source_analytics`: `duration_waprice_days`, `yield_last_coupon_pct`, `icpi`, `ir`, `bei`, `cbr` (MOEX yields fields verbatim); Fixing `hub_ingested_at`; RUSFAR units: only the explicit RUSFAR rate lists are `unit = pct`, `RUSFARIND` (accumulated return index) is `unit = index`, any other `RUSFAR*` index is excluded with reason `rusfar_series_unit_unknown` (1.0/1.1 published every `RUSFAR%` index as a rate, so RUSFARIND appeared as ~2,500 % p.a.). Exclusion reason `rusfar_series_unit_unknown` |
 
 ## Identity
 
@@ -62,7 +63,9 @@ reads `1.x` and ignores unknown additive fields stays correct; a new major (`2.0
 **A record is never dropped silently**: it is in `data` (possibly with `labels`) or in
 `excluded`. Exclusion reasons used by v1: `not_in_static_snapshot` (a quote of a SECID outside
 the static universe), `fx_swap`, `not_an_outright`, `non_rub_pair`, `precious_metal`,
-`instrument_unknown` (MOEX FX rows that are not RUB per unit of a currency).
+`instrument_unknown` (MOEX FX rows that are not RUB per unit of a currency);
+1.2: `rusfar_series_unit_unknown` (an `md.index_eod` RUSFAR* series that is neither in the
+rate lists nor the index list, so its unit is not known).
 
 ## Units and values
 
@@ -112,11 +115,11 @@ fixture carries a payment-day amortizer (see `fixtures/index.json`).
 
 | Array | Object | Notes |
 |---|---|---|
-| `bond_quotes` | BondQuote (EOD) | `md.bond_eod` + `md.bond_eod_yield` of the business date; empty in intraday cuts |
+| `bond_quotes` | BondQuote (EOD) | `md.bond_eod` + `md.bond_eod_yield` of the business date; empty in intraday cuts. 1.2: `source_analytics.duration_waprice_days` (MOEX DURATIONWAPRICE), `yield_last_coupon_pct` (yields endpoint, else the history row), `icpi`, `ir`, `bei`, `cbr` (MOEX yields fields verbatim, not interpreted by the hub) |
 | `bond_quotes_intraday` | BondQuote (intraday) | latest stored quote per (secid, board) on the business date; empty in EOD cuts |
 | `curve_quote_sets` | CurveQuoteSet | latest snapshot per (source, dataset) fetched on the business date; `labels`: `mid_only`, `market_closed`, `source_clock_not_on_business_date`. `coverage.required_without_any_source` lists `ruonia_ois` / `key_rate_swap` when no source delivered it on the date (the dataset is then `stale`) |
 | `zcyc_params` | ZcycParams | EOD cuts: the end-of-day publication (else the latest, flagged stale); intraday: the latest |
-| `fixings` | Fixing | `md.fixing` and the RUSFAR family from `md.index_eod` (`origin`) |
+| `fixings` | Fixing | `md.fixing` and the RUSFAR family from `md.index_eod` (`origin`). 1.2: RUSFAR rates (`RUSFAR`, `RUSFAR1W`, `RUSFAR2W`, `RUSFAR1M`, `RUSFAR3M`, `RUSFARCNY`, `RUSFARCN1W` and the 18:00 / compound variants `RUSFARRT`, `RUSFAR1WRT`, `RUSFAR2WRT`, `RUSFAR1MRT`, `RUSFAR3MRT`, `RUSFARCNRT`, `RUSFARC1WR`, `RUSFARN`, `RUSFAR1WN`, `RUSFAR2WN`, `RUSFAR1MN`, `RUSFAR3MN`, `RUSFARCNN`, `RUSFARC1WN`) `unit = pct`, `RUSFARIND` `unit = index`, others excluded; `hub_ingested_at` = when the hub first stored the published value (`md.fixing.ingested_at`; `md.index_eod`: `updated_at`, else `ingested_at`), UTC — not a publication time: `published_at` stays `null` unless the source states one |
 | `fx_rates` | FxRate | RUB per 1 unit: `cbr_official`, `moex_eod` (raw price, `quote_units`, exact per-unit value), `moex_indicative_14` / `_19` |
 | `cross_rates` | CrossRate | ECB, units of `ccy` per 1 EUR |
 | `cbr_meetings` | CbrMeeting | |

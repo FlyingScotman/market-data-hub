@@ -4,6 +4,11 @@
 > use [ROADMAP.md](../ROADMAP.md), updated 19 October 2026. Earlier "Remaining steps" and
 > source-access assumptions below may have been superseded; recheck before acting.
 
+> **2026-10-21 (WEB-15):** history read API `/v1/history/*`, contract `market_snapshot/1.2`,
+> dataset-level curve gaps, `eod_final` input readiness and auto-correction, calendars to 2037 on
+> branch `claude/hub-tdm-history-1-2` (intended release 0.2.0). Details and remaining work:
+> [ROADMAP.md](../ROADMAP.md) WEB-15, [deploy/UPGRADE_TO_0.2.0.md](../deploy/UPGRADE_TO_0.2.0.md).
+
 ## Decisions (owner)
 - GitHub: FlyingScotman/market-data-hub (public). Release defaults point to this repository;
   GitHub release artifacts contain code only. Production HTTPS is marketdatahub.cc behind host nginx.

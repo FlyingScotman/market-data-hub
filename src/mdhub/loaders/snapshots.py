@@ -9,29 +9,70 @@ Jobs (names fixed by :data:`mdhub.schedule.KNOWN_JOBS`; cut times from settings,
   ``eod_final`` (next morning, D = previous business day), ``intraday`` (every
   ``MDHUB_SNAPSHOT_INTRADAY_MINUTES`` inside ``MDHUB_SNAPSHOT_INTRADAY_WINDOW``).
 
+* ``snapshot_rebuild`` (not scheduled; the backfill job of dataset ``snapshot_eod_final``) -
+  rebuilds the ``eod_final`` cuts of ``date_from..date_to`` that are already published, as
+  known now: unchanged content publishes nothing, different content publishes a correction
+  (``supersedes``). Queued by the backfill worker after a backfill run that changed inputs of
+  such a day (``MDHUB_SNAPSHOT_AUTOCORRECT``, :mod:`mdhub.snapshot.readiness`).
+
 Parameters: ``day`` (explicit business date), ``days_back`` (business-day offsets, defaults
 per mode), ``cut`` (nominal cut time ``HH:MM`` MSK on the business date, ``eod_final`` on the
 next business day; default: the configured time of the cut type, ``intraday`` / ``change``:
 the start minute of the run), ``known_at`` (replay: build as known at that instant; default:
-now). A rebuild of a cut with different content publishes a correction that supersedes the
-earlier snapshot.
+now), ``wait_minutes`` (``eod_final`` only: how long to wait for the final ``bonds_eod`` /
+``zcyc`` runs of the day; default ``MDHUB_SNAPSHOT_EOD_FINAL_WAIT_MINUTES``; no wait for a
+replay with ``known_at``). A rebuild of a cut with different content publishes a correction
+that supersedes the earlier snapshot.
 """
 
 from __future__ import annotations
 
+import time as _time
+from collections.abc import Callable
 from datetime import date, datetime, time
 from typing import Any, Final
 
 from mdhub.config import parse_hhmm
 from mdhub.core.timeutil import MSK, add_business_days, utc_now
 from mdhub.core.upsert import UpsertResult
+from mdhub.datasets import DatasetSpec, register_dataset
 from mdhub.jobs import JobContext, JobParamError, job
+from mdhub.loaders.bonds_eod import resolve_trade_dates
+from mdhub.snapshot.readiness import (
+    EOD_FINAL_DATASET,
+    InputRule,
+    eod_final_cuts,
+    missing_eod_final_inputs,
+)
 from mdhub.snapshot.runner import publish_market_snapshot, publish_static_snapshot
 from mdhub.snapshot.static import BOND_CALENDAR
 
-__all__ = ["snapshot_market", "snapshot_static"]
+__all__ = ["EOD_FINAL_DATASET", "snapshot_market", "snapshot_rebuild", "snapshot_static"]
 
 MARKET_MODES: Final = {"eod_preliminary": [0], "eod_final": [1], "intraday": [0]}
+INPUT_POLL_S: Final = 30.0
+"""Re-check interval while ``eod_final`` waits for its inputs."""
+
+register_dataset(
+    DatasetSpec(
+        name=EOD_FINAL_DATASET,
+        table="ops.published_snapshot",
+        date_column="business_date",
+        calendar=BOND_CALENDAR,
+        # freshness only: a missing eod_final is not built automatically (owner decision, HR5)
+        frequency="event",
+        max_lag_days=4,
+        backfill_job="snapshot_rebuild",
+        where="kind = 'market' AND cut_type = 'eod_final'",
+        # one rebuild (static + market build, schema validation) takes up to ~1 minute
+        max_task_days=5,
+        description="Published eod_final market cuts; backfill = rebuild of published cuts",
+    )
+)
+
+# indirection for tests (no real sleeping)
+_sleep: Callable[[float], None] = _time.sleep
+_clock: Callable[[], float] = _time.monotonic
 
 
 def _known_at(known_at: datetime | None) -> datetime:
@@ -64,6 +105,29 @@ def _cut_ts(
     if cut_type == "eod_final":
         day = add_business_days(day, 1, lambda d: ctx.calendar(d, BOND_CALENDAR))
     return datetime.combine(day, time(h, m), tzinfo=MSK)
+
+
+def _wait_for_inputs(ctx: JobContext, day: date, wait_minutes: int) -> list[InputRule]:
+    """Wait up to ``wait_minutes`` until the final inputs of ``day`` are loaded; returns the
+    inputs still missing (:mod:`mdhub.snapshot.readiness`)."""
+
+    def is_bday(d: date) -> bool:
+        return ctx.calendar(d, BOND_CALENDAR)
+
+    deadline = _clock() + wait_minutes * 60
+    while True:
+        with ctx.connection() as conn:
+            missing = missing_eod_final_inputs(conn, day, is_bday)
+        remaining = deadline - _clock()
+        if not missing or remaining <= 0:
+            return missing
+        ctx.logger.info(
+            "eod_final %s: waiting for %s (%.0f s left)",
+            day,
+            ", ".join(m.job for m in missing),
+            remaining,
+        )
+        _sleep(min(INPUT_POLL_S, remaining))
 
 
 def _result(res: Any) -> dict[str, Any]:
@@ -119,10 +183,13 @@ def snapshot_market(
     day: date | None = None,
     cut: str | None = None,
     known_at: datetime | None = None,
+    wait_minutes: int | None = None,
 ) -> dict[str, Any]:
     """Publish the market cut ``mode`` for business date ``day`` (or ``days_back``)."""
     if mode not in MARKET_MODES:
         raise JobParamError(f"unknown snapshot_market mode {mode!r} ({', '.join(MARKET_MODES)})")
+    if wait_minutes is not None and wait_minutes < 0:
+        raise JobParamError("wait_minutes must be >= 0")
     ka = _known_at(known_at)
     if day is None:
         today = ka.astimezone(MSK).date() if known_at is not None else ctx.today()
@@ -131,6 +198,33 @@ def snapshot_market(
             today=today,
             calendar=BOND_CALENDAR,
         )[0]
+    missing: list[InputRule] = []
+    waited = 0
+    run_day = ka.astimezone(MSK).date() if known_at is not None else ctx.today()
+    live = day >= ctx.business_dates([1], today=run_day, calendar=BOND_CALENDAR)[0]
+    if mode == "eod_final" and live:
+        # only the regular cut of the previous business day waits / is checked: an older day
+        # is a rebuild whose inputs may predate the job log (legacy imports)
+        if known_at is None:
+            waited = (
+                ctx.settings.snapshot_eod_final_wait_minutes
+                if wait_minutes is None
+                else wait_minutes
+            )
+            missing = _wait_for_inputs(ctx, day, waited)
+            ka = utc_now()  # build as known after the wait
+        else:
+            with ctx.connection() as conn:
+                missing = missing_eod_final_inputs(
+                    conn, day, lambda d: ctx.calendar(d, BOND_CALENDAR), until=ka
+                )
+    extra_stale = {
+        m.dataset: [
+            f"input not ready: no successful final {m.job} run for {day.isoformat()} finished "
+            f"by known_at (waited {waited} min)"
+        ]
+        for m in missing
+    }
     cut_ts = _cut_ts(ctx, mode, day, cut, ka)
     out = publish_market_snapshot(
         ctx.db,
@@ -139,7 +233,12 @@ def snapshot_market(
         cut_ts=cut_ts,
         known_at=ka,
         run_id=ctx.run.id,
+        extra_stale=extra_stale,
     )
+    if missing:
+        ctx.run.mark_partial(
+            f"eod_final {day} published without final inputs: " + ", ".join(m.job for m in missing)
+        )
     ctx.logger.info(
         "market snapshot %s %s: %s %s (static %s: %s)",
         mode,
@@ -151,4 +250,64 @@ def snapshot_market(
     )
     published = int(out.market.status == "published") + int(out.static.status == "published")
     ctx.run.add_counts(UpsertResult(inserted=published, unchanged=2 - published))
-    return {"market": _result(out.market), "static": _result(out.static)}
+    return {
+        "market": _result(out.market),
+        "static": _result(out.static),
+        "inputs_missing": [m.job for m in missing],
+    }
+
+
+@job("snapshot_rebuild", "Rebuild published eod_final cuts of a date range (corrections)")
+def snapshot_rebuild(
+    ctx: JobContext,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    day: date | None = None,
+) -> dict[str, Any]:
+    """Rebuild, as known now, every published ``eod_final`` cut of the business dates in the
+    range; a cut whose content is unchanged publishes nothing, a changed one publishes a
+    correction that supersedes it. Days without a published ``eod_final`` are not built (a
+    missing cut is an owner decision, ``mdhub run snapshot_market -p mode=eod_final -p day=``)."""
+    dates = resolve_trade_dates(
+        ctx,
+        days_back=None,
+        default_days_back=[1],
+        day=day,
+        date_from=date_from,
+        date_to=date_to,
+        calendar=BOND_CALENDAR,
+    )
+    if not dates:
+        ctx.run.mark_skipped("no business dates in the range")
+        return {}
+    with ctx.connection() as conn:
+        cuts = eod_final_cuts(conn, min(dates), max(dates))
+    wanted = set(dates)
+    results: dict[str, Any] = {
+        d.isoformat(): {"status": "no_eod_final"} for d in dates if d not in {c[0] for c in cuts}
+    }
+    corrected = unchanged = 0
+    for d, cut_ts in cuts:
+        if d not in wanted:
+            continue
+        ka = utc_now()
+        out = publish_market_snapshot(
+            ctx.db,
+            cut_type="eod_final",
+            business_date=d,
+            cut_ts=cut_ts,  # the published cut: a changed build supersedes it
+            known_at=ka,
+            run_id=ctx.run.id,
+        )
+        results[f"{d.isoformat()} {cut_ts.isoformat()}"] = {
+            "market": _result(out.market),
+            "static": _result(out.static),
+        }
+        if out.market.status == "published":
+            corrected += 1
+        else:
+            unchanged += 1
+        ctx.logger.info("eod_final %s rebuilt: %s %s", d, out.market.id, out.market.status)
+    ctx.run.add_counts(UpsertResult(inserted=corrected, unchanged=unchanged))
+    return results

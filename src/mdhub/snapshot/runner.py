@@ -10,6 +10,7 @@ snapshot whose instruments are exactly the universe its quotes were filtered by.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -67,9 +68,11 @@ def publish_market_snapshot(
     run_id: int | None = None,
     params: MarketParams | None = None,
     matured_lookback_days: int = MATURED_LOOKBACK_DAYS,
+    extra_stale: Mapping[str, Sequence[str]] | None = None,
 ) -> MarketOutcome:
     """Build and publish one market cut (plus its static snapshot when the static data
-    changed since the last static snapshot with the same content)."""
+    changed since the last static snapshot with the same content). ``extra_stale``: stale
+    reasons per dataset added to the manifest (:func:`mdhub.snapshot.market.build_market`)."""
     static_date = known_at.astimezone(MSK).date()
     static_cut = _static_cut("change", static_date, cut_ts, known_at)
     market_cut = Cut("market", cut_type, business_date, cut_ts, known_at)
@@ -93,7 +96,9 @@ def publish_market_snapshot(
             matured_lookback_days=matured_lookback_days,
             quoted_secids=quoted_secids,
         )
-        market_build = build_market(conn, cut=market_cut, static=static_build, params=params)
+        market_build = build_market(
+            conn, cut=market_cut, static=static_build, params=params, extra_stale=extra_stale
+        )
     with db.connection() as conn:
         static_res = ensure_static(conn, static_build, run_id=run_id)
         market_build.static_snapshot_id = static_res.id  # bound once the static is stored

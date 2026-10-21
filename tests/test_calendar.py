@@ -60,6 +60,53 @@ def test_curated_file_is_valid() -> None:
     assert years[("MOEX_STOCK", 2027)].source == "curated_unverified"
 
 
+_LABOUR_CODE_HOLIDAYS = [(1, d) for d in range(1, 9)] + [
+    (2, 23),
+    (3, 8),
+    (5, 1),
+    (5, 9),
+    (6, 12),
+    (11, 4),
+]
+_MOEX_CLOSED = [(1, 1), (1, 2), (1, 7), (2, 23), (3, 8), (5, 1), (5, 9), (6, 12), (11, 4), (12, 31)]
+
+
+def _labour_code_rule(year: int) -> set[date]:
+    """Art. 112 only: weekday holidays, plus a weekend holiday (other than Jan 1-6, 8) moved to
+    the next working day (no Government decree)."""
+    hol = [date(year, m, d) for m, d in _LABOUR_CODE_HOLIDAYS]
+    out = {h for h in hol if h.weekday() < 5}
+    for h in sorted(hol):
+        if h.weekday() >= 5 and not (h.month == 1 and h.day != 7):
+            x = h + timedelta(days=1)
+            while x.weekday() >= 5 or x in hol or x in out:
+                x += timedelta(days=1)
+            out.add(x)
+    return out
+
+
+def test_provisional_calendars_to_2037_follow_their_rules() -> None:
+    """2028-2037 are provisional (curated_unverified): RU_PRODUCTION = the Labour Code rule
+    (decree transfers unknown), MOEX = the MOEX practice rule; the rules reproduce the
+    verified years (2026/27 decree days come on top)."""
+    years = {(y.calendar, y.year): y for y in cal.load_curated().years}
+    for y in (2026, 2027):
+        assert _labour_code_rule(y) <= years[("RU_PRODUCTION", y)].non_working
+    assert {date(2027, m, d) for m, d in _MOEX_CLOSED if date(2027, m, d).weekday() < 5} == years[
+        ("MOEX_STOCK", 2027)
+    ].non_working
+    for year in range(2028, 2038):
+        ru = years[("RU_PRODUCTION", year)]
+        assert ru.source == "curated_unverified" and ru.non_working == _labour_code_rule(year)
+        assert ru.working_weekends == frozenset()
+        moex = {date(year, m, d) for m, d in _MOEX_CLOSED if date(year, m, d).weekday() < 5}
+        for name in ("MOEX_STOCK", "MOEX_FX", "MOEX_FORTS"):
+            entry = years[(name, year)]
+            assert entry.source == "curated_unverified" and entry.non_working == moex
+    assert max(y.year for y in years.values()) == 2037
+    assert _labour_code_rule(2029) >= {date(2029, 1, 9), date(2029, 11, 5)}  # Jan 7 / Nov 4 Sun
+
+
 @pytest.mark.parametrize(
     "mutate",
     [
@@ -506,7 +553,8 @@ def test_target_calendar_rule_only(
     conn: Conn,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """TARGET comes from the rule alone (2002 .. end of next year); ECB rates only cross-check
+    """TARGET comes from the rule alone (2002 .. 2037, or the end of next year if later); ECB
+    rates only cross-check
     it - a failed ECB load never turns a day into a holiday."""
     monkeypatch.setattr("mdhub.jobs.msk_today", lambda: date(2026, 4, 15))
     holidays = {date(2026, 4, 3), date(2026, 4, 6)}  # Good Friday, Easter Monday
@@ -520,15 +568,15 @@ def test_target_calendar_rule_only(
         "(WHERE NOT is_business_day AND extract(isodow FROM day) < 6) AS holidays "
         "FROM ref.calendar_day WHERE calendar = 'TARGET' GROUP BY source"
     ).fetchall()
-    n_days = (date(2027, 12, 31) - date(2002, 1, 1)).days + 1
+    n_days = (date(2037, 12, 31) - date(2002, 1, 1)).days + 1
     weekday_holidays = sum(
-        1 for y in range(2002, 2028) for d in cal.target_closing_days(y) if d.weekday() < 5
+        1 for y in range(2002, 2038) for d in cal.target_closing_days(y) if d.weekday() < 5
     )
     assert rows == [
         {
             "source": cal.TARGET_RULE_SOURCE,
             "lo": date(2002, 1, 1),
-            "hi": date(2027, 12, 31),
+            "hi": cal.TARGET_RULE_END,
             "n": n_days,
             "holidays": weekday_holidays,
         }
@@ -598,9 +646,9 @@ def test_target_calendar_respects_since(
         "AND source = 'rule_target'"
     )
     cal.seed_calendar(settings, db, since=date(2026, 4, 1), http_factory=_http_factory)
-    assert conn.execute(sql).fetchone() == {"lo": date(2026, 4, 1), "hi": date(2027, 12, 31)}
+    assert conn.execute(sql).fetchone() == {"lo": date(2026, 4, 1), "hi": date(2037, 12, 31)}
     cal.seed_calendar(settings, db, since=date(1999, 1, 4), http_factory=_http_factory)
-    assert conn.execute(sql).fetchone() == {"lo": date(2002, 1, 1), "hi": date(2027, 12, 31)}
+    assert conn.execute(sql).fetchone() == {"lo": date(2002, 1, 1), "hi": date(2037, 12, 31)}
 
 
 def test_ecb_fx_gap_scan_follows_target(

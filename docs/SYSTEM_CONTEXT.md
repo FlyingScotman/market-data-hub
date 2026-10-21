@@ -45,6 +45,15 @@ and [DESIGN.md](DESIGN.md) §11); 7–10 are open.
 
 The TDM CSV export (`/v1/export/tdm`) stays for compatibility until the backend reads snapshots, then it is retired.
 
+**History (WEB-15, 21 October 2026).** For history over many dates the hub serves the columnar
+read API `/v1/history/*` (scope `read`, [HISTORY_API.md](HISTORY_API.md)): bonds, curves (the
+`eod_final` selection rule), KBD, fixings and FX, with `known_at` replay, cursors and ETag
+revalidation. It reads the VPS database directly, so it is a VPS endpoint, not part of the
+replicated snapshot path of ADR-001; immutable history packages for the inside replica (review
+§7.1, `kind = history`) are not built yet. Contract `market_snapshot/1.2` adds the MOEX linker / WAP
+analytics, `Fixing.hub_ingested_at` and explicit RUSFAR units; the interface catalogue in
+`trading_desk_monitor/docs/architecture/README.md` still needs the 1.2 entry.
+
 ### What the hub ships for items 1–6 (M1)
 
 | # | Where |

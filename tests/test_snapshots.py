@@ -519,10 +519,24 @@ def test_market_datasets_content(seeded: Conn, db: Database) -> None:
     assert data["bond_quotes_intraday"] == []
 
 
+def _final_inputs_loaded(conn: Conn) -> None:
+    """The 07:10 / 07:15 final zcyc and bonds_eod runs of D+1 (eod_final input readiness,
+    mdhub.snapshot.readiness): without them the eod_final job waits for its inputs."""
+    started = datetime(2026, 10, 16, 7, 10, tzinfo=MSK)
+    for job_name in ("zcyc", "bonds_eod"):
+        conn.execute(
+            "INSERT INTO ops.job_run (job, status, started_at, finished_at, params) VALUES"
+            " (%s, 'succeeded', %s, %s, '{\"mode\": \"final\"}')",
+            (job_name, started, started + timedelta(minutes=2)),
+        )
+    conn.commit()
+
+
 def test_market_snapshot_job_and_static_job(
     seeded: Conn, settings: Settings, db: Database, today_is: Any
 ) -> None:
     today_is(date(2026, 10, 16))
+    _final_inputs_loaded(seeded)
     out = run_job(
         "snapshot_market",
         {"mode": "eod_final", "cut": "08:00"},
@@ -550,6 +564,7 @@ def test_eod_final_rebuild_on_a_later_day_corrects_the_same_cut(
     """cut_ts depends on the business date, not the run day: a later rebuild of eod_final
     for D supersedes the scheduled one (or publishes nothing when the content is the same)."""
     today_is(date(2026, 10, 16))
+    _final_inputs_loaded(seeded)
     first = run_job(
         "snapshot_market", {"mode": "eod_final", "cut": "08:00"}, settings=settings, db=db
     ).result["market"]
