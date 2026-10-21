@@ -4,6 +4,13 @@
 > use [ROADMAP.md](../ROADMAP.md), updated 19 October 2026. Earlier "Remaining steps" and
 > source-access assumptions below may have been superseded; recheck before acting.
 
+> **2026-10-21 (WEB-17):** credit ratings from the agencies' public disclosure (НКР, НРА, Эксперт РА; job
+> `ratings_agencies`), agency-industry sectors, curated issue terms with evidence (job `bond_terms_curated`),
+> replacement-bond flag, `issue_size_moex`, contract `market_snapshot/1.3` (static part) on branch
+> `claude/hub-static-ratings-terms` (intended release 0.3.0 together with PR #6). АКРА (TLS chain), ОКВЭД (FNS
+> unreachable) and issue documents (e-disclosure/НРД) not loaded. Details: [ROADMAP.md](../ROADMAP.md) WEB-17,
+> [deploy/UPGRADE_TO_0.3.0_RATINGS_TERMS.md](../deploy/UPGRADE_TO_0.3.0_RATINGS_TERMS.md).
+
 > **2026-10-21 (WEB-15):** history read API `/v1/history/*`, contract `market_snapshot/1.2`,
 > dataset-level curve gaps, `eod_final` input readiness and auto-correction, calendars to 2037 on
 > branch `claude/hub-tdm-history-1-2` (intended release 0.2.0). Details and remaining work:
