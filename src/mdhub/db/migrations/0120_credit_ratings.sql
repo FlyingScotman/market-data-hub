@@ -173,8 +173,8 @@ CALL ops.enable_history('ref.issuer_rating',
 
 -- ------------------------------------------------------- ref.issuer.sector_source 'agency'
 -- Sector from the industry a rating agency publishes for the rated issuer (NKR / NRA / RA
--- Expert, mapped by mdhub/data/sector_map.json agency_industries), after okved and the bond
--- class rules, before the name rules (mdhub.loaders._issuer_rules.assign_sector).
+-- Expert, mapped by mdhub/data/sector_map.json agency_industry_rules): fills the gaps the
+-- curated / group / okved / class / name rules leave (mdhub.loaders._issuer_rules.assign_sector).
 ALTER TABLE ref.issuer DROP CONSTRAINT issuer_sector_source_chk;
 ALTER TABLE ref.issuer ADD CONSTRAINT issuer_sector_source_chk
     CHECK (sector_source IN ('okved', 'curated', 'group', 'rule', 'agency'));

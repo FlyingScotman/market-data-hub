@@ -330,7 +330,7 @@ def test_issuers_static_agency_industry_sector(
     respx_mock: respx.Router, conn: Conn, settings: Settings, db: Database
 ) -> None:
     """WEB-18: the industry a rating agency publishes (ref.agency_rating by INN) assigns the
-    sector after OKVED and the class rules, before the name rules; curated still wins."""
+    sector only where no earlier rule does: the name rule and curated entries keep theirs."""
     _seed(conn, _today())
     conn.execute(
         """
@@ -349,7 +349,7 @@ def test_issuers_static_agency_industry_sector(
         r["issuer_id"]: (r["sector"], r["sector_source"])
         for r in conn.execute("SELECT * FROM ref.issuer").fetchall()
     }
-    assert rows[1039] == ("chemicals", "agency")  # beats the name rule (oil_gas)
+    assert rows[1039] == ("oil_gas", "rule")  # the name rule keeps its sector
     assert rows[712] == ("transport", "curated")  # curated beats the agency
 
 

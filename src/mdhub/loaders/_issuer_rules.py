@@ -142,14 +142,14 @@ def assign_sector(
             hit = classes <= rule_classes if when == "all" else bool(classes & rule_classes)
             if hit:
                 return SectorResult(sector, "rule", f"class:{sector}")
-    by_agency = agency_sector(agency_industries, m)
-    if by_agency is not None:
-        return SectorResult(by_agency[0], "agency", by_agency[1])
     text = " | ".join(t for t in (name, short_name) if t)
     if text:
         for pattern, sector in m.name_rules:
             if pattern.search(text):
                 return SectorResult(sector, "rule", f"name_rule:{sector}")
+    by_agency = agency_sector(agency_industries, m)
+    if by_agency is not None:
+        return SectorResult(by_agency[0], "agency", by_agency[1])
     if group_sector is not None:
         return SectorResult(group_sector, "group", f"group_{group_relation}")
     return None

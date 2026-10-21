@@ -310,12 +310,18 @@ def test_agency_sector_rules() -> None:
     assert rules.agency_sector([("nkr", "Банки"), nra_bank], m) is not None
     assert rules.agency_sector([("nkr", "Банки"), ("raexpert", "черная металлургия")], m) is None
     assert rules.agency_sector([("nkr", "ИТ и телекоммуникации")], m) is None  # ambiguous
+    assert rules.agency_sector([("nkr", "Торговля")], m) is None  # distributors of every kind
     res = rules.assign_sector(
         inn="1", name="ООО Ромашка", short_name=None, bond_classes=["corporate"],
         agency_industries=[("raexpert", "черная металлургия")],
     )  # fmt: skip
     assert res is not None and (res.sector, res.source) == ("metals_mining", "agency")
-    # class rules come first; okved before both
+    # gap filler only: a name rule or a class rule keeps its sector
+    res = rules.assign_sector(
+        inn="1", name="ПАО Транснефть", short_name=None, bond_classes=["corporate"],
+        agency_industries=[("nkr", "Транспорт и логистика")],
+    )  # fmt: skip
+    assert res is not None and (res.sector, res.source) == ("oil_gas", "rule")
     res = rules.assign_sector(
         inn="1", name="Амурская область", short_name=None, bond_classes=["subfederal"],
         agency_industries=[("nkr", "Банки")],
