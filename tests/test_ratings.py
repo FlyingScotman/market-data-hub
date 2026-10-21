@@ -483,6 +483,16 @@ def test_ratings_agencies_one_agency_failing_is_partial(
     assert n is not None and n["n"] > 0
 
 
+def test_rating_datasets_registered_for_freshness() -> None:
+    from mdhub.datasets import get_dataset
+
+    for agency in ("nkr", "nra", "raexpert"):
+        spec = get_dataset(f"ratings_{agency}")
+        assert (spec.table, spec.frequency, spec.where) == (
+            "ref.rating_action", "event", f"agency = '{agency}'",
+        )  # fmt: skip
+
+
 def test_ratings_agencies_rejects_unknown_agency(settings: Settings, db: Database) -> None:
     with pytest.raises(ValueError, match="unknown agencies"):
         _run(settings, db, agencies=["acra"])

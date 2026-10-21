@@ -45,6 +45,7 @@ from mdhub.core.errors import FormatDriftError
 from mdhub.core.http import HttpClient, HttpError, HttpStatusError
 from mdhub.core.timeutil import utc_now
 from mdhub.core.upsert import touch_last_seen, upsert_rows
+from mdhub.datasets import DatasetSpec, register_dataset
 from mdhub.jobs import JobContext, job
 from mdhub.sources import nkr, nra, raexpert
 from mdhub.sources.ratings_common import AGENCY_NAMES, ActionRecord, RatingRecord
@@ -52,6 +53,22 @@ from mdhub.sources.ratings_common import AGENCY_NAMES, ActionRecord, RatingRecor
 __all__ = ["AGENCIES", "map_ratings", "rating_coverage", "ratings_agencies"]
 
 AGENCIES: Final = ("nkr", "nra", "raexpert")
+
+for _agency in AGENCIES:
+    # freshness only: each agency publishes rating actions every few business days, so a
+    # latest action older than 10 days means the loader (or the source) stopped
+    register_dataset(
+        DatasetSpec(
+            name=f"ratings_{_agency}",
+            table="ref.rating_action",
+            date_column="action_date",
+            calendar="MOEX_STOCK",
+            frequency="event",
+            max_lag_days=10,
+            where=f"agency = '{_agency}'",
+            description=f"Credit rating actions of {AGENCY_NAMES[_agency]} (job ratings_agencies)",
+        )
+    )
 STATE_KEY: Final = ["agency", "object_kind", "object_key", "rating_type", "scale"]
 ACTION_KEY: Final = [*STATE_KEY, "action_date", "action_ref"]
 
