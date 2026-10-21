@@ -1,4 +1,4 @@
--- Credit ratings from the public disclosure of the Russian rating agencies (WEB-16, review
+-- Credit ratings from the public disclosure of the Russian rating agencies (WEB-17, review
 -- P1-1; TDM brief R9 HS5): job ratings_agencies.
 --
 --   ref.agency_rating   current state per rated object as the agency publishes it (verbatim
@@ -27,7 +27,7 @@ INSERT INTO ops.source (code, name, base_url, licence_note) VALUES
      'agency''s consent; bulk export / API is a paid subscription: internal desk use only'),
     ('acra', 'АКРА (АО)', 'https://www.acra-ratings.ru',
      'Public rating disclosure. Not loaded yet: the site''s TLS chain omits its intermediate '
-     'certificate (GlobalSign GCC R46 OV TLS CA 2025), see ROADMAP WEB-16')
+     'certificate (GlobalSign GCC R46 OV TLS CA 2025), see ROADMAP WEB-17')
 ON CONFLICT (code) DO NOTHING;
 
 -- ---------------------------------------------------------------------- ref.agency_rating
@@ -162,7 +162,7 @@ COMMENT ON TABLE ref.bond_rating IS
     'raexpert; job ratings_agencies). Changes in ops.row_history';
 
 -- ------------------------------------------------------------------------------ history
--- (as-known-at readers: 0530, after ops.create_known_at_function of 0500; job sources: 0612)
+-- (as-known-at readers: 0540 / 0541, after ops.create_known_at_function of 0500; job sources: 0612)
 CALL ops.enable_history('ref.agency_rating',
                         ARRAY['agency', 'object_kind', 'object_key', 'rating_type', 'scale']);
 CALL ops.enable_history('ref.rating_action',

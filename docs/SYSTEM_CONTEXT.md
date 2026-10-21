@@ -54,6 +54,14 @@ replicated snapshot path of ADR-001; immutable history packages for the inside r
 analytics, `Fixing.hub_ingested_at` and explicit RUSFAR units; the interface catalogue in
 `trading_desk_monitor/docs/architecture/README.md` still needs the 1.2 entry.
 
+**Static terms and ratings (WEB-17, 21 October 2026).** Contract `market_snapshot/1.3` (additive):
+credit ratings from the agencies' public disclosure (НКР, НРА, Эксперт РА; issue scope by ISIN,
+issuer scope by INN) with a normalized `grade`, the replacement-bond flag with its basis
+(`document` / `name_rule`), `issue_size_moex` (MOEX count, not the amount outstanding), document
+evidence of curated floater conventions / calls / offers and `sector_source = agency`. The
+interface catalogue in `trading_desk_monitor/docs/architecture/README.md` needs the 1.3 entry too.
+Agency data is for internal desk use (the agencies' terms forbid redistribution).
+
 ### What the hub ships for items 1–6 (M1)
 
 | # | Where |

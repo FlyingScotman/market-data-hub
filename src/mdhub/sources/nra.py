@@ -1,4 +1,4 @@
-"""НРА (Национальное Рейтинговое Агентство, www.ra-national.ru): rating actions (WEB-16).
+"""НРА (Национальное Рейтинговое Агентство, www.ra-national.ru): rating actions (WEB-17).
 
 The ratings page (``/ratings/``) links an Excel export of every rating action published since
 2020 ("Выгрузить в Excel", a WP All Export public link carrying a ``security_key`` that the

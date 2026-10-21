@@ -51,7 +51,7 @@ class SectorMap:
     class_rules: tuple[tuple[frozenset[str], str, str], ...]
     name_rules: tuple[tuple[re.Pattern[str], str], ...]
     agency_rules: tuple[tuple[str, re.Pattern[str], str], ...] = ()
-    """``(agency, pattern, sector)`` on the industry an agency publishes (WEB-16)."""
+    """``(agency, pattern, sector)`` on the industry an agency publishes (WEB-17)."""
 
 
 def _load(doc: Mapping[str, Any]) -> SectorMap:

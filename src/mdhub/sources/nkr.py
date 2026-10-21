@@ -1,4 +1,4 @@
-"""НКР (Национальные Кредитные Рейтинги, www.ratings.ru): public rating lists (WEB-16).
+"""НКР (Национальные Кредитные Рейтинги, www.ratings.ru): public rating lists (WEB-17).
 
 The agency's rating pages offer two Excel exports ("Выгрузить в Excel"), each the complete
 list of its credit ratings including withdrawn ones:

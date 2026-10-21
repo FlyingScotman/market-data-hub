@@ -1,4 +1,4 @@
-"""Issue terms curated from issue documents, with evidence (WEB-16; TDM brief R9 HS8 / HS9 /
+"""Issue terms curated from issue documents, with evidence (WEB-17; TDM brief R9 HS8 / HS9 /
 HS10, review P1-6 / P1-9): job ``bond_terms_curated`` (daily 06:55, after ``bonds_static``).
 
 Source: the versioned package file ``mdhub/data/bond_terms_curated.json`` (its

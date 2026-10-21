@@ -22,7 +22,7 @@
 5. **Sector** (HS3) of every issuer in scope from the versioned rules of
    ``mdhub/data/sector_map.json`` (:mod:`mdhub.loaders._issuer_rules`): ``sector`` and
    ``sector_source`` (``curated`` / ``group`` / ``okved`` / ``rule`` / ``agency``: the
-   industry a rating agency publishes for the issuer's INN, ``ref.agency_rating``, WEB-16);
+   industry a rating agency publishes for the issuer's INN, ``ref.agency_rating``, WEB-17);
    no rule -> NULL.
 
 A failing card is logged and the run ends ``partial``; the other cards are kept. Changes of

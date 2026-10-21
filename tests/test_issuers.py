@@ -329,7 +329,7 @@ def test_issuers_static_assigns_sectors(
 def test_issuers_static_agency_industry_sector(
     respx_mock: respx.Router, conn: Conn, settings: Settings, db: Database
 ) -> None:
-    """WEB-16: the industry a rating agency publishes (ref.agency_rating by INN) assigns the
+    """WEB-17: the industry a rating agency publishes (ref.agency_rating by INN) assigns the
     sector after OKVED and the class rules, before the name rules; curated still wins."""
     _seed(conn, _today())
     conn.execute(

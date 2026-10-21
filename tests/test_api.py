@@ -196,7 +196,7 @@ def test_bond_detail(seeded: TestClient) -> None:
     assert [s["source"] for s in b["formula"]["sources"]] == ["moex_iss"]
     assert [x["board"] for x in b["boards"]] == ["TQCB"]
     assert b["ratings"] == []
-    assert b["issuer_ratings"] == []  # WEB-16: agency issuer ratings of the bond's issuer
+    assert b["issuer_ratings"] == []  # WEB-17: agency issuer ratings of the bond's issuer
     assert seeded.get("/v1/bonds/NOPE", headers=AUTH).status_code == 404
     ofz = _json(seeded.get("/v1/bonds/SU26242RMFS0", headers=AUTH))["data"]
     assert [a["data_source"] for a in ofz["amortizations"]] == ["maturity"]

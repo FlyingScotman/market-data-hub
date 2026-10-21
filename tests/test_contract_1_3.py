@@ -1,4 +1,4 @@
-"""Market Snapshot Contract 1.3 (additive, WEB-16): agency ratings with issuer scope, grade,
+"""Market Snapshot Contract 1.3 (additive, WEB-17): agency ratings with issuer scope, grade,
 rating type, press release and mapping basis; replacement bonds (P1-6); ``issue_size_moex``
 (P1-10); documented floater conventions / calls / offers with their evidence (HS8-HS10); issuer
 ``sector_source = agency``.
