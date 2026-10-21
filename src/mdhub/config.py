@@ -195,6 +195,12 @@ class Settings(BaseSettings):
     enable_sdfi: bool = Field(
         default=False, validation_alias=AliasChoices("MDHUB_ENABLE_SDFI", "enable_sdfi")
     )
+    skip_sources: str | None = Field(
+        default=None, validation_alias=AliasChoices("MDHUB_SKIP_SOURCES", "skip_sources")
+    )
+    """Comma list of source codes the fallback chains of the reference-rate loaders do not try
+    (e.g. ``bundesbank,fred`` when ``mdhub probe-sources`` shows them geo-blocked from the
+    server): saves the timeouts of every run. The other loaders ignore it."""
     log_level: str = Field(
         default="INFO", validation_alias=AliasChoices("MDHUB_LOG_LEVEL", "log_level")
     )
@@ -409,6 +415,11 @@ class Settings(BaseSettings):
             m = _NAMED_TOKEN_RE.match(entry)
             out.append((m.group(1), m.group(2)) if m else (f"env:{i}", entry))
         return out
+
+    def skipped_sources(self) -> frozenset[str]:
+        """:attr:`skip_sources` as a set of source codes."""
+        raw = self.skip_sources or ""
+        return frozenset(s.strip() for s in raw.split(",") if s.strip())
 
     def api_token_list(self) -> list[str]:
         """Read-API bearer token values of ``MDHUB_API_TOKENS`` (names stripped)."""

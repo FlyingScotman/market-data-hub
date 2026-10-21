@@ -122,6 +122,14 @@ def _mock_sources(router: respx.MockRouter) -> dict[str, respx.Route]:
         "cbonds": router.post("https://ws2.cbonds.info/services/json/get_emissions/").respond(
             200, json={"items": [], "total": 0}
         ),
+        "ecb_data_portal": router.route(host="data-api.ecb.europa.eu").respond(200, text="KEY"),
+        "bundesbank": router.route(host="api.statistiken.bundesbank.de").respond(404),
+        "dbnomics": router.route(host="api.db.nomics.world").respond(200, json={}),
+        "fred": router.route(host="fred.stlouisfed.org").mock(
+            side_effect=httpx.ConnectError("blocked")
+        ),
+        "nyfed": router.route(host="markets.newyorkfed.org").respond(200, json={}),
+        "us_treasury": router.route(host="home.treasury.gov").respond(200, text="<feed/>"),
     }
 
 
@@ -156,6 +164,12 @@ def test_source_probe_job_records_every_source(
         "ratescalcs": (True, "ok", 200),
         "otc_monitor": (True, "not_configured", 401),  # reachable; no token to check
         "cbonds": (True, "ok", 200),
+        "ecb_data_portal": (True, "n/a", 200),
+        "bundesbank": (False, "n/a", 404),
+        "dbnomics": (True, "n/a", 200),
+        "fred": (False, "n/a", None),
+        "nyfed": (True, "n/a", 200),
+        "us_treasury": (True, "n/a", 200),
     }
     assert rows["ecb"]["error"].startswith("TransportFailure: ConnectTimeout")
     assert rows["rosstat"]["error"] == "HTTP 503"

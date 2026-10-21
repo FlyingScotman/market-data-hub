@@ -13,7 +13,15 @@ Validation (fail closed, :class:`FormatDriftError`): header years consecutive fr
 twelve month rows in order, every value in ``[90, 400]``, no hole except the not yet published
 months of the last year, and for every complete year the product of the monthly
 indices reproduces the Dec/Dec index within :data:`DEC_DEC_TOLERANCE` (catches a shifted
-column or row). ``rosstat.gov.ru`` omits the Russian Trusted Sub CA from its TLS chain;
+column or row).
+
+Release date: the price page lists each document with its update date
+(``<div class="document-list__item-info">37.05 Кб, 09.10.2026</div>`` after the link) and the
+workbook's sheet ``Содержание`` ends with ``Обновлено: 9 октября 2026 г.``
+(:func:`workbook_release_date`). That date is the publication of the **newest** month of the
+workbook; the release dates of older months are not published in machine-readable form.
+
+``rosstat.gov.ru`` omits the Russian Trusted Sub CA from its TLS chain;
 :func:`mdhub.core.http.build_ssl_context` bundles it.
 """
 
@@ -29,7 +37,7 @@ import httpx
 
 from mdhub.core.errors import FormatDriftError
 from mdhub.core.http import HttpClient
-from mdhub.sources.cbr import read_xlsx_rows
+from mdhub.sources.cbr import _RU_MONTHS, read_xlsx_rows
 
 __all__ = [
     "BASE_URL",
@@ -39,7 +47,9 @@ __all__ = [
     "CpiMonth",
     "fetch_cpi_workbook",
     "find_cpi_workbook",
+    "page_release_date",
     "parse_cpi_monthly",
+    "workbook_release_date",
 ]
 
 BASE_URL: Final = "https://rosstat.gov.ru"
@@ -164,8 +174,47 @@ def _check_dec_dec(
         )
 
 
-def fetch_cpi_workbook(http: HttpClient) -> tuple[str, httpx.Response]:
-    """``(workbook path, response)``: the price page, then the newest CPI workbook."""
+_PAGE_DATE_RE: Final = re.compile(
+    r'document-list__item-info">[^<]*?(\d{2})\.(\d{2})\.(\d{4})\s*</div>'
+)
+_UPDATED_RE: Final = re.compile(r"^(\d{1,2}) ([а-яё]+) (\d{4}) г\.?$", re.IGNORECASE)
+
+
+def page_release_date(page: str, path: str) -> date | None:
+    """Update date the price page states for the document ``path`` (``None``: not stated)."""
+    i = page.find(f'href="{path}"')
+    if i < 0:
+        return None
+    end = page.find('href="/storage/', i + len(path) + 7)
+    m = _PAGE_DATE_RE.search(page, i, end if end > 0 else len(page))
+    if m is None:
+        return None
+    try:
+        return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+    except ValueError:
+        raise FormatDriftError(f"Rosstat price page: bad date for {path}") from None
+
+
+def workbook_release_date(payload: bytes) -> date | None:
+    """``Обновлено:`` date of the workbook's ``Содержание`` sheet (``None``: not found)."""
+    try:
+        rows = read_xlsx_rows(payload, sheet="Содержание")
+    except FormatDriftError:
+        return None
+    for i, row in enumerate(rows):
+        if _cell(row, 0).casefold().startswith("обновлено"):
+            for later in rows[i : i + 2]:
+                for cell in later:
+                    m = _UPDATED_RE.match((cell or "").strip())
+                    month = _RU_MONTHS.get(m.group(2).casefold()) if m else None
+                    if m and month:
+                        return date(int(m.group(3)), month, int(m.group(1)))
+    return None
+
+
+def fetch_cpi_workbook(http: HttpClient) -> tuple[str, httpx.Response, date | None]:
+    """``(workbook path, response, release date stated on the price page)``: the price page,
+    then the newest CPI workbook."""
     page = http.get(f"{BASE_URL}{PRICE_PAGE_PATH}")
     path = find_cpi_workbook(page.text)
-    return path, http.get(f"{BASE_URL}{path}")
+    return path, http.get(f"{BASE_URL}{path}"), page_release_date(page.text, path)
