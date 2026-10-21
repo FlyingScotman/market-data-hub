@@ -26,6 +26,14 @@ a new snapshot with its quotes (mid recomputed as (bid+ask)/2; mid-only quotes k
 mid with bid/ask NULL). Without credentials a job ends ``skipped``.
 
 The sources are separate series and never merged (DESIGN §8 "Curve sources").
+
+Gap visibility (review §6.2): besides the per-source ``event`` datasets (freshness only), the
+curves every market cut requires (``ruonia_ois``, ``key_rate_swap``) are registered as
+dataset-level ``business_daily`` datasets ``curves_<dataset>``: a MOEX_STOCK business day
+without a stored snapshot from **any** source opens an ``ops.data_gap`` (``/v1/gaps``) and
+marks the dataset stale. There is no backfill job (OTC Monitor and Ratescalcs have no history
+endpoint), so such a gap stays ``open`` until a snapshot of that day is stored (e.g. a history
+import), which closes it as ``backfilled``.
 """
 
 from __future__ import annotations
@@ -48,7 +56,15 @@ from mdhub.jobs import JobContext, job
 from mdhub.sources import otc_monitor as otc
 from mdhub.sources import ratescalcs as src
 
-__all__ = ["DATASETS", "OTC_DATASETS", "store_curve", "swaps_otc_monitor", "swaps_ratescalcs"]
+__all__ = [
+    "CURVE_GAP_DATASETS",
+    "CURVE_GAP_SCAN_START",
+    "DATASETS",
+    "OTC_DATASETS",
+    "store_curve",
+    "swaps_otc_monitor",
+    "swaps_ratescalcs",
+]
 
 SOURCE: Final = "ratescalcs"
 DATASETS: Final = (
@@ -87,6 +103,33 @@ for _ds in OTC_DATASETS:
             max_lag_days=4,
             where=f"source = 'otc_monitor' AND dataset = '{_ds}'",
             description=f"OTC Monitor {_ds} snapshots (stored only when content changes)",
+        )
+    )
+
+CURVE_GAP_DATASETS: Final = ("ruonia_ois", "key_rate_swap")
+"""Curves every market cut requires (``mdhub.snapshot.market.REQUIRED_CURVE_DATASETS``)."""
+CURVE_GAP_SCAN_START: Final = date(2026, 1, 5)
+"""First day of the dataset-level gap scan: the first business day of the published
+``eod_final`` cuts. Older days come from closed history imports (andromeda, legacy) and are
+not re-checked."""
+
+for _ds in CURVE_GAP_DATASETS:
+    register_dataset(
+        DatasetSpec(
+            name=f"curves_{_ds}",
+            table="md.curve_snapshot",
+            date_column="snapshot_date",
+            calendar="MOEX_STOCK",
+            frequency="business_daily",
+            # the 08:30 quality run expects D-1 (today's first poll is at 09:00)
+            max_lag_days=1,
+            history_start=CURVE_GAP_SCAN_START,
+            min_rows_per_day=1,
+            where=f"dataset = '{_ds}'",
+            description=(
+                f"{_ds}: at least one stored snapshot from any source per MOEX_STOCK business "
+                "day (no backfill: the live sources have no history)"
+            ),
         )
     )
 
