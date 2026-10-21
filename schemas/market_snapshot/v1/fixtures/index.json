@@ -5,7 +5,7 @@
    "cut_type": "eod_final",
    "file": "market_eod_final.json",
    "kind": "market",
-   "snapshot_id": "9398bd1e0ed719e9ff0856dcdadc4491a1d91dea39780f425d2f713ff341e8f4"
+   "snapshot_id": "970b256e8d734856c6834a6c46adbdd2a2c42f1c12107e855ed879a3030ddec1"
   },
   "static_daily": {
    "business_date": "2026-10-15",
