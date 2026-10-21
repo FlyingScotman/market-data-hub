@@ -852,7 +852,7 @@
       }
     },
     "cross_rate": {
-      "description": "CrossRate (non-RUB, ECB reference rates); never mixed into RUB FX",
+      "description": "CrossRate (non-RUB); never mixed into RUB FX. kind ecb: ECB reference rates (base EUR, rate_date = TARGET day); cbr_cross: two CBR official RUB rates in force on rate_date (effective date), divided; moex_indicative_cross: two MOEX 19:00 indicative RUB rates of the trade date, divided; moex_cets: traded MOEX CETS cross outright (TOM) close per unit; fred_h10: Federal Reserve H.10 noon buying rate (via FRED). Kinds are separate series, never merged (1.3: kinds other than ecb, base_ccy other than EUR, source, labels)",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -864,16 +864,22 @@
       ],
       "properties": {
         "kind": {
-          "const": "ecb"
+          "enum": [
+            "ecb",
+            "cbr_cross",
+            "moex_indicative_cross",
+            "moex_cets",
+            "fred_h10"
+          ]
         },
         "base_ccy": {
-          "const": "EUR"
+          "$ref": "common.schema.json#/$defs/ccy"
         },
         "ccy": {
           "$ref": "common.schema.json#/$defs/ccy"
         },
         "rate_per_base": {
-          "description": "Units of ccy per 1 EUR",
+          "description": "Units of ccy per 1 base_ccy (derived kinds: 10 significant digits)",
           "allOf": [
             {
               "$ref": "common.schema.json#/$defs/decimal"
@@ -882,6 +888,13 @@
         },
         "rate_date": {
           "$ref": "common.schema.json#/$defs/date"
+        },
+        "source": {
+          "description": "Hub source code of the rows (ecb, ecb_data_portal, cbr, moex_iss, fred); 1.3",
+          "type": "string"
+        },
+        "labels": {
+          "$ref": "common.schema.json#/$defs/labels"
         }
       }
     },

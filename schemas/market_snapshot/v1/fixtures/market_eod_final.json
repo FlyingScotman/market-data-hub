@@ -1141,1219 +1141,1567 @@
     "base_ccy": "EUR",
     "ccy": "AUD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "1.611"
+    "rate_per_base": "1.611",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "BRL",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "5.6118"
+    "rate_per_base": "5.6118",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CAD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "1.5953"
+    "rate_per_base": "1.5953",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CHF",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "0.9326"
+    "rate_per_base": "0.9326",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CNY",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "7.4972"
+    "rate_per_base": "7.4972",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CZK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "24.403"
+    "rate_per_base": "24.403",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "DKK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "7.4739"
+    "rate_per_base": "7.4739",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "GBP",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "0.84698"
+    "rate_per_base": "0.84698",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "HKD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "8.7783"
+    "rate_per_base": "8.7783",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "HUF",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "366.25"
+    "rate_per_base": "366.25",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "IDR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "20045.31"
+    "rate_per_base": "20045.31",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "ILS",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "3.4423"
+    "rate_per_base": "3.4423",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "INR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "108.2635"
+    "rate_per_base": "108.2635",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "ISK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "137"
+    "rate_per_base": "137",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "JPY",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "177.05"
+    "rate_per_base": "177.05",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "KRW",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "1502.79"
+    "rate_per_base": "1502.79",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "MXN",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "20.1486"
+    "rate_per_base": "20.1486",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "MYR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "4.5768"
+    "rate_per_base": "4.5768",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "NOK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "10.717"
+    "rate_per_base": "10.717",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "NZD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "2.0014"
+    "rate_per_base": "2.0014",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "PHP",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "70.475"
+    "rate_per_base": "70.475",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "PLN",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "4.3753"
+    "rate_per_base": "4.3753",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "RON",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "5.3434"
+    "rate_per_base": "5.3434",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "SEK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "11.194"
+    "rate_per_base": "11.194",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "SGD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "1.434"
+    "rate_per_base": "1.434",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "THB",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "37.68"
+    "rate_per_base": "37.68",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "TRY",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "55.0523"
+    "rate_per_base": "55.0523",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "USD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "1.1186"
+    "rate_per_base": "1.1186",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "ZAR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-08",
-    "rate_per_base": "18.6252"
+    "rate_per_base": "18.6252",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "AUD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "1.6052"
+    "rate_per_base": "1.6052",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "BRL",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "5.6086"
+    "rate_per_base": "5.6086",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CAD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "1.5942"
+    "rate_per_base": "1.5942",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CHF",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "0.9313"
+    "rate_per_base": "0.9313",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CNY",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "7.4992"
+    "rate_per_base": "7.4992",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CZK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "24.369"
+    "rate_per_base": "24.369",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "DKK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "7.4751"
+    "rate_per_base": "7.4751",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "GBP",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "0.84763"
+    "rate_per_base": "0.84763",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "HKD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "8.794"
+    "rate_per_base": "8.794",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "HUF",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "365.08"
+    "rate_per_base": "365.08",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "IDR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "20036.94"
+    "rate_per_base": "20036.94",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "ILS",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "3.426"
+    "rate_per_base": "3.426",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "INR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "108.3965"
+    "rate_per_base": "108.3965",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "ISK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "136.8"
+    "rate_per_base": "136.8",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "JPY",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "177.34"
+    "rate_per_base": "177.34",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "KRW",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "1503.27"
+    "rate_per_base": "1503.27",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "MXN",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "20.395"
+    "rate_per_base": "20.395",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "MYR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "4.5777"
+    "rate_per_base": "4.5777",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "NOK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "10.7155"
+    "rate_per_base": "10.7155",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "NZD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "1.9961"
+    "rate_per_base": "1.9961",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "PHP",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "70.397"
+    "rate_per_base": "70.397",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "PLN",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "4.3835"
+    "rate_per_base": "4.3835",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "RON",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "5.3406"
+    "rate_per_base": "5.3406",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "SEK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "11.1675"
+    "rate_per_base": "11.1675",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "SGD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "1.4348"
+    "rate_per_base": "1.4348",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "THB",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "37.574"
+    "rate_per_base": "37.574",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "TRY",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "55.1033"
+    "rate_per_base": "55.1033",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "USD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "1.1206"
+    "rate_per_base": "1.1206",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "ZAR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-09",
-    "rate_per_base": "18.527"
+    "rate_per_base": "18.527",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "AUD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "1.6032"
+    "rate_per_base": "1.6032",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "BRL",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "5.5819"
+    "rate_per_base": "5.5819",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CAD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "1.5946"
+    "rate_per_base": "1.5946",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CHF",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "0.9312"
+    "rate_per_base": "0.9312",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CNY",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "7.4832"
+    "rate_per_base": "7.4832",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CZK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "24.391"
+    "rate_per_base": "24.391",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "DKK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "7.4748"
+    "rate_per_base": "7.4748",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "GBP",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "0.84478"
+    "rate_per_base": "0.84478",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "HKD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "8.7743"
+    "rate_per_base": "8.7743",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "HUF",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "365.13"
+    "rate_per_base": "365.13",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "IDR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "20036.18"
+    "rate_per_base": "20036.18",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "ILS",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "3.432"
+    "rate_per_base": "3.432",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "INR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "107.086"
+    "rate_per_base": "107.086",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "ISK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "136.4"
+    "rate_per_base": "136.4",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "JPY",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "177.33"
+    "rate_per_base": "177.33",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "KRW",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "1490.53"
+    "rate_per_base": "1490.53",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "MXN",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "20.5081"
+    "rate_per_base": "20.5081",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "MYR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "4.5663"
+    "rate_per_base": "4.5663",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "NOK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "10.6955"
+    "rate_per_base": "10.6955",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "NZD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "1.9968"
+    "rate_per_base": "1.9968",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "PHP",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "70.169"
+    "rate_per_base": "70.169",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "PLN",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "4.385"
+    "rate_per_base": "4.385",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "RON",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "5.337"
+    "rate_per_base": "5.337",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "SEK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "11.1965"
+    "rate_per_base": "11.1965",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "SGD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "1.4314"
+    "rate_per_base": "1.4314",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "THB",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "37.585"
+    "rate_per_base": "37.585",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "TRY",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "55.1635"
+    "rate_per_base": "55.1635",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "USD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "1.1181"
+    "rate_per_base": "1.1181",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "ZAR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-12",
-    "rate_per_base": "18.4945"
+    "rate_per_base": "18.4945",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "AUD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "1.6033"
+    "rate_per_base": "1.6033",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "BRL",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "5.6125"
+    "rate_per_base": "5.6125",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CAD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "1.5933"
+    "rate_per_base": "1.5933",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CHF",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "0.9312"
+    "rate_per_base": "0.9312",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CNY",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "7.489"
+    "rate_per_base": "7.489",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CZK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "24.368"
+    "rate_per_base": "24.368",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "DKK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "7.4753"
+    "rate_per_base": "7.4753",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "GBP",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "0.8446"
+    "rate_per_base": "0.8446",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "HKD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "8.7802"
+    "rate_per_base": "8.7802",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "HUF",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "364.31"
+    "rate_per_base": "364.31",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "IDR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "20004.87"
+    "rate_per_base": "20004.87",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "ILS",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "3.4404"
+    "rate_per_base": "3.4404",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "INR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "106.6"
+    "rate_per_base": "106.6",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "ISK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "136.2"
+    "rate_per_base": "136.2",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "JPY",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "176.91"
+    "rate_per_base": "176.91",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "KRW",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "1500.81"
+    "rate_per_base": "1500.81",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "MXN",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "20.5126"
+    "rate_per_base": "20.5126",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "MYR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "4.5714"
+    "rate_per_base": "4.5714",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "NOK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "10.6685"
+    "rate_per_base": "10.6685",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "NZD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "1.9931"
+    "rate_per_base": "1.9931",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "PHP",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "70.225"
+    "rate_per_base": "70.225",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "PLN",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "4.3768"
+    "rate_per_base": "4.3768",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "RON",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "5.3363"
+    "rate_per_base": "5.3363",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "SEK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "11.1698"
+    "rate_per_base": "11.1698",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "SGD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "1.4319"
+    "rate_per_base": "1.4319",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "THB",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "37.58"
+    "rate_per_base": "37.58",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "TRY",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "55.2325"
+    "rate_per_base": "55.2325",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "USD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "1.1188"
+    "rate_per_base": "1.1188",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "ZAR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-13",
-    "rate_per_base": "18.4561"
+    "rate_per_base": "18.4561",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "AUD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "1.5971"
+    "rate_per_base": "1.5971",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "BRL",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "5.6246"
+    "rate_per_base": "5.6246",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CAD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "1.5918"
+    "rate_per_base": "1.5918",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CHF",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "0.933"
+    "rate_per_base": "0.933",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CNY",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "7.4925"
+    "rate_per_base": "7.4925",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CZK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "24.357"
+    "rate_per_base": "24.357",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "DKK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "7.4754"
+    "rate_per_base": "7.4754",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "GBP",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "0.84385"
+    "rate_per_base": "0.84385",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "HKD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "8.7859"
+    "rate_per_base": "8.7859",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "HUF",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "363.3"
+    "rate_per_base": "363.3",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "IDR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "20062.67"
+    "rate_per_base": "20062.67",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "ILS",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "3.4443"
+    "rate_per_base": "3.4443",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "INR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "106.5283"
+    "rate_per_base": "106.5283",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "ISK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "136.4"
+    "rate_per_base": "136.4",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "JPY",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "177.39"
+    "rate_per_base": "177.39",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "KRW",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "1496.54"
+    "rate_per_base": "1496.54",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "MXN",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "20.56"
+    "rate_per_base": "20.56",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "MYR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "4.5704"
+    "rate_per_base": "4.5704",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "NOK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "10.6035"
+    "rate_per_base": "10.6035",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "NZD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "1.9941"
+    "rate_per_base": "1.9941",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "PHP",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "70.393"
+    "rate_per_base": "70.393",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "PLN",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "4.3658"
+    "rate_per_base": "4.3658",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "RON",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "5.3442"
+    "rate_per_base": "5.3442",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "SEK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "11.158"
+    "rate_per_base": "11.158",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "SGD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "1.4359"
+    "rate_per_base": "1.4359",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "THB",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "37.587"
+    "rate_per_base": "37.587",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "TRY",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "55.2921"
+    "rate_per_base": "55.2921",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "USD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "1.1195"
+    "rate_per_base": "1.1195",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "ZAR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-14",
-    "rate_per_base": "18.4382"
+    "rate_per_base": "18.4382",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "AUD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "1.6218"
+    "rate_per_base": "1.6218",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "BRL",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "5.6679"
+    "rate_per_base": "5.6679",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CAD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "1.5923"
+    "rate_per_base": "1.5923",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CHF",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "0.9305"
+    "rate_per_base": "0.9305",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CNY",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "7.4993"
+    "rate_per_base": "7.4993",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "CZK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "24.353"
+    "rate_per_base": "24.353",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "DKK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "7.475"
+    "rate_per_base": "7.475",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "GBP",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "0.8461"
+    "rate_per_base": "0.8461",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "HKD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "8.7953"
+    "rate_per_base": "8.7953",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "HUF",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "363.6"
+    "rate_per_base": "363.6",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "IDR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "20112.25"
+    "rate_per_base": "20112.25",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "ILS",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "3.4769"
+    "rate_per_base": "3.4769",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "INR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "106.5408"
+    "rate_per_base": "106.5408",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "ISK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "136.4"
+    "rate_per_base": "136.4",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "JPY",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "177.06"
+    "rate_per_base": "177.06",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "KRW",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "1508.48"
+    "rate_per_base": "1508.48",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "MXN",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "20.7596"
+    "rate_per_base": "20.7596",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "MYR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "4.5757"
+    "rate_per_base": "4.5757",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "NOK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "10.652"
+    "rate_per_base": "10.652",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "NZD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "2.0012"
+    "rate_per_base": "2.0012",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "PHP",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "70.693"
+    "rate_per_base": "70.693",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "PLN",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "4.37"
+    "rate_per_base": "4.37",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "RON",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "5.3337"
+    "rate_per_base": "5.3337",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "SEK",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "11.1765"
+    "rate_per_base": "11.1765",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "SGD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "1.4379"
+    "rate_per_base": "1.4379",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "THB",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "37.592"
+    "rate_per_base": "37.592",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "TRY",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "55.3873"
+    "rate_per_base": "55.3873",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "USD",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "1.1208"
+    "rate_per_base": "1.1208",
+    "source": "ecb"
    },
    {
     "base_ccy": "EUR",
     "ccy": "ZAR",
     "kind": "ecb",
+    "labels": [],
     "rate_date": "2026-10-15",
-    "rate_per_base": "18.5569"
+    "rate_per_base": "18.5569",
+    "source": "ecb"
    }
   ],
   "curve_quote_sets": [
@@ -15483,13 +15831,16 @@
   },
   {
    "coverage": {
+    "latest_by_kind": {
+     "ecb": "2026-10-15"
+    },
     "latest_rate_date": "2026-10-15",
     "window_from": "2026-10-08",
     "window_to": "2026-10-15"
    },
    "name": "cross_rates",
    "rows": 174,
-   "sha256": "42c22633c5b3a34aa38160ffdfebf230d1c11f1bb3528a1fb726f7805ea42ce5",
+   "sha256": "143ad87333fb01419e160375e18ebfffb67be3bee344a1d18fd9f8d5a2a5ef30",
    "stale": false,
    "stale_reasons": []
   },
@@ -20325,7 +20676,7 @@
   "name": "market-data-hub",
   "version": "0.1.0"
  },
- "schema_version": "market_snapshot/1.2",
+ "schema_version": "market_snapshot/1.3",
  "sources": [
   {
    "dataset": "bond_quotes",
@@ -20438,6 +20789,6 @@
    "source": "moex_iss"
   }
  ],
- "static_snapshot_id": "1a6b97eefe92ff8f4133cc9f6b8493fbc40de3149df8e665b9ac6d550619aa77",
+ "static_snapshot_id": "c9c33e1c8824245066f068822ea4c0513708d4bc9d5925b12558a9ec11ff5125",
  "supersedes": null
 }

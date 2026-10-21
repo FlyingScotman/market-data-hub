@@ -128,7 +128,8 @@ src/mdhub/
 1. Register the provider code in `ops.source` in a migration of your range, e.g.
    `INSERT INTO ops.source (code, name, base_url, licence_note) VALUES (...) ON CONFLICT DO NOTHING;`
    Seeded already: `moex_iss`, `moex_apim`, `moex_passport`, `moex_sdfi`, `ratescalcs`,
-   `cbr`, `ecb`, `cbonds`, `otc_monitor`, `andromeda`.
+   `cbr`, `ecb`, `cbonds`, `otc_monitor`, `andromeda`, `rosstat`, `ecb_data_portal`,
+   `bundesbank`, `dbnomics`, `fred`, `nyfed`, `us_treasury` (one code per host).
 2. Add `src/mdhub/sources/<name>.py`: functions that take an `HttpClient` (and explicit
    arguments) and return the raw `httpx.Response` plus parsed, typed records. No DB access,
    no `Settings()` reads inside parsers. Credentials come in as arguments (built from
@@ -139,6 +140,22 @@ src/mdhub/
 5. Add a lightweight request to `PROBES` in `mdhub/quality/source_probe.py` (reachability,
    credentials, TLS expiry for the admin console) and map the loader job to the source in
    `ops.job_source` (migration); `tests/test_observability.py` checks both cover every loader.
+
+## Fallback chains (sources that may be geo-blocked)
+
+The production hub is in Russia; many European and U.S. hosts may not answer from it. A dataset
+whose data several independent hosts publish (€STR, SOFR, ECB rates, proxy curves) uses
+`mdhub.loaders._fallback`: a list of `Attempt(source, fetch, parse, parser_version)`;
+`first_answer(ctx, what, attempts, sources=...)` tries them in order (all but the last with one
+retry and a 20 s timeout), skips `MDHUB_SKIP_SOURCES`, and returns the first source whose requests
+succeed **and** whose payload parses (format drift moves on, never stores partial data). Store the
+rows under that attempt's own `source` (separate series, never merged), record a raw capture per
+fetched response and return `served.tried` in the job result. All sources failing raises
+`SourcesFailed` (run `failed`). Add every source of a chain to `ops.job_source`, to `PROBES`
+(`quality/source_probe.py`) and to `CHECKS` (`quality/source_check.py`, the `mdhub probe-sources`
+command the owner runs on the server). A source that does not answer from the development
+environment gets fixtures in its documented format with real values of a recorded source, listed
+as such in the fixture directory's README.
 
 ## Adding a migration
 
@@ -166,13 +183,16 @@ src/mdhub/
   `ingested_at timestamptz NOT NULL DEFAULT now()`, optionally `updated_at timestamptz`,
   `last_seen_run bigint`, `last_seen` — these are the **meta columns** that never count as a
   data change (`core.upsert.META_COLUMNS`, `ops.track_changes()`).
+- Parallel branches: pick numbers another open branch is unlikely to take (WEB-16 used `0260`,
+  `0530`, `0660`). A migration that must run on a fresh database before `0800` but needs the
+  service-role grants calls `admin.grant_service_roles()` only when it exists (`0260`).
 - Numbers: next free number of the range; review fixes of 2026-10-16 are `0420_review_fixes.sql`
   and `0421_review2_fixes.sql` (follow-up review); `0422_target_calendar.sql` adds the TARGET
   calendar; `0427_history_api.sql` the curve index of the history API. A new calendar needs `mdhub.core.bizday.CALENDARS` plus a migration widening the
   `ref.calendar_day.calendar` CHECK (find the constraint by definition, as 0420/0422 do).
   Prefer an exact computed rule (a `rule_*` source, like `rule_target`) over deriving a calendar
   from the data it gates: an observed calendar turns a failed load into a holiday. RU_PRODUCTION is
-  curated from 2019 for exactly this reason (0.2.1; RUONIA only cross-checks it). Use the data
+  curated from 2019 for exactly this reason (0.3.1; RUONIA only cross-checks it). Use the data
   as a cross-check instead (`target_crosscheck`: mismatch -> warning, run `partial`).
 - Every new FK to `ops.raw_capture` gets an index on `capture_id` in the same migration
   (retention probes and `ON DELETE SET NULL` actions; `tests/test_review2_fixes.py` checks it).

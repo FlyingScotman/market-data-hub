@@ -370,7 +370,7 @@ def test_fx_kinds_pairs_and_units(seeded: TestClient) -> None:
     jpy = _records(_get(seeded, "/v1/history/fx", **{"from": "2026-10-15", "pair": "JPY"}))
     assert jpy[0]["rate"] == Decimal("0.543210") and jpy[0]["nominal"] == 100
     cross = _records(_get(seeded, "/v1/history/fx", **{"from": "2026-10-15", "pair": "EUR/USD"}))
-    assert [r["kind"] for r in cross] == ["moex_indicative_19"]
+    assert [r["kind"] for r in cross] == ["ecb", "moex_indicative_19"]
     r = seeded.get("/v1/history/fx", params={"from": "2026-10-15", "kind": "x"}, headers=AUTH)
     assert r.status_code == 400
     r = seeded.get("/v1/history/fx", params={"from": "2026-10-15", "pair": "usd-rub"}, headers=AUTH)

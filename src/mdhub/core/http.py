@@ -253,6 +253,12 @@ def default_rate_limits(settings: Settings) -> dict[str, float]:
         "ws2.cbonds.info": 2.0,
         "ws.cbonds.info": 2.0,
         "www.ecb.europa.eu": 2.0,
+        "data-api.ecb.europa.eu": 2.0,
+        "api.statistiken.bundesbank.de": 1.0,
+        "api.db.nomics.world": 1.0,
+        "fred.stlouisfed.org": 1.0,
+        "markets.newyorkfed.org": 2.0,
+        "home.treasury.gov": 1.0,
     }
 
 
