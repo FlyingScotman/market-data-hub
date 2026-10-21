@@ -32,12 +32,14 @@ def _snapshot(conn: Conn, source: str, dataset: str, day: date, n: int) -> None:
     fetched = datetime.combine(day, time(12, 0), tzinfo=MSK)
     row = conn.execute(
         "INSERT INTO md.curve_snapshot (source, dataset, quote_basis, fetched_at, snapshot_date,"
-        " content_sha256, parser_version) VALUES (%s, %s, 'mid_only', %s, %s, %s, '1') RETURNING id",
+        " content_sha256, parser_version)"
+        " VALUES (%s, %s, 'mid_only', %s, %s, %s, '1') RETURNING id",
         (source, dataset, fetched, day, f"{n:064x}"),
     ).fetchone()
     assert row is not None
     conn.execute(
-        "INSERT INTO md.curve_quote (snapshot_id, tenor, position, mid_pct) VALUES (%s, '1Y', 0, 15)",
+        "INSERT INTO md.curve_quote (snapshot_id, tenor, position, mid_pct)"
+        " VALUES (%s, '1Y', 0, 15)",
         (row["id"],),
     )
 

@@ -16,6 +16,11 @@ the next 10-minute trigger) or ``max_tasks`` is used up. For a task the worker:
    range) -> ``not_expected``. A ``partial`` run whose range still has open gaps counts as a failed
    attempt (step 4), so a persistently failing day ends ``failed`` instead of looping; a
    ``partial`` run that filled the range marks the task done,
+   After a done task whose run changed rows of a job that feeds the ``eod_final`` cut
+   (:data:`mdhub.snapshot.readiness.SNAPSHOT_INPUT_JOBS`), the published ``eod_final`` cuts of
+   the business dates in the range are queued for a rebuild (dataset ``snapshot_eod_final``,
+   job ``snapshot_rebuild``; ``MDHUB_SNAPSHOT_AUTOCORRECT``): a cut whose content changed is
+   corrected by a superseding snapshot, an unchanged one publishes nothing,
 4. on failure retries with exponential backoff (``not_before`` = now + 10 min * 2^(n-1));
    after ``max_attempts`` (5) the task becomes ``failed`` and the open gaps of the range get a
    note; quality does not re-queue those days for
@@ -45,7 +50,8 @@ from mdhub.core.redact import sanitize_text
 from mdhub.datasets import DatasetSpec, get_dataset
 from mdhub.db.pool import Database
 from mdhub.jobs import REGISTRY, JobContext, JobParamError, JobRegistry, job, run_job
-from mdhub.quality.checks import job_datasets, reconcile_gaps
+from mdhub.quality.checks import compress_ranges, job_datasets, queue_range, reconcile_gaps
+from mdhub.snapshot.readiness import EOD_FINAL_DATASET, SNAPSHOT_INPUT_JOBS, eod_final_cuts
 
 __all__ = [
     "BACKOFF_BASE",
@@ -56,6 +62,7 @@ __all__ = [
     "backfill_worker",
     "claim_task",
     "process_tasks",
+    "queue_snapshot_corrections",
     "run_backfill_range",
 ]
 
@@ -301,6 +308,39 @@ def run_backfill_range(
     )
 
 
+def queue_snapshot_corrections(
+    db: Database, settings: Settings, spec: DatasetSpec, d1: date, d2: date, run_id: int | None
+) -> list[tuple[date, date]]:
+    """Queue rebuilds of the published ``eod_final`` cuts of ``[d1, d2]`` after a backfill run
+    of an input job that changed rows (module doc, step 3). Returns the queued ranges."""
+    if (
+        not settings.snapshot_autocorrect
+        or run_id is None
+        or spec.backfill_job not in SNAPSHOT_INPUT_JOBS
+    ):
+        return []
+    try:
+        target = get_dataset(EOD_FINAL_DATASET)
+    except KeyError:  # mdhub.loaders.snapshots not loaded
+        return []
+    with db.connection() as conn:
+        with conn.cursor(row_factory=tuple_row) as cur:
+            row = cur.execute(
+                "SELECT coalesce(rows_inserted, 0) + coalesce(rows_updated, 0) "
+                "FROM ops.job_run WHERE id = %s",
+                (run_id,),
+            ).fetchone()
+        if row is None or not row[0]:
+            return []
+        days = sorted({d for d, _ in eod_final_cuts(conn, d1, d2)})
+        queued: list[tuple[date, date]] = []
+        for lo, hi in compress_ranges(days, lambda _d: False, target.max_task_days or 5):
+            for task_id, a, b in queue_range(conn, target, lo, hi, source="snapshot_autocorrect"):
+                if task_id is not None:
+                    queued.append((a, b))
+    return queued
+
+
 def _task_range(task: Task) -> tuple[date, date]:
     try:
         d1 = date.fromisoformat(str(task.params["date_from"]))
@@ -378,6 +418,11 @@ def process_task(
         summary.gaps_backfilled += res.backfilled
         summary.gaps_unfillable += res.unfillable
         entry.update(status="done", backfilled=res.backfilled, unfillable=res.unfillable)
+        corrections = queue_snapshot_corrections(db, settings, spec, d1, d2, res.run_id)
+        if corrections:
+            entry["snapshot_rebuilds_queued"] = [
+                [a.isoformat(), b.isoformat()] for a, b in corrections
+            ]
         return "done"
     error = res.error or res.status
     lock_busy = res.status == "skipped" and ("already running" in error or "lock_busy" in error)

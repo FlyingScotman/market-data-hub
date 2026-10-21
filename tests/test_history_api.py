@@ -280,7 +280,8 @@ def test_curves_labels(seeded: TestClient, conn: Conn) -> None:
     ).fetchone()
     assert sid is not None
     conn.execute(
-        "INSERT INTO md.curve_quote (snapshot_id, tenor, position, mid_pct) VALUES (%s, '1Y', 0, 15)",
+        "INSERT INTO md.curve_quote (snapshot_id, tenor, position, mid_pct)"
+        " VALUES (%s, '1Y', 0, 15)",
         (sid["id"],),
     )
     conn.commit()

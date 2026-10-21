@@ -16,6 +16,7 @@ reason. Non-RUB cross rates come from the ECB only.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
@@ -722,10 +723,13 @@ def build_market(
     static: Build,
     static_snapshot_id: str | None = None,
     params: MarketParams | None = None,
+    extra_stale: Mapping[str, Sequence[str]] | None = None,
 ) -> Build:
     """Build the market snapshot of ``cut`` consistent with the static ``static`` build
     (its quotes are filtered by ``static.universe``). ``static_snapshot_id`` may be bound
-    later, once the static build is published (:func:`mdhub.snapshot.runner`)."""
+    later, once the static build is published (:func:`mdhub.snapshot.runner`).
+    ``extra_stale``: stale reasons per dataset found by the caller (e.g. inputs that were not
+    ready, :mod:`mdhub.snapshot.readiness`); they are manifest facts, not content."""
     if cut.kind != "market":
         raise ValueError("build_market needs a market cut")
     params = params or MarketParams()
@@ -751,6 +755,8 @@ def build_market(
         _cross(conn, t, d, params.ecb_lookback_days, prov),
         _meetings(conn, t, prov),
     ]
+    for ds in datasets:
+        ds.stale_reasons.extend((extra_stale or {}).get(ds.name, ()))
     return Build(
         cut=cut,
         datasets=datasets,
