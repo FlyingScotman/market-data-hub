@@ -94,6 +94,7 @@ KNOWN_JOBS: Final = (
     "issuers_static",
     "cbonds_enrich",
     "ratings_agencies",
+    "bond_terms_curated",
     "bonds_eod",
     "bonds_intraday",
     "fx_moex_intraday",
@@ -231,6 +232,9 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
     "cbonds_enrich": (_r("30 7 * * *", note="auto-skip while auth returns 401"),),
     "ratings_agencies": (
         _r("50 6 * * *", note="NKR/NRA lists + RA Expert crawl (budget); before issuers_static"),
+    ),
+    "bond_terms_curated": (
+        _r("55 6 * * *", note="curated issue terms with evidence; after bonds_static"),
     ),
     "bonds_eod": (
         _r("20 19 * * *", mode="prelim", days_back=[0]),
