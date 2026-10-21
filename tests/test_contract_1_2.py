@@ -37,7 +37,8 @@ def _bundle(conn: Conn, sid: str) -> dict[str, Any]:
 
 
 def test_rusfar_series_lists() -> None:
-    assert SCHEMA_VERSION >= "market_snapshot/1.2"
+    assert SCHEMA_VERSION.startswith("market_snapshot/1.")  # the 1.2 rules hold in later minors
+    assert int(SCHEMA_VERSION.rsplit(".", 1)[1]) >= 2
     assert set(RUSFAR_RATE_SERIES) == set(INDEX_GROUPS["rusfar"]) | set(INDEX_GROUPS["rusfarrt"])
     assert RUSFAR_INDEX_SERIES == ("RUSFARIND",)
     assert rusfar_unit("RUSFAR") == "pct" and rusfar_unit("RUSFARCNY") == "pct"

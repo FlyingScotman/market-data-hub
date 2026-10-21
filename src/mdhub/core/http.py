@@ -253,6 +253,10 @@ def default_rate_limits(settings: Settings) -> dict[str, float]:
         "ws2.cbonds.info": 2.0,
         "ws.cbonds.info": 2.0,
         "www.ecb.europa.eu": 2.0,
+        # rating agencies' public pages (WEB-18): polite, one request per 2 s
+        "www.ratings.ru": 0.5,
+        "www.ra-national.ru": 0.5,
+        "raexpert.ru": 0.5,
         "data-api.ecb.europa.eu": 2.0,
         "api.statistiken.bundesbank.de": 1.0,
         "api.db.nomics.world": 1.0,

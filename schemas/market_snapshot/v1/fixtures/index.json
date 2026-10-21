@@ -5,14 +5,14 @@
    "cut_type": "eod_final",
    "file": "market_eod_final.json",
    "kind": "market",
-   "snapshot_id": "77c3d01e2acd2b2a28d1452139f5b21b29d5660d67fff7407e4095580023f7dd"
+   "snapshot_id": "651801dce07cc78ca72896be17f1efd9e369109c72ab2f3ed49588a6d0d183d9"
   },
   "static_daily": {
    "business_date": "2026-10-15",
    "cut_type": "daily",
    "file": "static_daily.json",
    "kind": "static",
-   "snapshot_id": "c9c33e1c8824245066f068822ea4c0513708d4bc9d5925b12558a9ec11ff5125"
+   "snapshot_id": "df25fcf5b79809c6f69577e77cde27a51b0972f1ae239f214c5e9ac411a5dd31"
   }
  },
  "instruments": {

@@ -47,6 +47,10 @@
         "day_count_source",
         "listing_level",
         "issue_size",
+        "issue_size_moex",
+        "issue_size_moex_field",
+        "replacement_bond",
+        "replacement_basis",
         "primary_board",
         "status",
         "calendar",
@@ -311,6 +315,37 @@
             {
               "$ref": "common.schema.json#/$defs/decimal_or_null"
             }
+          ]
+        },
+        "issue_size_moex": {
+          "description": "Number of bonds as MOEX publishes it: ISSUESIZE, else ISSUESIZEPLACED of the market board (issue_size_moex_field). NOT the amount outstanding: buybacks, offer redemptions and partial placements are not deducted (1.3, P1-10)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "issue_size_moex_field": {
+          "description": "MOEX field issue_size_moex came from; null when MOEX publishes neither (1.3)",
+          "enum": [
+            "ISSUESIZE",
+            "ISSUESIZEPLACED",
+            null
+          ]
+        },
+        "replacement_bond": {
+          "description": "Replacement bond (замещающая облигация, issued to replace a eurobond): true / false by an issue document (replacement_basis document); true by the MOEX name rule (name_rule: a ЗО / БЗО / СЗО / СУБ-ЗО token in NAME, or a sovereign ОВОЗ); null: not established (never false by the name rule) (1.3, P1-6)",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "replacement_basis": {
+          "description": "Evidence of replacement_bond: document (curated issue document) | name_rule (heuristic on the MOEX full name); null with replacement_bond null (1.3)",
+          "enum": [
+            "document",
+            "name_rule",
+            null
           ]
         },
         "primary_board": {
@@ -588,6 +623,7 @@
         "face_value",
         "face_unit",
         "agent",
+        "evidence_document_url",
         "labels"
       ],
       "properties": {
@@ -674,6 +710,13 @@
             "null"
           ]
         },
+        "evidence_document_url": {
+          "description": "source curated: URL of the issue document the offer / call was read from; null for other sources (1.3)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "labels": {
           "$ref": "common.schema.json#/$defs/labels"
         }
@@ -697,7 +740,9 @@
         "variable_rate_type",
         "fixing_day",
         "status",
-        "sources"
+        "sources",
+        "evidence_document_url",
+        "evidence_page"
       ],
       "properties": {
         "secid": {
@@ -771,6 +816,20 @@
           "items": {
             "type": "string"
           }
+        },
+        "evidence_document_url": {
+          "description": "status curated from the bond_terms_curated file: URL of the issue document the conventions were read from; null otherwise (1.3, HS8)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "evidence_page": {
+          "description": "Page / clause of that document, as curated; null otherwise (1.3)",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       }
     },
@@ -829,12 +888,13 @@
           ]
         },
         "sector_source": {
-          "description": "Where sector came from: okved (OKVED2 mapping) | curated (per-INN entry) | group (curated issuer group) | rule (bond-class or name rule of mdhub/data/sector_map.json); null without sector",
+          "description": "Where sector came from: okved (OKVED2 mapping) | curated (per-INN entry) | group (curated issuer group) | rule (bond-class or name rule of mdhub/data/sector_map.json) | agency (1.3: industry a rating agency publishes for the issuer, agency_industry_rules of sector_map.json); null without sector",
           "enum": [
             "okved",
             "curated",
             "group",
             "rule",
+            "agency",
             null
           ]
         },
@@ -895,7 +955,7 @@
       }
     },
     "rating": {
-      "description": "Credit rating as known at known_at (ref.bond_rating; 1.1, HS5). Values verbatim from the source, nothing inferred; withdrawn ratings are absent or carry action = withdrawn",
+      "description": "Credit rating as known at known_at: issue scope from ref.bond_rating (Cbonds; 1.3: NKR, NRA, RA Expert by ISIN), issuer scope (1.3) from ref.issuer_rating (agencies by INN; RA Expert regions through the ISINs of their rated bonds). Values verbatim from the source, nothing inferred; a withdrawn rating carries rating null and action withdrawn (1.1, HS5; 1.3, P1-1)",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -905,11 +965,15 @@
         "agency",
         "scale",
         "rating",
+        "grade",
         "outlook",
         "watch",
         "rating_date",
         "action",
-        "source"
+        "source",
+        "rating_type",
+        "press_release",
+        "mapping_basis"
       ],
       "properties": {
         "scope": {
@@ -937,15 +1001,22 @@
           ]
         },
         "agency": {
-          "description": "Agency as the source names it (e.g. АКРА, Эксперт РА, НКР, НРА)",
+          "description": "Agency display name: НКР, НРА, Эксперт РА (agency sources), or as Cbonds names it",
           "type": "string"
         },
         "scale": {
-          "description": "Rating scale as the source names it (e.g. national scale for the Russian Federation); empty string when the source gives none",
+          "description": "Rating scale: national_ru (national scale for the Russian Federation; agency sources) or as Cbonds names it; empty string when the source gives none",
           "type": "string"
         },
         "rating": {
-          "description": "Rating verbatim",
+          "description": "Rating verbatim (ruAA-, AA-.ru, AA–|ru|, ...); null when withdrawn",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "grade": {
+          "description": "Letter grade of the national-scale rating without the agency's scale marks (AAA, AA+, ..., D), by the documented rule mdhub.sources.ratings_common.normalize_grade (Cyrillic look-alikes and dashes mapped to ASCII); null when the rating is not such a grade (withdrawn, expected, ESG, Cbonds rows) (1.3)",
           "type": [
             "string",
             "null"
@@ -958,7 +1029,7 @@
           ]
         },
         "watch": {
-          "description": "Rating watch / under review flag as published; null when the source does not publish it",
+          "description": "Review / watch status verbatim (НКР 'рейтинг на пересмотре …', НРА 'Под наблюдением', Эксперт РА 'Рейтинг под наблюдением'); null when none or not published",
           "type": [
             "string",
             "null"
@@ -968,15 +1039,38 @@
           "$ref": "common.schema.json#/$defs/date_or_null"
         },
         "action": {
-          "description": "Rating action as published (assigned, affirmed, upgraded, downgraded, withdrawn, ...); null when the source does not publish it",
+          "description": "Rating action: assigned | affirmed | upgraded | downgraded | withdrawn | outlook_changed when the source publishes the action (NRA status, withdrawn lists); null when it does not (never derived from consecutive ratings)",
           "type": [
             "string",
             "null"
           ]
         },
         "source": {
-          "description": "Hub source of the row (cbonds, ...)",
+          "description": "Hub source of the row: cbonds | nkr | nra | raexpert",
           "type": "string"
+        },
+        "rating_type": {
+          "description": "Agency's rating type / list verbatim (e.g. Рейтинги кредитоспособности нефинансовых компаний); null for Cbonds rows (1.3)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "press_release": {
+          "description": "URL of the agency press release of the latest action; null when unknown (1.3)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mapping_basis": {
+          "description": "How the agency's object was matched to MOEX: isin (issue) | inn (issuer) | region_bond_isin (RA Expert region via the ISINs of its rated bonds); null for Cbonds rows (1.3)",
+          "enum": [
+            "isin",
+            "inn",
+            "region_bond_isin",
+            null
+          ]
         }
       }
     },

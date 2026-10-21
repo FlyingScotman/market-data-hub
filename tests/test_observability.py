@@ -28,7 +28,7 @@ from mdhub.schedule import KNOWN_JOBS, RULES
 Conn = psycopg.Connection[DictRow]
 NOT_LOADERS = {
     "quality", "backfill_worker", "maintenance", "source_probe", "snapshot_static",
-    "snapshot_market",
+    "snapshot_market", "bond_terms_curated",
 }  # fmt: skip
 
 
@@ -122,6 +122,11 @@ def _mock_sources(router: respx.MockRouter) -> dict[str, respx.Route]:
         "cbonds": router.post("https://ws2.cbonds.info/services/json/get_emissions/").respond(
             200, json={"items": [], "total": 0}
         ),
+        "nkr": router.get("https://www.ratings.ru/robots.txt").respond(200, text="User-Agent: *"),
+        "nra": router.get("https://www.ra-national.ru/robots.txt").respond(200, text=""),
+        "raexpert": router.get("https://raexpert.ru/robots.txt").mock(
+            side_effect=httpx.ConnectError("reset")
+        ),
         "ecb_data_portal": router.route(host="data-api.ecb.europa.eu").respond(200, text="KEY"),
         "bundesbank": router.route(host="api.statistiken.bundesbank.de").respond(404),
         "dbnomics": router.route(host="api.db.nomics.world").respond(200, json={}),
@@ -164,6 +169,9 @@ def test_source_probe_job_records_every_source(
         "ratescalcs": (True, "ok", 200),
         "otc_monitor": (True, "not_configured", 401),  # reachable; no token to check
         "cbonds": (True, "ok", 200),
+        "nkr": (True, "n/a", 200),
+        "nra": (True, "n/a", 200),
+        "raexpert": (False, "n/a", None),
         "ecb_data_portal": (True, "n/a", 200),
         "bundesbank": (False, "n/a", 404),
         "dbnomics": (True, "n/a", 200),

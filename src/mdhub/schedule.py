@@ -97,6 +97,8 @@ KNOWN_JOBS: Final = (
     "bonds_static_probe",
     "issuers_static",
     "cbonds_enrich",
+    "ratings_agencies",
+    "bond_terms_curated",
     "bonds_eod",
     "bonds_intraday",
     "fx_moex_intraday",
@@ -266,6 +268,12 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
         _r("0 7 * * *", mode="full", note="emitter list diff + weekly cards; after bonds_static"),
     ),
     "cbonds_enrich": (_r("30 7 * * *", note="auto-skip while auth returns 401"),),
+    "ratings_agencies": (
+        _r("50 6 * * *", note="NKR/NRA lists + RA Expert crawl (budget); before issuers_static"),
+    ),
+    "bond_terms_curated": (
+        _r("55 6 * * *", note="curated issue terms with evidence; after bonds_static"),
+    ),
     "bonds_eod": (
         _r("20 19 * * *", mode="prelim", days_back=[0]),
         _r("15 7 * * *", mode="final", days_back=[1, 2], note="post-session revisions"),

@@ -25,7 +25,8 @@ the feed is slow), ``ratescalcs`` the JSON snapshot
 (Basic auth; only Mon-Fri 08:50-23:00 MSK, when the service answers), ``otc_monitor``
 ``/api/bond/`` (bearer), ``cbonds`` one ``get_emissions`` query with ``limit=1`` - at most
 hourly (:attr:`ProbeSpec.min_interval_s`), so a rejected login does not hit the provider 288
-times a day.
+times a day; the rating agencies ``nkr``, ``nra``, ``raexpert`` (WEB-18) their ``robots.txt``,
+at most hourly.
 """
 
 from __future__ import annotations
@@ -56,8 +57,11 @@ from mdhub.sources import (
     ecb,
     ecb_data,
     fred,
+    nkr,
+    nra,
     nyfed,
     otc_monitor,
+    raexpert,
     ratescalcs,
     rosstat,
     us_treasury,
@@ -204,6 +208,10 @@ PROBES: Final = (
     ProbeSpec("ratescalcs", _ratescalcs, active=ratescalcs_hours),
     ProbeSpec("otc_monitor", _otc_monitor),
     ProbeSpec("cbonds", _cbonds, min_interval_s=3600.0),
+    # rating agencies (WEB-18): robots.txt, at most hourly (their pages are read once a day)
+    ProbeSpec("nkr", _public(nkr.BASE_URL + "/robots.txt"), min_interval_s=3600.0),
+    ProbeSpec("nra", _public(nra.BASE_URL + "/robots.txt"), min_interval_s=3600.0),
+    ProbeSpec("raexpert", _public(raexpert.BASE_URL + "/robots.txt"), min_interval_s=3600.0),
 )
 """One probe per source, in probe order."""
 

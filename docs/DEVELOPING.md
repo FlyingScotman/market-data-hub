@@ -129,11 +129,14 @@ src/mdhub/
    `INSERT INTO ops.source (code, name, base_url, licence_note) VALUES (...) ON CONFLICT DO NOTHING;`
    Seeded already: `moex_iss`, `moex_apim`, `moex_passport`, `moex_sdfi`, `ratescalcs`,
    `cbr`, `ecb`, `cbonds`, `otc_monitor`, `andromeda`, `rosstat`, `ecb_data_portal`,
-   `bundesbank`, `dbnomics`, `fred`, `nyfed`, `us_treasury` (one code per host).
+   `bundesbank`, `dbnomics`, `fred`, `nyfed`, `us_treasury` (one code per host), `nkr`, `nra`, `raexpert`, `acra`.
 2. Add `src/mdhub/sources/<name>.py`: functions that take an `HttpClient` (and explicit
    arguments) and return the raw `httpx.Response` plus parsed, typed records. No DB access,
    no `Settings()` reads inside parsers. Credentials come in as arguments (built from
    `ctx.settings` by the loader).
+   HTML pages: parse with `mdhub.core.htmldom.parse_html` (stdlib, tolerant tree with
+   `find_all(tag, cls)`, `text()`, `links()`), XLSX with `mdhub.sources.cbr.read_xlsx_rows`;
+   respect the site's robots.txt and add a polite per-host rate (rating agencies: 0.5 rps).
 3. Add per-host rates to `default_rate_limits()` in `core/http.py` if the default (5 rps)
    is not appropriate.
 4. Unit-test the parser against sanitized fixtures; test format drift raises.

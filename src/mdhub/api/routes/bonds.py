@@ -209,6 +209,18 @@ def bond(
             sql.SQL("SELECT * FROM ref.bond_rating WHERE secid = %(secid)s ORDER BY agency, scale"),
             p,
         )
+        issuer_ratings = (
+            fetch_all(
+                conn,
+                sql.SQL(
+                    "SELECT * FROM ref.issuer_rating WHERE issuer_id = %(iid)s "
+                    "ORDER BY agency, scale, source, rating_type"
+                ),
+                {"iid": row["issuer_id"]},
+            )
+            if row.get("issuer_id") is not None
+            else []
+        )
     payload = {
         "data": {
             **row,
@@ -219,6 +231,7 @@ def bond(
             "offers": offers,
             "formula": {"resolved": resolved, "sources": formula_sources},
             "ratings": ratings,
+            "issuer_ratings": issuer_ratings,
         }
     }
     return json_response(request, payload)

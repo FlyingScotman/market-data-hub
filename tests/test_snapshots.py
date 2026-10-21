@@ -340,6 +340,11 @@ def test_static_ratings_dataset_verbatim_and_honest_coverage(seeded: Conn, db: D
             "rating_date": "2026-05-01",
             "action": None,
             "source": "cbonds",
+            # 1.3: agency-source fields, null for Cbonds rows
+            "grade": None,
+            "rating_type": None,
+            "press_release": None,
+            "mapping_basis": None,
         }
     ]
     cov = next(d for d in doc["datasets"] if d["name"] == "ratings")["coverage"]

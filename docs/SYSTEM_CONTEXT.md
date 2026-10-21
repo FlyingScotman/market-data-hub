@@ -58,6 +58,14 @@ analytics, `Fixing.hub_ingested_at` and explicit RUSFAR units; the interface cat
 proxy curves `usd_ust_par` / `eur_aaa_par` (labelled `proxy_*`, not OIS) ride the existing
 datasets - the catalogue needs the 1.3 entry too.
 
+**Static terms and ratings (WEB-18, 21 October 2026).** Contract `market_snapshot/1.3` (additive):
+credit ratings from the agencies' public disclosure (НКР, НРА, Эксперт РА; issue scope by ISIN,
+issuer scope by INN) with a normalized `grade`, the replacement-bond flag with its basis
+(`document` / `name_rule`), `issue_size_moex` (MOEX count, not the amount outstanding), document
+evidence of curated floater conventions / calls / offers and `sector_source = agency`. The
+interface catalogue in `trading_desk_monitor/docs/architecture/README.md` needs the 1.3 entry too.
+Agency data is for internal desk use (the agencies' terms forbid redistribution).
+
 ### What the hub ships for items 1–6 (M1)
 
 | # | Where |

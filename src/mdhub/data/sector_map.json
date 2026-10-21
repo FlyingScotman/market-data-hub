@@ -1,6 +1,6 @@
 {
-  "version": "2026-10-20.1",
-  "description": "Desk sector taxonomy of issuers (TDM brief R9 HS3) and the versioned rules that assign it (job issuers_static -> ref.issuer.sector / sector_source). Precedence: 1) issuers: curated per-INN entry (sector_source curated); 2) curated issuer group of mdhub/data/issuer_groups_curated.json for SPVs (group); 3) okved_prefixes on the issuer's main OKVED2 code (okved; not loaded yet: FNS registers are not reachable from the hub); 4) class_rules on the MOEX bond classes of the issuer's bonds (rule); 5) name_rules on the issuer's MOEX name and short name, first match wins (rule); 6) curated group sector for other group members (group). No match: sector null (never guessed, listed in coverage). Patterns are Python regular expressions, matched case-insensitively.",
+  "version": "2026-10-21.2",
+  "description": "Desk sector taxonomy of issuers (TDM brief R9 HS3) and the versioned rules that assign it (job issuers_static -> ref.issuer.sector / sector_source). Precedence: 1) issuers: curated per-INN entry (sector_source curated); 2) curated issuer group of mdhub/data/issuer_groups_curated.json for SPVs (group); 3) okved_prefixes on the issuer's main OKVED2 code (okved; not loaded yet: FNS registers are not reachable from the hub); 4) class_rules on the MOEX bond classes of the issuer's bonds (rule); 5) name_rules on the issuer's MOEX name and short name, first match wins (rule); 5a) agency_industry_rules on the sector / industry a rating agency publishes for the issuer (ref.agency_rating.industry by INN, job ratings_agencies; agency): fills gaps only, per agency the first matching rule, used only when every agency with a match gives the same sector (a conflict assigns nothing); trade lists (НКР Торговля, НРА торговля) are not mapped (distributors of every kind); 6) curated group sector for other group members (group). No match: sector null (never guessed, listed in coverage). Patterns are Python regular expressions, matched case-insensitively.",
   "taxonomy": [
     {"code": "banks", "label_ru": "Банки", "label_en": "Banks"},
     {"code": "leasing", "label_ru": "Лизинг", "label_en": "Leasing"},
@@ -62,6 +62,26 @@
     {"bond_classes": ["municipal"], "sector": "municipal", "when": "any"},
     {"bond_classes": ["ifi"], "sector": "supranational", "when": "any"},
     {"bond_classes": ["mbs", "securitization"], "sector": "securitization_spv", "when": "all"}
+  ],
+  "agency_industry_rules": [
+    {"agency": "nkr", "pattern": "^Банки$", "sector": "banks"},
+    {"agency": "nkr", "pattern": "^Лизинг$", "sector": "leasing"},
+    {"agency": "nkr", "pattern": "^Строительство и девелопмент$|^Управление недвижимостью$", "sector": "real_estate"},
+    {"agency": "nkr", "pattern": "^Агропромышленный комплекс$", "sector": "agro"},
+    {"agency": "nkr", "pattern": "^Транспорт и логистика$", "sector": "transport"},
+    {"agency": "nkr", "pattern": "^Химия и нефтехимия$", "sector": "chemicals"},
+    {"agency": "nkr", "pattern": "^Энергетика$", "sector": "utilities"},
+    {"agency": "nkr", "pattern": "^Металлургия$", "sector": "metals_mining"},
+    {"agency": "nra", "pattern": "^Банки( / |$)", "sector": "banks"},
+    {"agency": "nra", "pattern": "^Лизинговые компании( / |$)", "sector": "leasing"},
+    {"agency": "nra", "pattern": "^Нефинансовые компании / Строительство и недвижимость$", "sector": "real_estate"},
+    {"agency": "nra", "pattern": "^Нефинансовые компании / Металлургия и горнодобыча$", "sector": "metals_mining"},
+    {"agency": "nra", "pattern": "^Нефинансовые компании / Электроэнергетика и ЖКХ$", "sector": "utilities"},
+    {"agency": "nra", "pattern": "^Нефинансовые компании / Транспорт$", "sector": "transport"},
+    {"agency": "nra", "pattern": "^Нефинансовые компании / АПК и пищевая промышленность$", "sector": "agro"},
+    {"agency": "raexpert", "pattern": "металлург", "sector": "metals_mining"},
+    {"agency": "raexpert", "pattern": "лизинг", "sector": "leasing"},
+    {"agency": "raexpert", "pattern": "банк", "sector": "banks"}
   ],
   "name_rules": [
     {"sector": "securitization_spv", "pattern": "\\bСФО\\b|специализированн\\w* финансов\\w* обществ|ипотечн\\w* агент|\\bИА\\b"},

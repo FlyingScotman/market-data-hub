@@ -28,6 +28,7 @@ calendar version and fingerprint for the whole set.
 
 from __future__ import annotations
 
+import re
 from collections import Counter, defaultdict
 from collections.abc import Mapping
 from datetime import date, datetime, timedelta
@@ -50,6 +51,8 @@ __all__ = [
     "face_schedule_labels",
     "face_steps",
     "face_value_date",
+    "issue_size_moex",
+    "replacement_by_name",
     "undated_offer_reason",
 ]
 
@@ -228,6 +231,32 @@ def undated_offer_reason(o: Mapping[str, Any], business_date: date) -> str:
     return "undated_unexplained"
 
 
+REPLACEMENT_NAME_RE: Final = re.compile(
+    r"(?<![0-9A-Za-zА-Яа-яЁё])(?:Б|С|СУБ-)?ЗО(?=[\s-]?(?:\d|Т\d)|$)|^ОВОЗ\b"
+)
+"""P1-6 name rule on the MOEX full name (NAME): a token ``ЗО`` (замещающие облигации), also
+``БЗО`` (perpetual), ``СЗО`` / ``СУБ-ЗО`` (subordinated), followed by a series number, ``Т1`` or
+the end (``Газпром капитал ООО ЗО27-1-Д``, ``МКБ ЗО-2027``, ``Банк ВТБ ЗО-Т1``, ``ТКБ
+СУБ-ЗО``), and the sovereign ``ОВОЗ РФ …`` (MinFin replacement of eurobonds). The short name
+is not used: ``ЗО-001P-01`` there is ``Защита онлайн``."""
+
+
+def replacement_by_name(name: str | None) -> bool:
+    """P1-6: does the MOEX full name mark a replacement bond (:data:`REPLACEMENT_NAME_RE`)?"""
+    return bool(name and REPLACEMENT_NAME_RE.search(name))
+
+
+def issue_size_moex(b: Mapping[str, Any]) -> tuple[Decimal | None, str | None]:
+    """P1-10: number of bonds as MOEX publishes it and the field it came from: ``ISSUESIZE``
+    (``ref.bond.issue_size``), else ``ISSUESIZEPLACED`` of the market board. Not the amount
+    outstanding: buybacks, offer redemptions and partial placements are not deducted."""
+    if b.get("issue_size") is not None:
+        return b["issue_size"], "ISSUESIZE"
+    if b.get("issue_size_placed") is not None:
+        return b["issue_size_placed"], "ISSUESIZEPLACED"
+    return None, None
+
+
 def _instrument(
     b: dict[str, Any],
     boards: list[dict[str, Any]],
@@ -235,7 +264,9 @@ def _instrument(
     *,
     schedule_frequency: int | None = None,
     face_date: date | None = None,
+    replacement: tuple[bool | None, str | None] = (None, None),
 ) -> dict[str, Any]:
+    size, size_field = issue_size_moex(b)
     return {
         "secid": b["secid"],
         "isin": b["isin"],
@@ -275,6 +306,10 @@ def _instrument(
         "day_count_source": b["day_count_source"],
         "listing_level": b["listing_level"],
         "issue_size": b["issue_size"],
+        "issue_size_moex": size,
+        "issue_size_moex_field": size_field,
+        "replacement_bond": replacement[0],
+        "replacement_basis": replacement[1],
         "primary_board": b["primary_board"],
         "status": b["status"],
         "calendar": BOND_CALENDAR,
@@ -365,10 +400,68 @@ def calendar_objects(
     return out, summary, eff
 
 
+def _evidence_field(row: Mapping[str, Any] | None, field: str) -> str | None:
+    ev = row.get("evidence") if row else None
+    value = ev.get(field) if isinstance(ev, Mapping) else None
+    return str(value) if value is not None else None
+
+
+def _document_url(row: Mapping[str, Any] | None) -> str | None:
+    """1.3: URL of the issue document a curated row was read from (``evidence``)."""
+    return _evidence_field(row, "document_url")
+
+
+def _replacement(
+    b: Mapping[str, Any], documented: Mapping[str, Any] | None
+) -> tuple[bool | None, str | None]:
+    """1.3 (P1-6): ``(replacement_bond, replacement_basis)``: a curated document entry decides
+    (``document``, true or false); else the name rule marks a replacement bond (``name_rule``,
+    true only: no match is ``None``, unknown, never ``false``)."""
+    if documented is not None:
+        value = documented["value"].get("replacement_bond")
+        if isinstance(value, bool):
+            return value, "document"
+    if replacement_by_name(b.get("name")):
+        return True, "name_rule"
+    return None, None
+
+
+def _rating(
+    r: Mapping[str, Any], scope: str, secid: str | None, issuer_id: int | None
+) -> dict[str, Any]:
+    return {
+        "scope": scope,
+        "secid": secid,
+        "issuer_id": issuer_id,
+        "agency": r["agency"],
+        "scale": r["scale"],
+        "rating": r["rating"],
+        "grade": r["grade"],
+        "outlook": r["outlook"],
+        "watch": r["watch"],
+        "rating_date": r["rating_date"],
+        "action": r["action"],
+        "rating_type": r["rating_type"],
+        "press_release": _evidence_field(r, "press_release"),
+        "mapping_basis": _evidence_field(r, "mapping_basis"),
+        "source": r["source"],
+    }
+
+
+def _rating_key(r: Mapping[str, Any]) -> tuple[str, str, int, str, str, str, str]:
+    return (
+        r["scope"], r["secid"] or "", r["issuer_id"] or 0, r["agency"], r["scale"],
+        r["source"], r["rating_type"] or "",
+    )  # fmt: skip
+
+
 def _rating_coverage(ratings: list[dict[str, Any]], bonds: list[dict[str, Any]]) -> dict[str, Any]:
-    """HS5 coverage: issuers of active non-structured RUB corporate bonds with a rating (the
-    desk's acceptance base); ``sources`` names where rows came from. No source rows is shown as
-    zero coverage, never filled from elsewhere."""
+    """HS5 / P1-1 coverage. ``active_rub_corporate_issuers_rated``: issuers of active
+    non-structured RUB corporate bonds with a current rating (issue or issuer scope; a withdrawn
+    rating does not count; the desk's acceptance base). 1.3: the same over active
+    non-structured bonds - rated themselves (issue), through their issuer, or either. No
+    source rows is shown as zero coverage, never filled from elsewhere."""
+    current = [r for r in ratings if r["rating"] is not None]
     base = {
         b["issuer_id"]
         for b in bonds
@@ -378,13 +471,48 @@ def _rating_coverage(ratings: list[dict[str, Any]], bonds: list[dict[str, Any]])
         and b["face_unit"] == "RUB"
         and b["issuer_id"] is not None
     }
-    rated = {r["issuer_id"] for r in ratings if r["issuer_id"] in base}
+    rated = {r["issuer_id"] for r in current if r["issuer_id"] in base}
+    active = [b for b in bonds if b["status"] == "active" and not b["is_structured"]]
+    issue_rated = {r["secid"] for r in current if r["scope"] == "issue"}
+    issuer_rated = {r["issuer_id"] for r in current if r["scope"] == "issuer"}
+    by_issue = {b["secid"] for b in active if b["secid"] in issue_rated}
+    by_issuer = {b["secid"] for b in active if b["issuer_id"] in issuer_rated}
     return {
         "rows": len(ratings),
         "by_agency": dict(sorted(Counter(r["agency"] for r in ratings).items())),
+        "by_source": dict(sorted(Counter(r["source"] for r in ratings).items())),
+        "by_scope": dict(sorted(Counter(r["scope"] for r in ratings).items())),
+        "withdrawn": sum(1 for r in ratings if r["rating"] is None),
         "sources": sorted({r["source"] for r in ratings}),
         "active_rub_corporate_issuers": len(base),
         "active_rub_corporate_issuers_rated": len(rated),
+        "active_non_structured_bonds": len(active),
+        "active_non_structured_bonds_issue_rated": len(by_issue),
+        "active_non_structured_bonds_issuer_rated": len(by_issuer),
+        "active_non_structured_bonds_rated": len(by_issue | by_issuer),
+    }
+
+
+def _documented_coverage(
+    bonds: list[dict[str, Any]], formulas: list[dict[str, Any]], scheduled_calls: set[str]
+) -> dict[str, Any]:
+    """1.3 (HS8 / HS9): how many of the desk-relevant terms are documented: active floaters on
+    the key rate or RUONIA with a curated formula, active perpetuals with a scheduled call."""
+    active = {b["secid"]: b for b in bonds if b["status"] == "active"}
+    on_key_ruonia = [
+        f
+        for f in formulas
+        if f["secid"] in active
+        and (f["benchmark"] == "KEY_RATE" or str(f["benchmark"] or "").startswith("RUONIA"))
+    ]
+    perpetuals = [s for s, b in active.items() if b["is_perpetual"]]
+    return {
+        "key_rate_ruonia_floaters": len(on_key_ruonia),
+        "key_rate_ruonia_floaters_curated": sum(
+            1 for f in on_key_ruonia if f["status"] == "curated"
+        ),
+        "active_perpetuals": len(perpetuals),
+        "active_perpetuals_with_scheduled_call": sum(1 for s in perpetuals if s in scheduled_calls),
     }
 
 
@@ -476,6 +604,14 @@ def build_static(
         "ORDER BY x.secid, x.agency, x.scale, x.source",
         {"t": t, "s": secids},
     ).fetchall()
+    issuer_rating_rows = conn.execute(
+        "SELECT * FROM ref.issuer_rating_known_at(%(t)s) x WHERE x.issuer_id = ANY(%(i)s) "
+        "ORDER BY x.issuer_id, x.agency, x.scale, x.source, x.rating_type",
+        {"t": t, "i": issuer_ids},
+    ).fetchall()
+    curated = _by_secid(
+        conn, "bond_curated_term_known_at", t, secids, "x.secid, x.term, x.term_key"
+    )
     isin_rows = conn.execute(
         "SELECT secid, isin FROM ref.bond_known_at(%(t)s) WHERE isin IS NOT NULL",
         {"t": t},
@@ -496,6 +632,9 @@ def build_static(
         o["secid"] for o in offers if o["offer_type"] == "call" and o["status"] == "scheduled"
     }
     scheduled_offers = {o["secid"] for o in offers if o["status"] == "scheduled"}
+    documented: dict[tuple[str, str, str], dict[str, Any]] = {
+        (c["secid"], c["term"], c["term_key"]): c for c in curated
+    }
     redemptions_of: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for a in amort:
         redemptions_of[a["secid"]].append({"date": a["amort_date"], "value_per_bond": a["value"]})
@@ -546,6 +685,7 @@ def build_static(
                 labels,
                 schedule_frequency=coupon_frequency_from_schedule(coupons_of[b["secid"]]),
                 face_date=face_value_date(b, redemptions_of[b["secid"]], cut.business_date),
+                replacement=_replacement(b, documented.get((b["secid"], "replacement_bond", ""))),
             )
         )
     prov.add_rows("instruments", bonds)
@@ -600,6 +740,12 @@ def build_static(
             "face_value": o["face_value"],
             "face_unit": o["face_unit"],
             "agent": o["agent"],
+            "evidence_document_url": _document_url(
+                documented.get((o["secid"], "call", o["offer_key"]))
+                or documented.get((o["secid"], "offer", o["offer_key"]))
+            )
+            if o["source"] == "curated"
+            else None,
             "labels": sorted_labels(
                 "date_missing" if o["date_missing"] else None,
                 undated_offer_reason(o, cut.business_date) if o["date_missing"] else None,
@@ -608,6 +754,9 @@ def build_static(
         for o in offers
     ]
     prov.add_rows("offers", offers)
+    curated_formula = {
+        r["secid"]: r for r in formula_rows if r["source"] == "curated" and r["evidence"]
+    }
     formula_out = [
         {
             "secid": f["secid"],
@@ -624,6 +773,8 @@ def build_static(
             "fixing_day": f["fixing_day"],
             "status": f["status"],
             "sources": list(f["sources"] or []),
+            "evidence_document_url": _document_url(curated_formula.get(f["secid"])),
+            "evidence_page": _evidence_field(curated_formula.get(f["secid"]), "page"),
         }
         for f in formulas
     ]
@@ -650,23 +801,16 @@ def build_static(
     ]
     prov.add_rows("issuers", issuers)
     issuer_of = {b["secid"]: b["issuer_id"] for b in bonds}
-    ratings_out = [
-        {
-            "scope": "issue",
-            "secid": r["secid"],
-            "issuer_id": r["issuer_id"] if r["issuer_id"] is not None else issuer_of[r["secid"]],
-            "agency": r["agency"],
-            "scale": r["scale"],
-            "rating": r["rating"],
-            "outlook": r["outlook"],
-            "watch": None,
-            "rating_date": r["rating_date"],
-            "action": None,
-            "source": r["source"],
-        }
-        for r in rating_rows
-    ]
-    prov.add_rows("ratings", rating_rows)
+    ratings_out = sorted(
+        [
+            _rating(r, "issue", r["secid"],
+                    r["issuer_id"] if r["issuer_id"] is not None else issuer_of[r["secid"]])
+            for r in rating_rows
+        ]
+        + [_rating(r, "issuer", None, r["issuer_id"]) for r in issuer_rating_rows],
+        key=_rating_key,
+    )  # fmt: skip
+    prov.add_rows("ratings", [*rating_rows, *issuer_rating_rows])
     for r in cal_rows:
         prov.add("calendars", r["source"], r["run_id"], r["ingested_at"])
 
@@ -717,6 +861,7 @@ def build_static(
             {
                 "by_status": dict(sorted(Counter(f["status"] for f in formulas).items())),
                 "floaters_without_formula": label_counts.get("floater_formula_missing", 0),
+                **_documented_coverage(bonds, formulas, scheduled_calls),
             },
         ),
         Dataset("issuers", issuer_out, _issuer_coverage(issuer_out, bonds, issuers)),
