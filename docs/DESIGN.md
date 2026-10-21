@@ -92,9 +92,9 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
   | `MOEX_FX` | `observed_moex_fx`: CETS CNYRUB_TOM history row | same | MOEX FX datasets |
   | `MOEX_FORTS` | `observed_moex_forts`: Si futures volume > 0 | same | FORTS datasets |
   | `RU_PRODUCTION` | `observed_cbr_ruonia`: a RUONIA fixing (`md.fixing`) | `curated` (Government decrees) | CBR datasets, meeting effective dates |
-  | `TARGET` (0422) | — (rule only) | `rule_target` for past and future days: weekends + computed TARGET closing days (Jan 1, Good Friday, Easter Monday — Gregorian computus —, May 1, Dec 25, Dec 26), from 2002-01-01 (or `--since` if later) through the end of next year | `ecb_fx` |
+  | `TARGET` (0422) | — (rule only) | `rule_target` for past and future days: weekends + computed TARGET closing days (Jan 1, Good Friday, Easter Monday — Gregorian computus —, May 1, Dec 25, Dec 26), from 2002-01-01 (or `--since` if later) through 2037-12-31 (or the end of next year if later) | `ecb_fx` |
 
-  Observed rows cover every day from the start to the last observed day (no trading / fixing → `false`); curated and ISS rows are written only for later days. TARGET is rule-only: the rule is exact (ECB rate dates 2015-01-02..2026-10-15 match it day for day: the 57 weekdays without rates are exactly the closing days), and deriving it from `md.ecb_fx` would turn a failed ECB load into a holiday. ECB data only **cross-checks** the rule on every calendar refresh: a TARGET business day without ECB rates (inside the ECB data range, past the 1-business-day no-data grace) or ECB rates on a closing day → warning and calendar run `partial`; the calendar is not changed. `ecb_fx` used Monday–Friday before 0422, so every TARGET holiday ended `unfillable`; the quality scan closes those gaps as `not_expected` once the TARGET calendar is seeded.
+  Observed rows cover every day from the start to the last observed day (no trading / fixing → `false`); curated and ISS rows are written only for later days. The curated file runs to **2037** (WEB-15): 2028–2037 are `curated_unverified` (provisional, lowest precedence; the static snapshot reports them through `provisional_from`) — RU_PRODUCTION from the Labour Code art. 112 rule alone (the Government decree's moves of January weekend days and its working Saturdays are not known in advance), MOEX_* from the MOEX practice rule of 2027 (closed on weekday official holidays and Dec 31). TARGET is rule-only: the rule is exact (ECB rate dates 2015-01-02..2026-10-15 match it day for day: the 57 weekdays without rates are exactly the closing days), and deriving it from `md.ecb_fx` would turn a failed ECB load into a holiday. ECB data only **cross-checks** the rule on every calendar refresh: a TARGET business day without ECB rates (inside the ECB data range, past the 1-business-day no-data grace) or ECB rates on a closing day → warning and calendar run `partial`; the calendar is not changed. `ecb_fx` used Monday–Friday before 0422, so every TARGET holiday ended `unfillable`; the quality scan closes those gaps as `not_expected` once the TARGET calendar is seeded.
 
   **Known limitation (observed calendars):** `RU_PRODUCTION` past days come from `observed_cbr_ruonia` (and the MOEX calendars from trading history): if a RUONIA load failed and the day is still empty when the calendar refresh runs, that day becomes a non-business day (a "holiday"), and a gap of a dataset on that calendar is then closed as `not_expected` instead of staying open. Not changed: there is no exact rule for the Russian production calendar (Government transfer decrees).
 - `ref.weekend_session(calendar, day, source, trade_session_date, is_deleted, known_at, ingested_at, note, capture_id, run_id)` PK (calendar, day, source) (0421; soft deletes 0500) — days on which a MOEX engine trades although they are not settlement business days (ISS `engines/{engine}/calendar.json` rows `is_work_day=1, reason='W'`; trades belong to `trade_session_date`). Stored for every listed day of the year (past ones too: the observed calendars cannot see them); future rows ISS no longer lists are soft-deleted. **Trading day of an engine** = business day (`ref.calendar_effective`) or a day listed here (`CalendarPredicate.is_trading_day`); `ref.calendar_day` keeps these days non-business. Trading days date quotes ("previous session") and gate the FORTS polls; business days drive EOD trade dates, `days_back` and gap expectations. Calendar refresh: an ISS engine answer with < 5 rows of its engine or none in the current year is treated as incomplete — listed days are written, nothing is deleted (warning, run `partial`).
@@ -159,11 +159,13 @@ src/mdhub/
   core/heartbeat.py    worker heartbeat (ops.worker_heartbeat)
   snapshot/            canonical.py (canonical JSON, sha256, gzip), schema.py (contract
                        validation), build.py, static.py, market.py (builders, as known at),
-                       publish.py (ops.published_snapshot), runner.py (build + publish)
+                       publish.py (ops.published_snapshot), runner.py (build + publish),
+                       readiness.py (eod_final inputs, corrections after backfills)
   jobs.py              job registry (@job), JobContext, run_job, running_jobs, loader discovery
   schedule.py          cron rules (APScheduler)
   api/                 app.py (FastAPI read API), auth.py (tokens, scopes),
-                       requestlog.py (ops.api_request batch writer)
+                       requestlog.py (ops.api_request batch writer), columnar.py +
+                       routes/history.py (/v1/history/*)
   cli.py               `mdhub` (typer); cli_ext/ auto-registered sub-command groups
 ```
 
@@ -200,7 +202,10 @@ Migration ownership (to avoid conflicts): `0001-0099` core/ops; `0100-0199` ref 
 | `source_probe` | every 5 min (all days) | every source | one lightweight request per source → `ops.source_probe` (reachability, HTTP status, latency, credentials ok / rejected / not configured, TLS certificate expiry, sanitized error); no retries, 15 s timeout, no raw capture. Ratescalcs only Mon–Fri 08:50–23:00 MSK (service hours); Cbonds at most hourly (one `get_emissions` query, `limit=1`: a rejected login must not hit the provider every 5 min). `-p sources=cbr,ecb`, `-p force=true` for manual runs |
 | `maintenance` | 02:00 `backup` (pg_dump, keep 14); 03:00 `retention` (all days) | DB | observability rows (`ops.api_request`, `ops.source_probe`, `ops.worker_heartbeat`) older than `MDHUB_OPS_LOG_RETENTION_DAYS` (90); raw retention of `intraday:reread:` captures (7 days, `MDHUB_RAW_RETENTION_DAYS_REREAD`) and other `intraday:` captures (90 days); intraday market snapshots (30 days, `MDHUB_SNAPSHOT_RETENTION_DAYS_INTRADAY`; static and EOD snapshots are kept forever); AlgoPack rolling window (`MDHUB_ALGOPACK_RETENTION_DAYS`, 90 calendar days): tradestats/FUTOI rows with `trade_date` before the window start (one date per committed delete), their `ops.row_history` images, AlgoPack raw captures (all `algopack_fx_futures` endpoints, incl. `*_history`) fetched before 00:00 MSK of the window start, plus backfill `*_history` captures whose requested range (`till=`) ends before the window start whenever they were fetched; orphaned `running` job runs (>12 h) → failed, VACUUM ANALYZE |
 | `snapshot_static` | 07:45 `daily` (`MDHUB_SNAPSHOT_STATIC_TIME`) | DB | static snapshot after `bonds_static` 06:30 and `cbonds_enrich` 07:30 (§11); static changes during the day are published by the next market cut (`change`) |
-| `snapshot_market` | 19:45 `eod_preliminary` (D), 08:00 `eod_final` (D-1), every 30 min 10:00–19:00 `intraday` (`MDHUB_SNAPSHOT_*`) | DB | market cuts (§11); EOD rules wait for the lock and are caught up, intraday cuts are polls |
+| `snapshot_market` | 19:45 `eod_preliminary` (D), 08:00 `eod_final` (D-1), every 30 min 10:00–19:00 `intraday` (`MDHUB_SNAPSHOT_*`) | DB | market cuts (§11); EOD rules wait for the lock and are caught up, intraday cuts are polls; `eod_final` waits up to `MDHUB_SNAPSHOT_EOD_FINAL_WAIT_MINUTES` (30) for the final `bonds_eod` / `zcyc` runs of D (§11 "Input readiness") |
+| `snapshot_rebuild` | not scheduled: the backfill job of dataset `snapshot_eod_final` | DB | rebuilds published `eod_final` cuts of `date_from..date_to` (correction only when the content changed); queued by the backfill worker after a backfill that changed inputs of such a day (§11 "Corrections after backfills") |
+
+**Curve gaps (WEB-15, review §6.2).** The per-source curve datasets (`ratescalcs_*`, `otc_monitor_*`) are `event` datasets (freshness only). The curves every market cut requires are also registered dataset-level: `curves_ruonia_ois` and `curves_key_rate_swap` (`md.curve_snapshot`, `business_daily` on MOEX_STOCK from 2026-01-05, max lag 1): a business day without a stored snapshot from **any** source is an `ops.data_gap` (`/v1/gaps`) and makes the dataset stale. No backfill job (the live sources have no history): the gap stays `open` until a snapshot of that day is stored (history import), which closes it as `backfilled`. Dataset `snapshot_eod_final` (`ops.published_snapshot`, `event`, lag 4 days) shows the freshness of the published `eod_final` cuts in `/v1/coverage`.
 
 **Lock contention.** Every job holds advisory lock `mdhub.job:<name>`. A scheduled fire waits up to
 15 minutes for it (polling rules — intraday snapshots, AlgoPack, Ratescalcs, OTC Monitor, the backfill worker, source probes —
@@ -269,7 +274,9 @@ mechanism: `DatasetSpec.rolling_window_setting` names the `Settings` field holdi
 snapshot cuts (§11; owner decision DEC04, defaults): `MDHUB_SNAPSHOT_STATIC_TIME=07:45`,
 `MDHUB_SNAPSHOT_EOD_PRELIMINARY_TIME=19:45`, `MDHUB_SNAPSHOT_EOD_FINAL_TIME=08:00`,
 `MDHUB_SNAPSHOT_INTRADAY_MINUTES=30` (divides 60; 0 = off), `MDHUB_SNAPSHOT_INTRADAY_WINDOW=10:00-19:00`,
-`MDHUB_SNAPSHOT_RETENTION_DAYS_INTRADAY=30`,
+`MDHUB_SNAPSHOT_RETENTION_DAYS_INTRADAY=30`, `MDHUB_SNAPSHOT_EOD_FINAL_WAIT_MINUTES=30` (`eod_final` input
+readiness, 0 = no wait), `MDHUB_SNAPSHOT_AUTOCORRECT=true` (rebuild published `eod_final` cuts after
+backfills that changed their inputs),
 `MDHUB_ISS_RPS=3`, `MDHUB_RAW_RETENTION_DAYS_INTRADAY=90`, `MDHUB_RAW_RETENTION_DAYS_REREAD=7`
 (`intraday:reread:` captures), `MDHUB_ALGOPACK_FULL_REREAD_MINUTES=30`,
 `MDHUB_ALGOPACK_RETENTION_DAYS=90` (AlgoPack rolling window, calendar days, §6), `MDHUB_API_TOKENS` (comma list,
@@ -310,7 +317,9 @@ joined yields; `known_at=`), `/v1/bonds/{secid}/history`, `/v1/fx/official`, `/v
 `/v1/fx/indicative`, `/v1/fx/ecb`, `/v1/futures/eod`, `/v1/futures/contracts`, `/v1/fixings`
 (`known_at=`), `/v1/curves`, `/v1/curves/{dataset}?as_of=`, `/v1/zcyc?date=`, `/v1/indices/eod`,
 `/v1/calendar` (`ref.calendar_effective`: source precedence), `/v1/snapshots?kind&cut_type&business_date&latest`,
-`/v1/snapshots/{id}/manifest`, `/v1/snapshots/{id}/bundle` (§11), `/v1/export/tdm?date=` (zip of TDM
+`/v1/snapshots/{id}/manifest`, `/v1/snapshots/{id}/bundle` (§11), the columnar history endpoints
+`/v1/history/index`, `/v1/history/bonds`, `/v1/history/curves/{dataset}`, `/v1/history/zcyc`,
+`/v1/history/fixings`, `/v1/history/fx` (below), `/v1/export/tdm?date=` (zip of TDM
 1.3 CSV files + `manifest.json`; the MOEX 19:00 indicative `md_fx` candidate only with
 `fx_candidate=true`; CLI `mdhub export tdm --fx-candidate`).
 
@@ -324,6 +333,21 @@ returns the latest snapshot with `fetched_at <= as_of`, one per source. TDM expo
 rate/amount only for `known` coupons (others empty, counted in `manifest.json` `withheld_values`);
 `md_bond_quotes.ytm` = MOEX effective yield only when its yield date is the nearest offer ahead
 (else maturity) and the bond is fixed/zero coupon, never YIELDCLOSE.
+
+**History endpoints (WEB-15; reference [HISTORY_API.md](HISTORY_API.md)).** `/v1/history/*` (scope `read`) return
+history for many instruments per call in a columnar envelope `{dataset, columns, rows, as_of, known_at,
+data_version, next, meta}`: rows rendered by PostgreSQL (`json_build_array`, exact numeric digits),
+keyset cursors bound to their query (`next` → `cursor=`), at most 50,000 rows per page (default 10,000),
+500 SECIDs / 200 fixing codes / 100 FX pairs per call. A weak `ETag` from a cheap version query of the
+selection (row counts + latest write per table) and `Last-Modified` (= `data_version`) let a poll end
+with `304` before any row is read; gzip on `Accept-Encoding`. `known_at=` reads through the same
+as-known-at readers as the snapshot builders (curves: `fetched_at`/`ingested_at` ≤ `known_at`), so a
+consumer can reproduce what a cut saw. Bonds use the snapshot BondQuote field names (1.2), main board by
+default (`marketprice_board`, else `primary_board`); curves give per (day, source) the end-of-day quote set
+of the `eod_final` rule (`rule=eod`) or every stored snapshot (`rule=all`); ZCYC the end-of-day
+publication (else the latest, labelled); fixings `md.fixing` plus the RUSFAR family with the 1.2 units;
+FX CBR official (by effective date), MOEX CETS EOD outrights (exact per-unit values) and the MOEX
+indicative rates. Index for the curve EOD rule: migration 0427.
 
 **Curve sources.** `ruonia_ois`, `key_rate_swap` and `cny_ruonia_xccy` have two live sources —
 `ratescalcs` (dealer run pages every 30 min, no source clock; XCCY tenors ON–12M) and
@@ -378,7 +402,8 @@ The hub's dispatch layer (system ADR-002, doc 02 §3/§6; milestone M1). The des
 only immutable snapshots; the TDM CSV export stays until it does.
 
 **Contract.** JSON Schema and golden fixtures in `schemas/market_snapshot/v1/` (see its
-README): envelope/manifest, static objects (Instrument, CouponPeriod, Redemption, Offer,
+README; `schema_version` `market_snapshot/1.2` since WEB-15: linker / WAP analytics in
+`source_analytics`, `Fixing.hub_ingested_at`, explicit RUSFAR units): envelope/manifest, static objects (Instrument, CouponPeriod, Redemption, Offer,
 FloaterFormula, Issuer, Calendar, IdMap) and market objects (BondQuote EOD/intraday,
 CurveQuoteSet, ZcycParams, Fixing, FxRate, CrossRate, CbrMeeting). Decimals are strings with
 the stored digits, units in field names, instants UTC. The wheel carries the schemas as
@@ -445,6 +470,26 @@ cut: `cut` (default: the configured time of `daily` / `eod_preliminary` / `eod_f
 the business date (`eod_final`: on the next business day), whatever the run day, so a later
 rebuild of D corrects the same cut; `intraday` / `change` without `cut`: the fire minute.
 `known_at` = the run's start (replay: `-p known_at=...`). Manual: `mdhub run snapshot_market -p mode=eod_final -p day=2026-10-15`.
+
+**Input readiness (WEB-15, review §6.3).** The scheduled `eod_final` cut of D waits up to
+`MDHUB_SNAPSHOT_EOD_FINAL_WAIT_MINUTES` (default 30; job parameter `wait_minutes`) until the final
+`bonds_eod` and `zcyc` runs of D have loaded (`mdhub.snapshot.readiness`: a `succeeded`/`partial` run
+that finished after D ended and covered D - explicit dates, or a final mode whose `days_back` contains
+D), re-checking every 30 s. It then builds as known at that moment; an input still missing adds a stale
+reason `input not ready: ...` to `bond_quotes` / `zcyc_params` and the run ends `partial` (nothing is
+invented; stale reasons are manifest facts, not content). Only the regular cut of the previous business
+day is checked; a replay with `known_at` uses the job log up to `known_at`, so it stays deterministic.
+
+**Corrections after backfills (WEB-15, P1-3).** When a backfill task's run changed rows of a job that
+feeds the `eod_final` cut of its own date (`bonds_eod`, `zcyc`, `indices_eod`, `fx_moex_eod`,
+`fx_indicative`, `cbr_daily`, `ecb_fx`, `rosstat_cpi`) and `MDHUB_SNAPSHOT_AUTOCORRECT` is on, the
+backfill worker queues the published `eod_final` cuts of the business dates in the task's range
+(dataset `snapshot_eod_final`, job `snapshot_rebuild`, tasks of at most 5 days). `snapshot_rebuild`
+rebuilds each current cut with its own `cut_ts` as known now: unchanged content publishes nothing,
+changed content publishes a correction that `supersedes` it. Days without a published `eod_final`
+are never built automatically. Known limit: windowed inputs (the 400-day fixing window, the CBR FX
+forward window, ECB lookback) of *later* cuts are not followed; rebuild those with
+`mdhub run snapshot_rebuild -p date_from=... -p date_to=...`.
 
 **Retention.** Static and EOD snapshots are kept forever (daily static ≈ 2.2 MB gzip). Intraday
 market snapshots are deleted after `MDHUB_SNAPSHOT_RETENTION_DAYS_INTRADAY` (30) days by

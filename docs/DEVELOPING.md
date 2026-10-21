@@ -44,7 +44,9 @@ src/mdhub/
   core/decimalutil.py, core/errors.py, core/redact.py, core/bizday.py
   core/heartbeat.py Heartbeat (ops.worker_heartbeat, started by `mdhub scheduler`)
   jobs.py          @job registry, JobContext, run_job(), running_jobs(), discover_jobs()
-  api/             app.py (read API), auth.py (tokens, scopes), requestlog.py (ops.api_request)
+  api/             app.py (read API), auth.py (tokens, scopes), requestlog.py (ops.api_request),
+                   columnar.py + routes/history.py (/v1/history/*: columnar pages, cursors,
+                   ETag / Last-Modified, gzip; docs/HISTORY_API.md)
   quality/         checks, gaps, backfill, job health, source_probe (job source_probe)
   schedule.py      RULES (DESIGN §6) + APScheduler worker
   cli.py           `mdhub` CLI;  cli_ext/  auto-registered sub-command groups
@@ -166,7 +168,7 @@ src/mdhub/
   data change (`core.upsert.META_COLUMNS`, `ops.track_changes()`).
 - Numbers: next free number of the range; review fixes of 2026-10-16 are `0420_review_fixes.sql`
   and `0421_review2_fixes.sql` (follow-up review); `0422_target_calendar.sql` adds the TARGET
-  calendar. A new calendar needs `mdhub.core.bizday.CALENDARS` plus a migration widening the
+  calendar; `0427_history_api.sql` the curve index of the history API. A new calendar needs `mdhub.core.bizday.CALENDARS` plus a migration widening the
   `ref.calendar_day.calendar` CHECK (find the constraint by definition, as 0420/0422 do).
   Prefer an exact computed rule (a `rule_*` source, like `rule_target`) over deriving a calendar
   from the data it gates: an observed calendar turns a failed load into a holiday. Use the data
@@ -304,6 +306,10 @@ The hub owns the Market Snapshot Contract (`schemas/market_snapshot/v1/`, DESIGN
   floats: `mdhub.snapshot.canonical` rejects them). `jsonb` numbers are read as `::text` and
   parsed with `json_decimal`.
 - A record is in `data` (with labels) or in `excluded` with a reason, never dropped.
+- A new history endpoint renders rows in SQL (`json_build_array(...)::text`), pages with a keyset
+  cursor (`mdhub.api.columnar`) and needs a version query (counts + latest write of every table it
+  reads) for its ETag; reuse the snapshot's field names and selection rules (e.g. the curve EOD
+  rule) so a consumer sees the same facts in both.
 - Changing an object (field, enum value, unit) is a contract change: bump `schema_version`
   (`mdhub.snapshot.schema.SCHEMA_VERSION`, the `const` in the schemas), regenerate the golden
   fixtures in the same reviewed change (`MDHUB_REGEN_GOLDEN=1 uv run pytest
