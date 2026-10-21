@@ -14959,8 +14959,8 @@
    "coverage": {
     "secids": 10,
     "trade_date": "2026-10-15",
-    "universe": 10,
-    "universe_without_quote": 0
+    "universe": 11,
+    "universe_without_quote": 1
    },
    "name": "bond_quotes",
    "rows": 11,
@@ -15005,7 +15005,12 @@
      "otc_monitor/ruonia_ois",
      "ratescalcs/key_rate_swap",
      "ratescalcs/ruonia_ois"
-    ]
+    ],
+    "required_datasets": [
+     "key_rate_swap",
+     "ruonia_ois"
+    ],
+    "required_without_any_source": []
    },
    "name": "curve_quote_sets",
    "rows": 7,
@@ -19924,13 +19929,13 @@
   "fixing_lookback_days": 14,
   "fx_forward_days": 7,
   "fx_lookback_days": 0,
-  "intraday_fixing_lookback_days": 7
+  "intraday_fixing_lookback_days": 200
  },
  "producer": {
   "name": "market-data-hub",
   "version": "0.1.0"
  },
- "schema_version": "market_snapshot/1.0",
+ "schema_version": "market_snapshot/1.1",
  "sources": [
   {
    "dataset": "bond_quotes",
@@ -20043,6 +20048,6 @@
    "source": "moex_iss"
   }
  ],
- "static_snapshot_id": "4f173275220b492c558acad982351bac01fe73baea6d50dcb0fcc38400953c4a",
+ "static_snapshot_id": "3a1d780c5364d29368cf3a7d93efb1ed5ab3b2b26c6bae14f78b34cec4355680",
  "supersedes": null
 }

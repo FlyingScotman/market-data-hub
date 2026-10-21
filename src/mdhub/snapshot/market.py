@@ -36,6 +36,7 @@ from mdhub.snapshot.build import (
 __all__ = [
     "EXPECTED_CURVES",
     "PRECIOUS_METALS",
+    "REQUIRED_CURVE_DATASETS",
     "MarketParams",
     "build_market",
 ]
@@ -53,6 +54,10 @@ EXPECTED_CURVES: Final = (
 )
 """Live (source, dataset) quote-set series; a missing one is a coverage gap, not an error."""
 
+REQUIRED_CURVE_DATASETS: Final = ("key_rate_swap", "ruonia_ois")
+"""Quote sets the desk needs from at least one source in every cut (TDM risk on the RUONIA and
+key-rate curves); a cut without any source of one is flagged stale, never filled."""
+
 PRECIOUS_METALS: Final = frozenset({"GLD", "SLV", "PLT", "PLD"})
 _OIS_LIKE: Final = frozenset({"ruonia_ois", "key_rate_swap"})
 
@@ -63,7 +68,10 @@ class MarketParams:
 
     fixing_lookback_days: int = 400
     """EOD cuts: fixings with fixing_date in [D - n, D + fx_forward_days] (floater history)."""
-    intraday_fixing_lookback_days: int = 7
+    intraday_fixing_lookback_days: int = 200
+    """Intraday cuts: fixings with fixing_date in [D - n, D + fx_forward_days]. OFZ-PK and
+    RUONIA floaters need the compounding / averaging history of the current coupon period
+    (up to ~6 months), so intraday cuts carry 200 days (TDM HR3; EOD cuts 400)."""
     fx_lookback_days: int = 0
     """CBR official rates: effective dates in [D - n, D + fx_forward_days] (one row per
     calendar day the rate is in force)."""
@@ -329,6 +337,9 @@ def _curve_sets(conn: DictConnection, t: datetime, d: date, prov: Provenance) ->
             }
         )
     present = {(s["source"], s["dataset"]) for s in snaps}
+    present_datasets = {ds for _, ds in present}
+    without_source = [ds for ds in REQUIRED_CURVE_DATASETS if ds not in present_datasets]
+    stale.extend(f"{ds}: no quote set from any source on {d.isoformat()}" for ds in without_source)
     return Dataset(
         "curve_quote_sets",
         out,
@@ -336,6 +347,8 @@ def _curve_sets(conn: DictConnection, t: datetime, d: date, prov: Provenance) ->
             "expected": [f"{a}/{b}" for a, b in EXPECTED_CURVES],
             "present": sorted(f"{a}/{b}" for a, b in present),
             "missing": [f"{a}/{b}" for a, b in EXPECTED_CURVES if (a, b) not in present],
+            "required_datasets": list(REQUIRED_CURVE_DATASETS),
+            "required_without_any_source": without_source,
         },
         stale,
     )

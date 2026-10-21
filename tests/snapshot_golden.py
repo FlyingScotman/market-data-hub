@@ -10,6 +10,11 @@ bonds and the business date 2026-10-15, stored as ``tests/fixtures/snapshot/sour
 
     uv run python tests/snapshot_golden.py extract "host=... dbname=mdhub user=postgres"
 
+* 2026-10-20 (WEB-13): the issuer rows carry the issuer reference (short name, OGRN,
+  country, sector, group) and RU000A107KV4 (redemption on 2026-10-15) was added, both from a
+  hub database fed by public MOEX ISS on 2026-10-20 (``issuers_static``, ``bonds_static``);
+  their version times are set to the seed's latest version time, so ``known_at`` is unchanged.
+
 * rebuild the golden bundles (pytest provides the throw-away PostgreSQL)::
 
     MDHUB_REGEN_GOLDEN=1 uv run pytest tests/test_snapshot_golden.py
@@ -48,6 +53,7 @@ GOLDEN_SECIDS: Final = {
     "RU000A100GW5": "perpetual subordinated (Alfa-Bank)",
     "RU000A1034P7": "perpetual subordinated (VTB)",
     "RU000A10GCT1": "corporate with coupon_type unknown",
+    "RU000A107KV4": "corporate amortizer with a redemption on the business date (face rule)",
 }
 
 # table -> WHERE clause (parameters: secids, day, lo, hi, cal_lo, cal_hi); order columns

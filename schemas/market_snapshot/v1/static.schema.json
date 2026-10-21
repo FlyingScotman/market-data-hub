@@ -15,6 +15,7 @@
         "issuer_id",
         "name",
         "short_name",
+        "lat_name",
         "sec_type",
         "bond_type",
         "bond_subtype",
@@ -28,6 +29,7 @@
         "currency_id",
         "face_value",
         "initial_face_value",
+        "face_value_date",
         "issue_date",
         "maturity_date",
         "is_perpetual",
@@ -39,6 +41,7 @@
         "qualified_only",
         "high_risk",
         "coupon_frequency",
+        "coupon_frequency_schedule",
         "coupon_period_days",
         "day_count",
         "day_count_source",
@@ -79,6 +82,13 @@
           ]
         },
         "short_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lat_name": {
+          "description": "MOEX LATNAME verbatim (Latin name; SHORTNAME is cut at 10 characters)",
           "type": [
             "string",
             "null"
@@ -191,6 +201,14 @@
             }
           ]
         },
+        "face_value_date": {
+          "description": "Date from which face_value is outstanding according to the redemption schedule: the date of the latest redemption already deducted from initial_face_value (issue_date when none is). On a redemption date, face_value_date = business_date means MOEX had already deducted that day's redemption when the static was built. null when face_value matches no step of the schedule (or a value is missing)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date_or_null"
+            }
+          ]
+        },
         "issue_date": {
           "$ref": "common.schema.json#/$defs/date_or_null"
         },
@@ -253,6 +271,14 @@
             "integer",
             "null"
           ]
+        },
+        "coupon_frequency_schedule": {
+          "description": "Coupons per year from the published schedule: round(365.25 / median coupon period in days) over all coupon periods with start and pay dates; null with fewer than 2 such periods. coupon_frequency stays as MOEX states it (MOEX omits it when the first period is irregular)",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
         },
         "coupon_period_days": {
           "type": [
@@ -758,8 +784,15 @@
         "name",
         "short_name",
         "sector",
+        "sector_source",
+        "okved",
+        "okved_version",
         "country",
-        "is_sovereign"
+        "is_sovereign",
+        "group_id",
+        "group_name",
+        "group_relation",
+        "is_state_owned"
       ],
       "properties": {
         "issuer_id": {
@@ -795,6 +828,30 @@
             "null"
           ]
         },
+        "sector_source": {
+          "description": "Where sector came from: okved (OKVED2 mapping) | curated (per-INN entry) | group (curated issuer group) | rule (bond-class or name rule of mdhub/data/sector_map.json); null without sector",
+          "enum": [
+            "okved",
+            "curated",
+            "group",
+            "rule",
+            null
+          ]
+        },
+        "okved": {
+          "description": "Main OKVED2 activity code; null: not loaded (FNS registers not reachable from the hub)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "okved_version": {
+          "description": "OKVED classifier version of okved (e.g. OKVED2)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
         "country": {
           "type": [
             "string",
@@ -803,6 +860,123 @@
         },
         "is_sovereign": {
           "type": "boolean"
+        },
+        "group_id": {
+          "description": "Curated issuer group (mdhub/data/issuer_groups_curated.json); null: not mapped",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "group_name": {
+          "description": "Display name of the group, e.g. Газпром, ВТБ, РЖД",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "group_relation": {
+          "enum": [
+            "parent",
+            "subsidiary",
+            "spv",
+            "securitization_spv",
+            "affiliate",
+            null
+          ]
+        },
+        "is_state_owned": {
+          "description": "true only where an evidence document states it; null: not established",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        }
+      }
+    },
+    "rating": {
+      "description": "Credit rating as known at known_at (ref.bond_rating; 1.1, HS5). Values verbatim from the source, nothing inferred; withdrawn ratings are absent or carry action = withdrawn",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "secid",
+        "issuer_id",
+        "agency",
+        "scale",
+        "rating",
+        "outlook",
+        "watch",
+        "rating_date",
+        "action",
+        "source"
+      ],
+      "properties": {
+        "scope": {
+          "description": "issue: rating of the bond secid; issuer: rating of issuer_id",
+          "enum": [
+            "issue",
+            "issuer"
+          ]
+        },
+        "secid": {
+          "description": "scope issue: the rated bond; issuer: null",
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/secid"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "issuer_id": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "agency": {
+          "description": "Agency as the source names it (e.g. АКРА, Эксперт РА, НКР, НРА)",
+          "type": "string"
+        },
+        "scale": {
+          "description": "Rating scale as the source names it (e.g. national scale for the Russian Federation); empty string when the source gives none",
+          "type": "string"
+        },
+        "rating": {
+          "description": "Rating verbatim",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "outlook": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "watch": {
+          "description": "Rating watch / under review flag as published; null when the source does not publish it",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rating_date": {
+          "$ref": "common.schema.json#/$defs/date_or_null"
+        },
+        "action": {
+          "description": "Rating action as published (assigned, affirmed, upgraded, downgraded, withdrawn, ...); null when the source does not publish it",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "Hub source of the row (cbonds, ...)",
+          "type": "string"
         }
       }
     },
@@ -982,6 +1156,7 @@
         "offers",
         "floater_formulas",
         "issuers",
+        "ratings",
         "calendars",
         "id_map"
       ],
@@ -1020,6 +1195,12 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/issuer"
+          }
+        },
+        "ratings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rating"
           }
         },
         "calendars": {

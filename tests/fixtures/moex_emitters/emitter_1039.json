@@ -1,0 +1,23 @@
+{
+"emitter": {
+	"metadata": {
+		"EMITTER_ID": {"type": "int32"},
+		"TITLE": {"type": "string", "bytes": 765, "max_size": 0},
+		"SHORT_TITLE": {"type": "string", "bytes": 384, "max_size": 0},
+		"INN": {"type": "string", "bytes": 30, "max_size": 0},
+		"OGRN": {"type": "string", "bytes": 39, "max_size": 0},
+		"OKPO": {"type": "string", "bytes": 24, "max_size": 0},
+		"OKSM": {"type": "int32"},
+		"TRANSLITERATION_TITLE": {"type": "string", "bytes": 384, "max_size": 0},
+		"LEGAL_ADDRESS": {"type": "string", "bytes": 765, "max_size": 0},
+		"POSTAL_ADDRESS": {"type": "string", "bytes": 765, "max_size": 0},
+		"URL": {"type": "string", "bytes": 384, "max_size": 0},
+		"CAPITALIZATION": {"type": "double"},
+		"EMITTER_CAPITALIZATION": {"type": "double"},
+		"EMITTER_CAPITALIZATION_UPDATETIME": {"type": "string", "bytes": 63, "max_size": 0}
+	},
+	"columns": ["EMITTER_ID", "TITLE", "SHORT_TITLE", "INN", "OGRN", "OKPO", "OKSM", "TRANSLITERATION_TITLE", "LEGAL_ADDRESS", "POSTAL_ADDRESS", "URL", "CAPITALIZATION", "EMITTER_CAPITALIZATION", "EMITTER_CAPITALIZATION_UPDATETIME"], 
+	"data": [
+		[1039, "Публичное акционерное общество \"Газпром нефть\"", "ПАО \"Газпром нефть\"", "5504036333", "1025501701686", "42045241", 643, "Publichnoe aktsionernoe obschestvo \"Gazprom neft'\"", "Российская Федерация, г. Санкт-Петербург", "ул. Почтамтская, дом 3-5, Помещение Ч.ПОМ1Н, каб. 2401, Санкт-Петербург г, РОССИЙСКАЯ ФЕДЕРАЦИЯ, 190000", "www.gazprom-neft.ru", 10868007032515.8, 2712497523471.9, "2026-10-20 19:15:49"]
+	]
+}}

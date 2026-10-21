@@ -16,7 +16,11 @@
 Dedup (both jobs): each payload is parsed first; a dataset whose normalized content hash
 (:func:`mdhub.sources.ratescalcs.content_hash`, :func:`mdhub.sources.otc_monitor.content_hash`)
 equals the latest stored snapshot of ``(source, dataset)`` - legacy-mapped history included -
-is counted as ``unchanged`` and nothing is written - neither a snapshot nor the raw capture.
+is counted as ``unchanged`` and nothing is written - neither a snapshot nor the raw capture -
+unless that latest snapshot is of an earlier Moscow date: the first poll of a day stores the
+curve again (``snapshot_date`` = today), because a market cut of the day reads only snapshots
+fetched on its business date (no forward fill) and an unchanged illiquid curve (KRS) would
+otherwise be missing from it.
 Changed content stores the raw capture (one per fetch, shared by the curves parsed from it) and
 a new snapshot with its quotes (mid recomputed as (bid+ask)/2; mid-only quotes keep the quoted
 mid with bid/ask NULL). Without credentials a job ends ``skipped``.
@@ -27,7 +31,7 @@ The sources are separate series and never merged (DESIGN §8 "Curve sources").
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Final
 
 import httpx
@@ -88,14 +92,22 @@ for _ds in OTC_DATASETS:
 
 
 def latest_content_hash(conn: psycopg.Connection[Any], source: str, dataset: str) -> str | None:
+    latest = latest_snapshot_key(conn, source, dataset)
+    return latest[0] if latest else None
+
+
+def latest_snapshot_key(
+    conn: psycopg.Connection[Any], source: str, dataset: str
+) -> tuple[str, date] | None:
+    """``(content_sha256, snapshot_date)`` of the latest stored snapshot of the series."""
     with conn.cursor(row_factory=tuple_row) as cur:
         row = cur.execute(
-            """SELECT content_sha256 FROM md.curve_snapshot
+            """SELECT content_sha256, snapshot_date FROM md.curve_snapshot
                WHERE source = %s AND dataset = %s
                ORDER BY fetched_at DESC, id DESC LIMIT 1""",
             (source, dataset),
         ).fetchone()
-    return str(row[0]) if row else None
+    return (str(row[0]), row[1]) if row else None
 
 
 def store_curve(
@@ -168,10 +180,19 @@ def _store_if_changed(
     parser_version: str = src.PARSER_VERSION,
     hash_fn: Callable[[src.ParsedCurve], str] = src.content_hash,
 ) -> dict[str, str]:
-    """Write the capture + snapshots for curves whose content changed."""
-    changed = [
-        (c, h) for c in curves if (h := hash_fn(c)) != latest_content_hash(conn, source, c.dataset)
-    ]
+    """Write the capture + snapshots for curves whose content changed, or whose latest
+    snapshot is of an earlier Moscow date: the first observation of each day is stored even
+    when the quotes did not change, so the market snapshot of that day (which reads the
+    snapshots fetched on its business date, no forward fill) has the quote set."""
+    day = fetched_at.astimezone(MSK).date()
+    changed: list[tuple[src.ParsedCurve, str, bool]] = []
+    for c in curves:
+        h = hash_fn(c)
+        latest = latest_snapshot_key(conn, source, c.dataset)
+        if latest is None or latest[0] != h:
+            changed.append((c, h, False))
+        elif latest[1] != day:
+            changed.append((c, h, True))
     status = {c.dataset: "unchanged" for c in curves}
     if not changed:
         ctx.run.add_counts(UpsertResult(unchanged=len(curves)))
@@ -188,7 +209,7 @@ def _store_if_changed(
         source_ts=source_ts,
         fetched_at=fetched_at,
     )
-    for curve, digest in changed:
+    for curve, digest, same_content in changed:
         store_curve(
             conn,
             curve,
@@ -199,7 +220,11 @@ def _store_if_changed(
             content_sha256=digest,
             parser_version=parser_version,
         )
-        status[curve.dataset] = f"stored ({len(curve.quotes)} quotes)"
+        status[curve.dataset] = (
+            f"stored ({len(curve.quotes)} quotes, unchanged content, new day)"
+            if same_content
+            else f"stored ({len(curve.quotes)} quotes)"
+        )
     ctx.run.add_counts(UpsertResult(inserted=len(changed), unchanged=len(curves) - len(changed)))
     return status
 

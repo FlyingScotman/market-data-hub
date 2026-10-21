@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Iterator
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -25,7 +25,7 @@ from mdhub.config import Settings
 from mdhub.core.bizday import weekday_calendar
 from mdhub.core.errors import FormatDriftError
 from mdhub.core.http import HttpClient, RateLimiter
-from mdhub.core.timeutil import MSK
+from mdhub.core.timeutil import MSK, utc_now
 from mdhub.db.pool import Database
 from mdhub.jobs import JobOutcome, run_job
 from mdhub.legacy.map_md import curve_content_hash
@@ -405,14 +405,43 @@ def test_job_continues_legacy_history(
     conn.execute(
         """INSERT INTO md.curve_snapshot (source, dataset, quote_basis, fetched_at, snapshot_date,
                content_sha256, parser_version, legacy_id)
-           VALUES ('otc_monitor', 'key_rate_swap', 'bid_ask_mid', '2026-10-15T15:00:00Z',
-                   '2026-10-15', %s, 'legacy_v5', '4209')""",
-        (digest,),
+           VALUES ('otc_monitor', 'key_rate_swap', 'bid_ask_mid', %s, %s, %s, 'legacy_v5',
+                   '4209')""",
+        (utc_now() - timedelta(minutes=1), utc_now().astimezone(MSK).date(), digest),
     )
     conn.commit()
     out = _run(otc_settings, db)
     assert out.result["key_rate_swap"] == "unchanged"
     assert out.result["ruonia_ois"] == "stored (17 quotes)"
+
+
+def test_unchanged_curve_is_stored_once_on_a_new_business_date(
+    site: Site, otc_settings: Settings, db: Database, conn: Conn
+) -> None:
+    """WEB-8/WEB-13: content dedup must not hide a curve from the next day's cut. A curve
+    whose quotes did not change since yesterday is stored once more on the first poll of
+    today (snapshot_date = today), so the market snapshot of today has the quote set; later
+    identical polls of the same day stay ``unchanged``."""
+    curve = _curves(site.rows)["key_rate_swap"]
+    yesterday = utc_now() - timedelta(days=1)
+    conn.execute(
+        """INSERT INTO md.curve_snapshot (source, dataset, quote_basis, fetched_at, snapshot_date,
+               content_sha256, parser_version)
+           VALUES ('otc_monitor', 'key_rate_swap', 'bid_ask_mid', %s, %s, %s, 'test')""",
+        (yesterday, yesterday.astimezone(MSK).date(), otc.content_hash(curve)),
+    )
+    conn.commit()
+    out = _run(otc_settings, db)
+    assert out.result["key_rate_swap"] == "stored (13 quotes, unchanged content, new day)"
+    today = utc_now().astimezone(MSK).date()
+    n = _count(
+        conn,
+        "SELECT count(*) AS n FROM md.curve_snapshot WHERE dataset = 'key_rate_swap' "
+        f"AND snapshot_date = '{today.isoformat()}'",
+    )
+    assert n == 1
+    again = _run(otc_settings, db)
+    assert set(again.result.values()) == {"unchanged"}
 
 
 def test_job_partial_when_a_curve_fails(

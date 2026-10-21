@@ -1244,6 +1244,35 @@ def schedule_constant_fixed(
     return any(first_start < c <= last_start for c in key_rate_changes)
 
 
+AMORTIZING_BOND_TYPES: Final = frozenset({"Амортизируемая облигация", "Амортизируемые облигации"})
+"""MOEX BOND_TYPE labels of amortizers (they say nothing about the coupon)."""
+AMORTIZER_MIN_RATE_PCT: Final = Decimal("0.1")
+"""Constant rates up to 0.1 % p.a. are placeholders of investment notes whose income is a
+payoff (e.g. АЛЬФАБ1Р42 0.01 %, СберИОС119 0.016 % on 2026-10-20), not a fixed coupon."""
+
+
+def amortizer_constant_fixed(inp: ClassifyInput) -> bool:
+    """Evidence that an active amortizer pays a fixed coupon although MOEX gives no coupon
+    label (basis ``amortizer_constant_rate``, WEB-13 HS6): BOND_TYPE is an amortizer label,
+    there is no COUPON_DETAILS, no COUPON_BENCHMARK and no rate formula from any source (a
+    floater with any benchmark evidence is classified floating first), every coupon - paid
+    and future - is valued, and one positive rate (``value_prc``) runs over the whole
+    schedule (above :data:`AMORTIZER_MIN_RATE_PCT`). Unlike :func:`schedule_constant_fixed`
+    it needs no paid coupon across a key-rate change, so new issues qualify; consumers can
+    tell the weaker evidence by the basis."""
+    if inp.bond_type not in AMORTIZING_BOND_TYPES:
+        return False
+    if inp.coupon_details is not None or inp.coupon_benchmark is not None or inp.has_formula:
+        return False
+    if not inp.coupon_values or not all(inp.coupon_values) or not inp.coupon_rates:
+        return False
+    values = {r.value_prc for r in inp.coupon_rates}
+    if len(values) != 1:
+        return False
+    (value,) = values
+    return value is not None and value > AMORTIZER_MIN_RATE_PCT
+
+
 def fixed_known_label(inp: ClassifyInput) -> str | None:
     """The MOEX label saying "fixed with known coupons" (``COUPON_DETAILS``, else
     ``BOND_TYPE``), verbatim; ``None`` when neither says so."""
@@ -1367,6 +1396,8 @@ def classify_coupon_type(inp: ClassifyInput, bond_class: str) -> tuple[str, str]
                 and schedule_constant_fixed(inp.coupon_rates, inp.today, inp.key_rate_changes)
             ):
                 return "fixed", "schedule_constant"
+            if bond_class != "structured" and amortizer_constant_fixed(inp):
+                return "fixed", "amortizer_constant_rate"
             return "unknown", "schedule"
         if any(inp.coupon_values):
             return "variable_known", "schedule"

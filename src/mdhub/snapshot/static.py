@@ -8,7 +8,11 @@ at ``known_at``: their rows carry an earlier ``ingested_at``).
 
 Universe: bonds whose status (as known) is ``active``, plus ``matured`` bonds with a maturity
 date within :data:`MATURED_LOOKBACK_DAYS` before the business date (late EOD rows and final
-redemptions stay quotable). For a linked EOD market cut, ``quoted_secids`` also retains any
+redemptions stay quotable), plus **alive bonds that are not traded** (``delisted`` with a
+maturity date on or after the business date, or perpetual; label ``not_traded``): desk
+positions resolve by ISIN against the instruments, also when MOEX lists no board for the
+bond. A ``delisted`` bond without a maturity date that is not perpetual is not included (its
+life cannot be established). For a linked EOD market cut, ``quoted_secids`` also retains any
 known instrument with a price or yield on that date, including older matured and delisted
 bonds (label ``retained_for_market_quote``). Missing reference instruments are not invented.
 Inside the universe nothing is excluded: unknown coupon types, perpetuals, missing day
@@ -25,7 +29,10 @@ calendar version and fingerprint for the whole set.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
+from collections.abc import Mapping
 from datetime import date, datetime, timedelta
+from decimal import Decimal
+from statistics import median
 from typing import Any, Final, LiteralString
 
 from psycopg import sql
@@ -39,6 +46,11 @@ __all__ = [
     "MATURED_LOOKBACK_DAYS",
     "build_static",
     "calendar_objects",
+    "coupon_frequency_from_schedule",
+    "face_schedule_labels",
+    "face_steps",
+    "face_value_date",
+    "undated_offer_reason",
 ]
 
 MATURED_LOOKBACK_DAYS: Final = 31
@@ -48,17 +60,29 @@ BOND_CALENDAR: Final = "MOEX_STOCK"
 _PROVISIONAL_SOURCES: Final = frozenset({"curated_unverified"})
 
 
+def _alive_not_traded(b: dict[str, Any], day: date) -> bool:
+    """``delisted`` but alive on ``day``: perpetual or maturing on/after it (HS2)."""
+    return b["status"] == "delisted" and bool(
+        b["is_perpetual"] or (b["maturity_date"] is not None and b["maturity_date"] >= day)
+    )
+
+
 def _universe(
-    conn: DictConnection, known_at: datetime, since: date, quoted_secids: frozenset[str]
+    conn: DictConnection,
+    known_at: datetime,
+    since: date,
+    day: date,
+    quoted_secids: frozenset[str],
 ) -> list[dict[str, Any]]:
     return conn.execute(
         """
         SELECT * FROM ref.bond_known_at(%(t)s) b
         WHERE b.status = 'active' OR (b.status = 'matured' AND b.maturity_date >= %(since)s)
+           OR (b.status = 'delisted' AND (b.is_perpetual OR b.maturity_date >= %(day)s))
            OR b.secid = ANY(%(quoted)s)
         ORDER BY b.secid
         """,
-        {"t": known_at, "since": since, "quoted": sorted(quoted_secids)},
+        {"t": known_at, "since": since, "day": day, "quoted": sorted(quoted_secids)},
     ).fetchall()
 
 
@@ -81,8 +105,136 @@ def _boards(conn: DictConnection, known_at: datetime, secids: list[str]) -> list
     ).fetchall()
 
 
+def coupon_frequency_from_schedule(coupons: list[dict[str, Any]]) -> int | None:
+    """Coupons per year from a schedule (HS7): ``round(365.25 / median period)`` over the
+    periods with both ``start_date`` and ``pay_date`` (positive length); ``None`` with fewer
+    than two such periods. Irregular first/last periods do not move the median."""
+    days = sorted(
+        (c["pay_date"] - c["start_date"]).days
+        for c in coupons
+        if c["start_date"] is not None and c["pay_date"] is not None
+        and c["pay_date"] > c["start_date"]
+    )  # fmt: skip
+    if len(days) < 2:
+        return None
+    return max(1, round(Decimal("365.25") / Decimal(median(days))))
+
+
+LARGE_ISSUER_RUB: Final = 5_000_000_000
+"""Issuers whose active RUB bonds outstanding (face x issue size) reach this must have a
+curated group (TDM brief HS4); the others missing one are listed in the issuers coverage."""
+
+FACE_TOLERANCE: Final = Decimal("0.005")
+"""Per-bond amounts are rounded to kopecks / cents by MOEX: steps closer than this match."""
+
+
+def face_steps(
+    b: Mapping[str, Any], redemptions: list[dict[str, Any]]
+) -> list[tuple[date | None, Decimal]] | None:
+    """Outstanding face after each redemption date of the schedule, starting with
+    ``(issue_date, initial_face_value)``; ``None`` if the initial face or a redemption value
+    is missing (the steps cannot be established)."""
+    initial = b["initial_face_value"]
+    if initial is None:
+        return None
+    by_date: dict[date, Decimal] = defaultdict(Decimal)
+    for r in redemptions:
+        if r["value_per_bond"] is None:
+            return None
+        by_date[r["date"]] += r["value_per_bond"]
+    steps: list[tuple[date | None, Decimal]] = [(b["issue_date"], initial)]
+    left = initial
+    for d in sorted(by_date):
+        left -= by_date[d]
+        steps.append((d, left))
+    return steps
+
+
+def face_value_date(
+    b: Mapping[str, Any], redemptions: list[dict[str, Any]], business_date: date
+) -> date | None:
+    """HS11: date from which the published ``face_value`` is outstanding (see the contract
+    README): the latest schedule step on or before ``business_date`` whose outstanding face
+    equals ``face_value``, else the earliest later one; ``None`` without a match."""
+    face = b["face_value"]
+    steps = face_steps(b, redemptions)
+    if face is None or steps is None:
+        return None
+    hits = [d for d, left in steps if abs(left - face) <= FACE_TOLERANCE]
+    if not hits:
+        return None
+    past = [d for d in hits if d is None or d <= business_date]
+    return past[-1] if past else hits[0]
+
+
+def face_schedule_labels(
+    b: Mapping[str, Any], redemptions: list[dict[str, Any]], business_date: date
+) -> tuple[str | None, str | None]:
+    """HS13: MOEX inconsistencies between the face and the redemption schedule, as labels
+    (the published values are not corrected):
+
+    * ``face_value_not_in_schedule`` - ``initial_face_value`` minus the scheduled redemptions
+      never equals ``face_value`` (e.g. face 400, redemptions 300 + 400). Not for indexed-face
+      bonds (indexation explains the difference).
+    * ``future_redemptions_differ_from_face`` - the redemptions still to be paid do not add
+      up to ``face_value`` (on a payment day, today's redemption counts as still to be paid
+      only while ``face_value`` has not been reduced by it).
+
+    Bonds without redemption rows, or with a missing value, get neither label."""
+    face = b["face_value"]
+    if face is None or not redemptions or any(r["value_per_bond"] is None for r in redemptions):
+        return None, None
+    fd = face_value_date(b, redemptions, business_date)
+    not_in = (
+        "face_value_not_in_schedule"
+        if fd is None and b["initial_face_value"] is not None and not b.get("is_face_indexed")
+        else None
+    )
+
+    def owed(include_today: bool) -> Decimal:
+        return sum(
+            (r["value_per_bond"] for r in redemptions
+             if r["date"] > business_date or (include_today and r["date"] == business_date)),
+            Decimal(0),
+        )  # fmt: skip
+
+    candidates = [owed(fd < business_date)] if fd is not None else [owed(True), owed(False)]
+    differ = (
+        "future_redemptions_differ_from_face"
+        if all(abs(c - face) > FACE_TOLERANCE for c in candidates)
+        else None
+    )
+    return not_in, differ
+
+
+PUT_SUBTYPE: Final = "До оферты (put)"
+"""MOEX BOND_SUBTYPE of bonds that trade to a put offer (HS10)."""
+
+UNDATED_DONE: Final = frozenset({"completed", "cancelled", "default", "technical_default"})
+
+
+def undated_offer_reason(o: Mapping[str, Any], business_date: date) -> str:
+    """HS10: why an offer row has no date, as a label (the row is published as MOEX has it):
+
+    * ``undated_past_event`` - MOEX marks it completed / cancelled / defaulted;
+    * ``undated_window_past`` / ``undated_window_future`` - an exercise window is known and
+      ends before / on or after the business date;
+    * ``undated_unexplained`` - nothing in the row dates it (needs the issue terms)."""
+    if o["status"] in UNDATED_DONE:
+        return "undated_past_event"
+    ends = [d for d in (o["offer_date_end"], o["offer_date_start"]) if d is not None]
+    if ends:
+        return "undated_window_past" if max(ends) < business_date else "undated_window_future"
+    return "undated_unexplained"
+
+
 def _instrument(
-    b: dict[str, Any], boards: list[dict[str, Any]], labels: list[str]
+    b: dict[str, Any],
+    boards: list[dict[str, Any]],
+    labels: list[str],
+    *,
+    schedule_frequency: int | None = None,
+    face_date: date | None = None,
 ) -> dict[str, Any]:
     return {
         "secid": b["secid"],
@@ -91,6 +243,7 @@ def _instrument(
         "issuer_id": b["issuer_id"],
         "name": b["name"],
         "short_name": b["short_name"],
+        "lat_name": b["lat_name"],
         "sec_type": b["sec_type"],
         "bond_type": b["bond_type"],
         "bond_subtype": b["bond_subtype"],
@@ -104,6 +257,7 @@ def _instrument(
         "currency_id": b["currency_id"],
         "face_value": b["face_value"],
         "initial_face_value": b["initial_face_value"],
+        "face_value_date": face_date,
         "issue_date": b["issue_date"],
         "maturity_date": b["maturity_date"],
         "is_perpetual": bool(b["is_perpetual"]),
@@ -115,6 +269,7 @@ def _instrument(
         "qualified_only": b["qualified_only"],
         "high_risk": b["high_risk"],
         "coupon_frequency": b["coupon_frequency"],
+        "coupon_frequency_schedule": schedule_frequency,
         "coupon_period_days": b["coupon_period_days"],
         "day_count": b["day_count"],
         "day_count_source": b["day_count_source"],
@@ -210,6 +365,77 @@ def calendar_objects(
     return out, summary, eff
 
 
+def _rating_coverage(ratings: list[dict[str, Any]], bonds: list[dict[str, Any]]) -> dict[str, Any]:
+    """HS5 coverage: issuers of active non-structured RUB corporate bonds with a rating (the
+    desk's acceptance base); ``sources`` names where rows came from. No source rows is shown as
+    zero coverage, never filled from elsewhere."""
+    base = {
+        b["issuer_id"]
+        for b in bonds
+        if b["status"] == "active"
+        and b["bond_class"] == "corporate"
+        and not b["is_structured"]
+        and b["face_unit"] == "RUB"
+        and b["issuer_id"] is not None
+    }
+    rated = {r["issuer_id"] for r in ratings if r["issuer_id"] in base}
+    return {
+        "rows": len(ratings),
+        "by_agency": dict(sorted(Counter(r["agency"] for r in ratings).items())),
+        "sources": sorted({r["source"] for r in ratings}),
+        "active_rub_corporate_issuers": len(base),
+        "active_rub_corporate_issuers_rated": len(rated),
+    }
+
+
+def _issuer_coverage(
+    issuers: list[dict[str, Any]], bonds: list[dict[str, Any]], rows: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Fill rates of the issuer reference (HS1/HS3): over all published issuers and over the
+    issuers of ``active`` non-structured bonds (the desk's acceptance base)."""
+    active = {
+        b["issuer_id"]
+        for b in bonds
+        if b["status"] == "active" and not b["is_structured"] and b["issuer_id"] is not None
+    }
+
+    def rates(rows: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "issuers": len(rows),
+            "with_short_name": sum(1 for i in rows if i["short_name"]),
+            "with_ogrn": sum(1 for i in rows if i["ogrn"]),
+            "with_country": sum(1 for i in rows if i["country"]),
+            "with_sector": sum(1 for i in rows if i["sector"]),
+        }
+
+    outstanding: Counter[int] = Counter()
+    for b in bonds:
+        if (
+            b["status"] == "active"
+            and b["issuer_id"] is not None
+            and b["face_unit"] == "RUB"
+            and b["face_value"] is not None
+            and b["issue_size"] is not None
+        ):
+            outstanding[b["issuer_id"]] += b["face_value"] * b["issue_size"]
+    large = {iid for iid, v in outstanding.items() if v >= LARGE_ISSUER_RUB}
+    return {
+        **rates(issuers),
+        "of_active_non_structured": rates([i for i in issuers if i["issuer_id"] in active]),
+        "with_group": sum(1 for i in issuers if i["group_id"]),
+        "large_issuers_rub": len(large),
+        "large_issuer_threshold_rub": LARGE_ISSUER_RUB,
+        "large_issuers_without_group": sorted(
+            i["issuer_id"] for i in issuers if i["issuer_id"] in large and not i["group_id"]
+        ),
+        "by_sector": dict(sorted(Counter(i["sector"] or "none" for i in issuers).items())),
+        "by_sector_source": dict(
+            sorted(Counter(r.get("sector_source") or "none" for r in rows).items())
+        ),
+        "without_sector": sorted(i["issuer_id"] for i in issuers if not i["sector"]),
+    }
+
+
 def build_static(
     conn: DictConnection,
     *,
@@ -223,7 +449,7 @@ def build_static(
     t = cut.known_at
     since = cut.business_date - timedelta(days=matured_lookback_days)
     prov = Provenance()
-    bonds = _universe(conn, t, since, quoted_secids)
+    bonds = _universe(conn, t, since, cut.business_date, quoted_secids)
     secids = [b["secid"] for b in bonds]
     universe = frozenset(secids)
 
@@ -245,6 +471,11 @@ def build_static(
         "ORDER BY x.issuer_id",
         {"t": t, "i": issuer_ids},
     ).fetchall()
+    rating_rows = conn.execute(
+        "SELECT * FROM ref.bond_rating_known_at(%(t)s) x WHERE x.secid = ANY(%(s)s) "
+        "ORDER BY x.secid, x.agency, x.scale, x.source",
+        {"t": t, "s": secids},
+    ).fetchall()
     isin_rows = conn.execute(
         "SELECT secid, isin FROM ref.bond_known_at(%(t)s) WHERE isin IS NOT NULL",
         {"t": t},
@@ -256,11 +487,18 @@ def build_static(
     for r in boards:
         boards_of[r["secid"]].append(r)
     coupon_count = Counter(c["secid"] for c in coupons)
+    coupons_of: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for c in coupons:
+        coupons_of[c["secid"]].append(c)
     formula_of = {f["secid"]: f for f in formulas}
     issuer_set = {i["issuer_id"] for i in issuers}
     scheduled_calls = {
         o["secid"] for o in offers if o["offer_type"] == "call" and o["status"] == "scheduled"
     }
+    scheduled_offers = {o["secid"] for o in offers if o["status"] == "scheduled"}
+    redemptions_of: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for a in amort:
+        redemptions_of[a["secid"]].append({"date": a["amort_date"], "value_per_bond": a["value"]})
     instruments = []
     label_counts: Counter[str] = Counter()
     for b in bonds:
@@ -275,8 +513,10 @@ def build_static(
                     and b["maturity_date"] is not None
                     and b["maturity_date"] >= since
                 )
+                or _alive_not_traded(b, cut.business_date)
             )
             else None,
+            "not_traded" if _alive_not_traded(b, cut.business_date) else None,
             "coupon_type_unknown" if b["coupon_type"] == "unknown" else None,
             "perpetual" if b["is_perpetual"] else None,
             "perpetual_no_call_date"
@@ -291,9 +531,23 @@ def build_static(
             "no_issuer" if b["issuer_id"] is None or b["issuer_id"] not in issuer_set else None,
             "structured" if b["is_structured"] else None,
             "matured" if b["status"] == "matured" else None,
+            *face_schedule_labels(b, redemptions_of[b["secid"]], cut.business_date),
+            "put_subtype_without_scheduled_offer"
+            if b["bond_subtype"] == PUT_SUBTYPE
+            and b["status"] == "active"
+            and b["secid"] not in scheduled_offers
+            else None,
         )
         label_counts.update(labels)
-        instruments.append(_instrument(b, boards_of[b["secid"]], labels))
+        instruments.append(
+            _instrument(
+                b,
+                boards_of[b["secid"]],
+                labels,
+                schedule_frequency=coupon_frequency_from_schedule(coupons_of[b["secid"]]),
+                face_date=face_value_date(b, redemptions_of[b["secid"]], cut.business_date),
+            )
+        )
     prov.add_rows("instruments", bonds)
 
     coupon_rows = [
@@ -346,7 +600,10 @@ def build_static(
             "face_value": o["face_value"],
             "face_unit": o["face_unit"],
             "agent": o["agent"],
-            "labels": sorted_labels("date_missing" if o["date_missing"] else None),
+            "labels": sorted_labels(
+                "date_missing" if o["date_missing"] else None,
+                undated_offer_reason(o, cut.business_date) if o["date_missing"] else None,
+            ),
         }
         for o in offers
     ]
@@ -379,12 +636,37 @@ def build_static(
             "name": i["name"],
             "short_name": i["short_name"],
             "sector": i["sector"],
+            "sector_source": i["sector_source"] if i["sector"] is not None else None,
+            "okved": i["okved"],
+            "okved_version": i["okved_version"],
             "country": i["country"],
             "is_sovereign": bool(i["is_sovereign"]),
+            "group_id": i["group_id"],
+            "group_name": i["group_name"],
+            "group_relation": i["group_relation"],
+            "is_state_owned": i["is_state_owned"],
         }
         for i in issuers
     ]
     prov.add_rows("issuers", issuers)
+    issuer_of = {b["secid"]: b["issuer_id"] for b in bonds}
+    ratings_out = [
+        {
+            "scope": "issue",
+            "secid": r["secid"],
+            "issuer_id": r["issuer_id"] if r["issuer_id"] is not None else issuer_of[r["secid"]],
+            "agency": r["agency"],
+            "scale": r["scale"],
+            "rating": r["rating"],
+            "outlook": r["outlook"],
+            "watch": None,
+            "rating_date": r["rating_date"],
+            "action": None,
+            "source": r["source"],
+        }
+        for r in rating_rows
+    ]
+    prov.add_rows("ratings", rating_rows)
     for r in cal_rows:
         prov.add("calendars", r["source"], r["run_id"], r["ingested_at"])
 
@@ -413,7 +695,8 @@ def build_static(
             "instruments",
             instruments,
             {
-                "universe": "status active, or matured with maturity_date >= since"
+                "universe": "status active, or matured with maturity_date >= since, or "
+                "delisted and alive (perpetual or maturity_date >= business_date)"
                 + (", or quoted in the linked market cut" if quoted_secids else ""),
                 "since": since,
                 "by_coupon_type": dict(sorted(Counter(b["coupon_type"] for b in bonds).items())),
@@ -436,7 +719,8 @@ def build_static(
                 "floaters_without_formula": label_counts.get("floater_formula_missing", 0),
             },
         ),
-        Dataset("issuers", issuer_out),
+        Dataset("issuers", issuer_out, _issuer_coverage(issuer_out, bonds, issuers)),
+        Dataset("ratings", ratings_out, _rating_coverage(ratings_out, bonds)),
         Dataset(
             "calendars",
             calendars,
@@ -454,9 +738,9 @@ def build_static(
         datasets=datasets,
         calendar=cal_summary,
         parameters={
-            "universe": "active_or_recently_matured_or_quoted"
+            "universe": "active_or_recently_matured_or_alive_or_quoted"
             if quoted_secids
-            else "active_or_recently_matured",
+            else "active_or_recently_matured_or_alive",
             "matured_lookback_days": matured_lookback_days,
             "bond_calendar": BOND_CALENDAR,
         },

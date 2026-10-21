@@ -205,9 +205,15 @@ def test_eod_keeps_quoted_matured_and_delisted_bonds(seeded: Conn, db: Database,
         "UPDATE ref.bond SET status='matured', maturity_date='2026-02-01' "
         "WHERE secid='SU26242RMFS0'"
     )
-    seeded.execute("UPDATE ref.bond SET status='delisted' WHERE secid='RU000A105X12'")
+    # delisted after maturity (not alive on the cut's date: outside the default universe)
+    seeded.execute(
+        "UPDATE ref.bond SET status='delisted', maturity_date='2026-01-01' "
+        "WHERE secid='RU000A105X12'"
+    )
     # This bond has only yield analytics, not a price row. Its static must survive too.
-    seeded.execute("UPDATE ref.bond SET status='delisted' WHERE secid='DUPB'")
+    seeded.execute(
+        "UPDATE ref.bond SET status='delisted', maturity_date='2026-01-01' WHERE secid='DUPB'"
+    )
     seeded.execute(
         "INSERT INTO md.bond_eod_yield (trade_date,secid,board,effective_yield_pct) "
         "VALUES (%s,'DUPB','TQOD',15)",
@@ -245,6 +251,106 @@ def test_eod_keeps_quoted_matured_and_delisted_bonds(seeded: Conn, db: Database,
         db, cut_type=mode, business_date=historical_day, cut_ts=_cut_ts(), known_at=known
     )
     assert replay.market.id == out.market.id and replay.market.status == "unchanged"
+
+
+def test_static_publishes_alive_bonds_that_are_not_traded(seeded: Conn, db: Database) -> None:
+    """HS2: delisted bonds that are alive (maturity on/after the business date, or perpetual)
+    are instruments with label ``not_traded``; dead or undated delisted bonds are not."""
+    seeded.execute(
+        "UPDATE ref.bond SET status='delisted', maturity_date='2046-03-01' "
+        "WHERE secid='RU000A105X12'"
+    )
+    seeded.execute(
+        "UPDATE ref.bond SET status='delisted' WHERE secid='RU000PERP001'"
+    )  # perpetual, maturity NULL
+    seeded.execute(
+        "UPDATE ref.bond SET status='delisted', maturity_date=%s WHERE secid='DUPA'",
+        (DAY - timedelta(days=1),),
+    )  # matured before the business date
+    seeded.execute(
+        "UPDATE ref.bond SET status='delisted', maturity_date=NULL WHERE secid='DUPB'"
+    )  # life unknown
+    seeded.commit()
+    out = publish_static_snapshot(
+        db, cut_type="daily", business_date=DAY, cut_ts=_cut_ts(DAY, 7, 45), known_at=utc_now()
+    )
+    doc = _bundle(seeded, out.id)
+    inst = {i["secid"]: i for i in doc["data"]["instruments"]}
+    assert inst["RU000A105X12"]["status"] == "delisted"
+    assert "not_traded" in inst["RU000A105X12"]["labels"]
+    assert "retained_for_market_quote" not in inst["RU000A105X12"]["labels"]
+    assert {"not_traded", "perpetual"} <= set(inst["RU000PERP001"]["labels"])
+    assert "DUPA" not in inst and "DUPB" not in inst
+    assert {r["secid"] for r in doc["data"]["id_map"]} >= {"RU000A105X12", "RU000PERP001"}
+    cov = next(d for d in doc["datasets"] if d["name"] == "instruments")["coverage"]
+    assert cov["by_status"]["delisted"] == 2 and cov["labels"]["not_traded"] == 2
+    assert doc["parameters"]["universe"] == "active_or_recently_matured_or_alive"
+    assert _all_snapshots_valid(seeded) == 1
+
+
+def test_market_cut_flags_required_curve_without_any_source(seeded: Conn, db: Database) -> None:
+    """WEB-8/WEB-13: every cut reports whether ruonia_ois and key_rate_swap came from at least
+    one source; a missing one is a stale reason, never a forward-filled value."""
+    seeded.execute("DELETE FROM md.curve_quote")
+    seeded.execute("DELETE FROM md.curve_snapshot")
+    seeded.execute(
+        "INSERT INTO md.curve_snapshot (source, dataset, quote_basis, fetched_at, snapshot_date, "
+        "content_sha256, parser_version) VALUES ('ratescalcs', 'ruonia_ois', 'bid_ask_mid', "
+        "%s, %s, %s, 't')",
+        (_cut_ts(DAY, 12, 0), DAY, "0" * 64),
+    )
+    seeded.commit()
+    out = publish_market_snapshot(
+        db, cut_type="eod_preliminary", business_date=DAY, cut_ts=_cut_ts(), known_at=utc_now()
+    )
+    market = _bundle(seeded, out.market.id)
+    ds = next(d for d in market["datasets"] if d["name"] == "curve_quote_sets")
+    assert ds["coverage"]["required_datasets"] == ["key_rate_swap", "ruonia_ois"]
+    assert ds["coverage"]["required_without_any_source"] == ["key_rate_swap"]
+    assert ds["stale"] and any(
+        r.startswith("key_rate_swap: no quote set from any source") for r in ds["stale_reasons"]
+    )
+    assert [q["dataset"] for q in market["data"]["curve_quote_sets"]] == ["ruonia_ois"]
+
+
+def test_static_ratings_dataset_verbatim_and_honest_coverage(seeded: Conn, db: Database) -> None:
+    """HS5: ratings come from ref.bond_rating as known at known_at, verbatim; without source
+    rows the dataset is empty and its coverage says so (nothing inferred)."""
+    known_empty = utc_now()
+    seeded.execute(
+        "INSERT INTO ref.bond_rating (secid, agency, scale, source, rating, outlook, rating_date) "
+        "VALUES ('RU000A105X12', 'АКРА', 'Национальная шкала для Российской Федерации', "
+        "'cbonds', 'A(RU)', 'Стабильный', '2026-05-01')"
+    )
+    seeded.commit()
+    out = publish_static_snapshot(
+        db, cut_type="daily", business_date=DAY, cut_ts=_cut_ts(DAY, 7, 45), known_at=utc_now()
+    )
+    doc = _bundle(seeded, out.id)
+    assert doc["data"]["ratings"] == [
+        {
+            "scope": "issue",
+            "secid": "RU000A105X12",
+            "issuer_id": 2,
+            "agency": "АКРА",
+            "scale": "Национальная шкала для Российской Федерации",
+            "rating": "A(RU)",
+            "outlook": "Стабильный",
+            "watch": None,
+            "rating_date": "2026-05-01",
+            "action": None,
+            "source": "cbonds",
+        }
+    ]
+    cov = next(d for d in doc["datasets"] if d["name"] == "ratings")["coverage"]
+    assert cov["sources"] == ["cbonds"] and cov["active_rub_corporate_issuers_rated"] == 1
+    # replay before the row existed: empty, coverage shows the gap
+    with db.connection() as c:
+        empty = build_static(c, cut=Cut("static", "daily", DAY, _cut_ts(DAY, 7, 45), known_empty))
+    ds = next(d for d in empty.datasets if d.name == "ratings")
+    assert ds.rows == [] and ds.coverage["active_rub_corporate_issuers_rated"] == 0
+    assert ds.coverage["sources"] == []
+    assert _all_snapshots_valid(seeded) == 1
 
 
 def test_republish_same_content_is_unchanged_and_correction_supersedes(

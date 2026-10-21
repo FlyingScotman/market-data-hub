@@ -25,7 +25,7 @@ from __future__ import annotations
 import copy
 import json
 from collections.abc import Callable
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -408,6 +408,52 @@ def test_fixed_label_with_unknown_future_coupons_is_variable_known() -> None:
 )
 def test_fixed_label_kept(case: str, inp: ms.ClassifyInput) -> None:
     assert ms.classify_coupon_type(inp, "corporate") == ("fixed", "moex_label"), case
+
+
+def amortizer(rates: list[Decimal | None], **kw: Any) -> ms.ClassifyInput:
+    """Synthetic new active amortizer (BOND_TYPE only, no coupon labels), monthly coupons."""
+    pays = [date(2026, 11, 15) + timedelta(days=30 * i) for i in range(len(rates))]
+    base: dict[str, Any] = {
+        "secid": "RU000A10GBM8",
+        "sec_type": "corporate_bond",
+        "bond_type": "Амортизируемая облигация",
+        "has_description": True,
+        "is_active": True,
+        "today": TODAY,
+        "coupon_values": tuple(r is not None for r in rates),
+        "coupon_rates": tuple(ms.CouponRate(None, p, r) for p, r in zip(pays, rates, strict=True)),
+    }
+    base.update(kw)
+    return ms.ClassifyInput(**base)
+
+
+def test_hs6_new_amortizer_with_constant_rate_is_fixed() -> None:
+    """HS6: a new amortizer (no paid coupon yet, so schedule_constant cannot apply) with one
+    positive rate over its whole schedule is fixed, basis amortizer_constant_rate."""
+    inp = amortizer([Decimal("16.4")] * 12)
+    assert ms.classify_coupon_type(inp, "corporate") == ("fixed", "amortizer_constant_rate")
+    plural = amortizer([Decimal("16.4")] * 3, bond_type="Амортизируемые облигации")
+    assert ms.classify_coupon_type(plural, "corporate") == ("fixed", "amortizer_constant_rate")
+
+
+@pytest.mark.parametrize(
+    ("case", "inp", "expected"),
+    [
+        # any benchmark evidence wins: never a floater classed fixed
+        ("benchmark", amortizer([Decimal(17)] * 3, coupon_benchmark="RREFKEYR"), "floating"),
+        ("details", amortizer([Decimal(17)] * 3, coupon_details="Ключевая ставка"), "floating"),
+        ("formula", amortizer([Decimal(17)] * 3, has_formula=True), "unknown"),
+        ("rates_differ", amortizer([Decimal(17), Decimal(16)]), "unknown"),
+        ("blank_future", amortizer([Decimal(17), None]), "variable_known"),
+        ("zero_rate", amortizer([Decimal(0)] * 2), "unknown"),
+        ("note_placeholder_rate", amortizer([Decimal("0.01")] * 3), "unknown"),
+        ("not_amortizer", amortizer([Decimal(17)] * 3, bond_type=None), "unknown"),
+    ],
+)
+def test_hs6_amortizer_rule_guards(case: str, inp: ms.ClassifyInput, expected: str) -> None:
+    assert ms.classify_coupon_type(inp, "corporate")[0] == expected, case
+    note = amortizer([Decimal(17)] * 3)
+    assert ms.classify_coupon_type(note, "structured") == ("unknown", "schedule")
 
 
 def test_unknown_future_coupons_needs_aligned_schedule() -> None:

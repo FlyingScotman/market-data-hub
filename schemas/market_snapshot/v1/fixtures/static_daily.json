@@ -1374,6 +1374,266 @@
     "status": "known"
    },
    {
+    "amount_per_bond": "47.37",
+    "amount_rub_per_bond": "47.37",
+    "coupon_no": 1,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2024-04-18",
+    "rate_pct": "19.0",
+    "record_date": "2024-04-17",
+    "secid": "RU000A107KV4",
+    "start_date": "2024-01-18",
+    "status": "known"
+   },
+   {
+    "amount_per_bond": "47.37",
+    "amount_rub_per_bond": "47.37",
+    "coupon_no": 2,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2024-07-18",
+    "rate_pct": "19.0",
+    "record_date": "2024-07-17",
+    "secid": "RU000A107KV4",
+    "start_date": "2024-04-18",
+    "status": "known"
+   },
+   {
+    "amount_per_bond": "47.37",
+    "amount_rub_per_bond": "47.37",
+    "coupon_no": 3,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2024-10-17",
+    "rate_pct": "19.0",
+    "record_date": "2024-10-16",
+    "secid": "RU000A107KV4",
+    "start_date": "2024-07-18",
+    "status": "known"
+   },
+   {
+    "amount_per_bond": "47.37",
+    "amount_rub_per_bond": "47.37",
+    "coupon_no": 4,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2025-01-16",
+    "rate_pct": "19.0",
+    "record_date": "2025-01-15",
+    "secid": "RU000A107KV4",
+    "start_date": "2024-10-17",
+    "status": "known"
+   },
+   {
+    "amount_per_bond": "47.37",
+    "amount_rub_per_bond": "47.37",
+    "coupon_no": 5,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2025-04-17",
+    "rate_pct": "19.0",
+    "record_date": "2025-04-16",
+    "secid": "RU000A107KV4",
+    "start_date": "2025-01-16",
+    "status": "known"
+   },
+   {
+    "amount_per_bond": "47.37",
+    "amount_rub_per_bond": "47.37",
+    "coupon_no": 6,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2025-07-17",
+    "rate_pct": "19.0",
+    "record_date": "2025-07-16",
+    "secid": "RU000A107KV4",
+    "start_date": "2025-04-17",
+    "status": "known"
+   },
+   {
+    "amount_per_bond": "47.37",
+    "amount_rub_per_bond": "47.37",
+    "coupon_no": 7,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2025-10-16",
+    "rate_pct": "19.0",
+    "record_date": "2025-10-15",
+    "secid": "RU000A107KV4",
+    "start_date": "2025-07-17",
+    "status": "known"
+   },
+   {
+    "amount_per_bond": "47.37",
+    "amount_rub_per_bond": "47.37",
+    "coupon_no": 8,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2026-01-15",
+    "rate_pct": "19.0",
+    "record_date": "2026-01-14",
+    "secid": "RU000A107KV4",
+    "start_date": "2025-10-16",
+    "status": "known"
+   },
+   {
+    "amount_per_bond": "45",
+    "amount_rub_per_bond": "45",
+    "coupon_no": 9,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2026-04-16",
+    "rate_pct": "19.0",
+    "record_date": "2026-04-15",
+    "secid": "RU000A107KV4",
+    "start_date": "2026-01-15",
+    "status": "known"
+   },
+   {
+    "amount_per_bond": "42.63",
+    "amount_rub_per_bond": "42.63",
+    "coupon_no": 10,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2026-07-16",
+    "rate_pct": "19.0",
+    "record_date": "2026-07-15",
+    "secid": "RU000A107KV4",
+    "start_date": "2026-04-16",
+    "status": "known"
+   },
+   {
+    "amount_per_bond": "40.26",
+    "amount_rub_per_bond": "40.26",
+    "coupon_no": 11,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2026-10-15",
+    "rate_pct": "19.0",
+    "record_date": "2026-10-14",
+    "secid": "RU000A107KV4",
+    "start_date": "2026-07-16",
+    "status": "known"
+   },
+   {
+    "amount_per_bond": "37.9",
+    "amount_rub_per_bond": "37.9",
+    "coupon_no": 12,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2027-01-14",
+    "rate_pct": "19.0",
+    "record_date": "2027-01-13",
+    "secid": "RU000A107KV4",
+    "start_date": "2026-10-15",
+    "status": "known"
+   },
+   {
+    "amount_per_bond": "34.34",
+    "amount_rub_per_bond": "34.34",
+    "coupon_no": 13,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2027-04-15",
+    "rate_pct": "19.0",
+    "record_date": "2027-04-14",
+    "secid": "RU000A107KV4",
+    "start_date": "2027-01-14",
+    "status": "known"
+   },
+   {
+    "amount_per_bond": "30.79",
+    "amount_rub_per_bond": "30.79",
+    "coupon_no": 14,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2027-07-15",
+    "rate_pct": "19.0",
+    "record_date": "2027-07-14",
+    "secid": "RU000A107KV4",
+    "start_date": "2027-04-15",
+    "status": "known"
+   },
+   {
+    "amount_per_bond": "27.24",
+    "amount_rub_per_bond": "27.24",
+    "coupon_no": 15,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2027-10-14",
+    "rate_pct": "19.0",
+    "record_date": "2027-10-13",
+    "secid": "RU000A107KV4",
+    "start_date": "2027-07-15",
+    "status": "known"
+   },
+   {
+    "amount_per_bond": "23.68",
+    "amount_rub_per_bond": "23.68",
+    "coupon_no": 16,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2028-01-13",
+    "rate_pct": "19.0",
+    "record_date": "2027-12-31",
+    "secid": "RU000A107KV4",
+    "start_date": "2027-10-14",
+    "status": "known"
+   },
+   {
+    "amount_per_bond": "18.95",
+    "amount_rub_per_bond": "18.95",
+    "coupon_no": 17,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2028-04-13",
+    "rate_pct": "19.0",
+    "record_date": "2028-04-12",
+    "secid": "RU000A107KV4",
+    "start_date": "2028-01-13",
+    "status": "known"
+   },
+   {
+    "amount_per_bond": "14.21",
+    "amount_rub_per_bond": "14.21",
+    "coupon_no": 18,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2028-07-13",
+    "rate_pct": "19.0",
+    "record_date": "2028-07-12",
+    "secid": "RU000A107KV4",
+    "start_date": "2028-04-13",
+    "status": "known"
+   },
+   {
+    "amount_per_bond": "9.47",
+    "amount_rub_per_bond": "9.47",
+    "coupon_no": 19,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2028-10-12",
+    "rate_pct": "19.0",
+    "record_date": "2028-10-11",
+    "secid": "RU000A107KV4",
+    "start_date": "2028-07-13",
+    "status": "known"
+   },
+   {
+    "amount_per_bond": "4.74",
+    "amount_rub_per_bond": "4.74",
+    "coupon_no": 20,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "pay_date": "2029-01-11",
+    "rate_pct": "19.0",
+    "record_date": "2028-12-29",
+    "secid": "RU000A107KV4",
+    "start_date": "2028-10-12",
+    "status": "known"
+   },
+   {
     "amount_per_bond": "18.42",
     "amount_rub_per_bond": "18.42",
     "coupon_no": 1,
@@ -5098,6 +5358,12 @@
     "secid": "RU000A1034P7"
    },
    {
+    "isin": "RU000A107KV4",
+    "isin_shared_with": [],
+    "regnumber": "4B02-03-00677-R-001P",
+    "secid": "RU000A107KV4"
+   },
+   {
     "isin": "RU000A109XR1",
     "isin_shared_with": [],
     "regnumber": "4B02-05-00207-A-001P",
@@ -5167,6 +5433,7 @@
     "coupon_benchmark_spread_pct": null,
     "coupon_details": "Фиксированный с известными купонами",
     "coupon_frequency": 2,
+    "coupon_frequency_schedule": 2,
     "coupon_period_days": 182,
     "coupon_type": "fixed",
     "coupon_type_basis": "moex_label",
@@ -5175,6 +5442,7 @@
     "day_count_source": null,
     "face_unit": "RUB",
     "face_value": "1000",
+    "face_value_date": "2017-04-27",
     "high_risk": false,
     "initial_face_value": "1000",
     "is_amortizing": false,
@@ -5190,6 +5458,7 @@
     "labels": [
      "day_count_not_published"
     ],
+    "lat_name": "RZhD BO-001P-02R",
     "listing_level": 1,
     "maturity_date": "2037-04-02",
     "name": "\"Российские ЖД\" БО-001P-02R",
@@ -5227,6 +5496,7 @@
     "coupon_benchmark_spread_pct": null,
     "coupon_details": "Фиксированный с известными купонами",
     "coupon_frequency": 4,
+    "coupon_frequency_schedule": 4,
     "coupon_period_days": 91,
     "coupon_type": "fixed",
     "coupon_type_basis": "moex_label",
@@ -5235,6 +5505,7 @@
     "day_count_source": null,
     "face_unit": "RUB",
     "face_value": "10000000",
+    "face_value_date": "2019-06-27",
     "high_risk": false,
     "initial_face_value": "10000000",
     "is_amortizing": false,
@@ -5252,6 +5523,7 @@
      "perpetual",
      "perpetual_no_call_date"
     ],
+    "lat_name": "ALFA-BANK CO1-01",
     "listing_level": 3,
     "maturity_date": null,
     "name": "АЛЬФА-БАНК С01-01",
@@ -5289,6 +5561,7 @@
     "coupon_benchmark_spread_pct": null,
     "coupon_details": "Фиксированный с известными купонами",
     "coupon_frequency": 2,
+    "coupon_frequency_schedule": 2,
     "coupon_period_days": 182,
     "coupon_type": "fixed",
     "coupon_type_basis": "moex_label",
@@ -5297,6 +5570,7 @@
     "day_count_source": null,
     "face_unit": "RUB",
     "face_value": "10000000",
+    "face_value_date": "2021-05-26",
     "high_risk": false,
     "initial_face_value": "10000000",
     "is_amortizing": false,
@@ -5314,6 +5588,7 @@
      "perpetual",
      "perpetual_no_call_date"
     ],
+    "lat_name": "Bank VTB SUB-T1-5",
     "listing_level": 3,
     "maturity_date": null,
     "name": "Банк ВТБ ПАО СУБ-Т1-5",
@@ -5323,6 +5598,69 @@
     "sec_type": "corporate_bond",
     "secid": "RU000A1034P7",
     "short_name": "ВТБСУБТ1-5",
+    "status": "active"
+   },
+   {
+    "boards": [
+     {
+      "board": "TQRD",
+      "currency_id": "RUB",
+      "decimals": 2,
+      "face_unit": "RUB",
+      "is_primary": true,
+      "listed": true,
+      "listed_from": null,
+      "listed_till": null,
+      "listing_source": "market",
+      "lot_size": 1,
+      "min_step": "0.01",
+      "settle_code": "T1",
+      "settle_lag_days": 1
+     }
+    ],
+    "bond_class": "corporate",
+    "bond_subtype": "До погашения",
+    "bond_type": "Амортизируемая облигация",
+    "calendar": "MOEX_STOCK",
+    "coupon_benchmark": null,
+    "coupon_benchmark_spread_pct": null,
+    "coupon_details": null,
+    "coupon_frequency": 4,
+    "coupon_frequency_schedule": 4,
+    "coupon_period_days": 91,
+    "coupon_type": "fixed",
+    "coupon_type_basis": "schedule_constant",
+    "currency_id": "RUB",
+    "day_count": null,
+    "day_count_source": null,
+    "face_unit": "RUB",
+    "face_value": "800",
+    "face_value_date": "2026-10-15",
+    "high_risk": true,
+    "initial_face_value": "1000",
+    "is_amortizing": true,
+    "is_face_indexed": false,
+    "is_fx_face": false,
+    "is_perpetual": false,
+    "is_structured": false,
+    "is_subordinated": false,
+    "isin": "RU000A107KV4",
+    "issue_date": "2024-01-18",
+    "issue_size": "400000",
+    "issuer_id": 14320,
+    "labels": [
+     "day_count_not_published"
+    ],
+    "lat_name": "SibAvtoTrans 001P-03",
+    "listing_level": 3,
+    "maturity_date": "2029-01-11",
+    "name": "СибАвтоТранс 001Р-03",
+    "primary_board": "TQRD",
+    "qualified_only": false,
+    "regnumber": "4B02-03-00677-R-001P",
+    "sec_type": "exchange_bond",
+    "secid": "RU000A107KV4",
+    "short_name": "СИБАВТО1Р3",
     "status": "active"
    },
    {
@@ -5351,6 +5689,7 @@
     "coupon_benchmark_spread_pct": "1.75",
     "coupon_details": "Ключевая ставка",
     "coupon_frequency": 12,
+    "coupon_frequency_schedule": 12,
     "coupon_period_days": 30,
     "coupon_type": "floating",
     "coupon_type_basis": "moex_label",
@@ -5359,6 +5698,7 @@
     "day_count_source": null,
     "face_unit": "RUB",
     "face_value": "800",
+    "face_value_date": "2026-07-21",
     "high_risk": false,
     "initial_face_value": "1000",
     "is_amortizing": true,
@@ -5374,6 +5714,7 @@
     "labels": [
      "day_count_not_published"
     ],
+    "lat_name": "Acron BO-001P-05",
     "listing_level": 2,
     "maturity_date": "2027-10-14",
     "name": "Акрон (ПАО) БО-001P-05",
@@ -5426,6 +5767,7 @@
     "coupon_benchmark_spread_pct": null,
     "coupon_details": null,
     "coupon_frequency": 12,
+    "coupon_frequency_schedule": 12,
     "coupon_period_days": 30,
     "coupon_type": "fixed",
     "coupon_type_basis": "schedule_constant",
@@ -5434,6 +5776,7 @@
     "day_count_source": null,
     "face_unit": "USD",
     "face_value": "1000",
+    "face_value_date": "2025-06-06",
     "high_risk": false,
     "initial_face_value": "1000",
     "is_amortizing": true,
@@ -5449,6 +5792,7 @@
     "labels": [
      "day_count_not_published"
     ],
+    "lat_name": "Acron BO-001P-09",
     "listing_level": 2,
     "maturity_date": "2029-11-12",
     "name": "Акрон (ПАО) БО-001P-09",
@@ -5486,6 +5830,7 @@
     "coupon_benchmark_spread_pct": null,
     "coupon_details": null,
     "coupon_frequency": 12,
+    "coupon_frequency_schedule": 12,
     "coupon_period_days": 30,
     "coupon_type": "unknown",
     "coupon_type_basis": "schedule",
@@ -5494,6 +5839,7 @@
     "day_count_source": null,
     "face_unit": "RUB",
     "face_value": "1000",
+    "face_value_date": "2026-10-13",
     "high_risk": false,
     "initial_face_value": "1000",
     "is_amortizing": true,
@@ -5510,6 +5856,7 @@
      "coupon_type_unknown",
      "day_count_not_published"
     ],
+    "lat_name": "Selectel 001P-10R",
     "listing_level": 2,
     "maturity_date": "2030-03-26",
     "name": "Селектел 001P-10R",
@@ -5547,6 +5894,7 @@
     "coupon_benchmark_spread_pct": null,
     "coupon_details": "Фиксированный с известными купонами",
     "coupon_frequency": 2,
+    "coupon_frequency_schedule": 2,
     "coupon_period_days": 182,
     "coupon_type": "fixed",
     "coupon_type_basis": "moex_label",
@@ -5555,6 +5903,7 @@
     "day_count_source": null,
     "face_unit": "RUB",
     "face_value": "1000",
+    "face_value_date": "2021-06-16",
     "high_risk": false,
     "initial_face_value": "1000",
     "is_amortizing": false,
@@ -5570,6 +5919,7 @@
     "labels": [
      "day_count_not_published"
     ],
+    "lat_name": "OFZ-PD 26238",
     "listing_level": 1,
     "maturity_date": "2041-05-15",
     "name": "ОФЗ-ПД 26238 15/05/2041",
@@ -5607,6 +5957,7 @@
     "coupon_benchmark_spread_pct": "1.4",
     "coupon_details": "Ставка RUONIA",
     "coupon_frequency": 2,
+    "coupon_frequency_schedule": 2,
     "coupon_period_days": 182,
     "coupon_type": "floating",
     "coupon_type_basis": "moex_label",
@@ -5615,6 +5966,7 @@
     "day_count_source": null,
     "face_unit": "RUB",
     "face_value": "1000",
+    "face_value_date": "2014-12-31",
     "high_risk": false,
     "initial_face_value": "1000",
     "is_amortizing": false,
@@ -5630,6 +5982,7 @@
     "labels": [
      "day_count_not_published"
     ],
+    "lat_name": "OFZ-PK 29008",
     "listing_level": 1,
     "maturity_date": "2029-10-03",
     "name": "ОФЗ-ПК 29008 03/10/29",
@@ -5667,6 +6020,7 @@
     "coupon_benchmark_spread_pct": null,
     "coupon_details": null,
     "coupon_frequency": 2,
+    "coupon_frequency_schedule": 2,
     "coupon_period_days": 182,
     "coupon_type": "fixed",
     "coupon_type_basis": "ofz_series",
@@ -5675,6 +6029,7 @@
     "day_count_source": null,
     "face_unit": "RUB",
     "face_value": "1000",
+    "face_value_date": "2006-02-15",
     "high_risk": false,
     "initial_face_value": "1000",
     "is_amortizing": true,
@@ -5690,6 +6045,7 @@
     "labels": [
      "day_count_not_published"
     ],
+    "lat_name": "OFZ-AD 46020",
     "listing_level": 1,
     "maturity_date": "2036-02-06",
     "name": "ОФЗ-АД 46020 06/02/36",
@@ -5742,6 +6098,7 @@
     "coupon_benchmark_spread_pct": null,
     "coupon_details": "Фиксированный с известными купонами",
     "coupon_frequency": 2,
+    "coupon_frequency_schedule": 2,
     "coupon_period_days": 182,
     "coupon_type": "indexed_face",
     "coupon_type_basis": "moex_label",
@@ -5750,6 +6107,7 @@
     "day_count_source": null,
     "face_unit": "RUB",
     "face_value": "1303.17",
+    "face_value_date": null,
     "high_risk": false,
     "initial_face_value": "1000",
     "is_amortizing": false,
@@ -5765,6 +6123,7 @@
     "labels": [
      "day_count_not_published"
     ],
+    "lat_name": "OFZ-IN 52005",
     "listing_level": 1,
     "maturity_date": "2033-05-11",
     "name": "ОФЗ-ИН 52005 11/05/33",
@@ -5779,64 +6138,123 @@
   ],
   "issuers": [
    {
-    "country": null,
+    "country": "RU",
+    "group_id": "vtb",
+    "group_name": "ВТБ",
+    "group_relation": "parent",
     "inn": "7702070139",
     "is_sovereign": false,
+    "is_state_owned": null,
     "issuer_id": 269,
     "name": "Банк ВТБ (публичное акционерное общество)",
-    "ogrn": null,
-    "sector": null,
-    "short_name": null
+    "ogrn": "1027739609391",
+    "okved": null,
+    "okved_version": null,
+    "sector": "banks",
+    "sector_source": "rule",
+    "short_name": "Банк ВТБ (ПАО)"
    },
    {
-    "country": null,
+    "country": "RU",
+    "group_id": null,
+    "group_name": null,
+    "group_relation": null,
     "inn": "7728168971",
     "is_sovereign": false,
+    "is_state_owned": null,
     "issuer_id": 465,
     "name": "АКЦИОНЕРНОЕ ОБЩЕСТВО \"АЛЬФА-БАНК\"",
-    "ogrn": null,
-    "sector": null,
-    "short_name": null
+    "ogrn": "1027700067328",
+    "okved": null,
+    "okved_version": null,
+    "sector": "banks",
+    "sector_source": "rule",
+    "short_name": "АО \"АЛЬФА-БАНК\""
    },
    {
-    "country": null,
+    "country": "RU",
+    "group_id": "rzd",
+    "group_name": "РЖД",
+    "group_relation": "parent",
     "inn": "7708503727",
     "is_sovereign": false,
+    "is_state_owned": true,
     "issuer_id": 712,
     "name": "открытое акционерное общество \"Российские железные дороги\"",
-    "ogrn": null,
-    "sector": null,
-    "short_name": null
+    "ogrn": "1037739877295",
+    "okved": null,
+    "okved_version": null,
+    "sector": "transport",
+    "sector_source": "curated",
+    "short_name": "ОАО \"РЖД\""
    },
    {
-    "country": null,
+    "country": "RU",
+    "group_id": null,
+    "group_name": null,
+    "group_relation": null,
     "inn": "5321029508",
     "is_sovereign": false,
+    "is_state_owned": null,
     "issuer_id": 1013,
     "name": "Публичное акционерное общество \"Акрон\"",
-    "ogrn": null,
-    "sector": null,
-    "short_name": null
+    "ogrn": "1025300786610",
+    "okved": null,
+    "okved_version": null,
+    "sector": "chemicals",
+    "sector_source": "rule",
+    "short_name": "ПАО \"Акрон\""
    },
    {
-    "country": null,
+    "country": "RU",
+    "group_id": null,
+    "group_name": null,
+    "group_relation": null,
     "inn": "7710168360",
     "is_sovereign": true,
+    "is_state_owned": null,
     "issuer_id": 1228,
     "name": "Министерство финансов Российской Федерации",
-    "ogrn": null,
-    "sector": null,
-    "short_name": null
+    "ogrn": "1037739085636",
+    "okved": null,
+    "okved_version": null,
+    "sector": "sovereign",
+    "sector_source": "rule",
+    "short_name": "Минфин России"
    },
    {
-    "country": null,
+    "country": "RU",
+    "group_id": null,
+    "group_name": null,
+    "group_relation": null,
     "inn": "7810962785",
     "is_sovereign": false,
+    "is_state_owned": null,
     "issuer_id": 11355,
     "name": "Акционерное общество \"Селектел\"",
-    "ogrn": null,
+    "ogrn": "1247800067790",
+    "okved": null,
+    "okved_version": null,
+    "sector": "it",
+    "sector_source": "rule",
+    "short_name": "АО \"Селектел\""
+   },
+   {
+    "country": "RU",
+    "group_id": null,
+    "group_name": null,
+    "group_relation": null,
+    "inn": "5503168016",
+    "is_sovereign": false,
+    "is_state_owned": null,
+    "issuer_id": 14320,
+    "name": "общество с ограниченной ответственностью \"СибАвтоТранс\"",
+    "ogrn": "1165543084190",
+    "okved": null,
+    "okved_version": null,
     "sector": null,
-    "short_name": null
+    "sector_source": null,
+    "short_name": "ООО \"СибАвтоТранс\""
    }
   ],
   "offers": [
@@ -5884,7 +6302,8 @@
     "face_value": "1000",
     "is_offer_or_redemption": true,
     "labels": [
-     "date_missing"
+     "date_missing",
+     "undated_unexplained"
     ],
     "offer_date": null,
     "offer_key": "undated-1",
@@ -5905,7 +6324,8 @@
     "face_value": "10000000",
     "is_offer_or_redemption": true,
     "labels": [
-     "date_missing"
+     "date_missing",
+     "undated_unexplained"
     ],
     "offer_date": null,
     "offer_key": "undated-1",
@@ -5926,7 +6346,8 @@
     "face_value": "10000000",
     "is_offer_or_redemption": true,
     "labels": [
-     "date_missing"
+     "date_missing",
+     "undated_unexplained"
     ],
     "offer_date": null,
     "offer_key": "undated-1",
@@ -5942,6 +6363,7 @@
     "window_start": null
    }
   ],
+  "ratings": [],
   "redemptions": [
    {
     "date": "2037-04-02",
@@ -5953,6 +6375,149 @@
     "value_pct_of_initial": "100",
     "value_per_bond": "1000",
     "value_rub_per_bond": "1000"
+   },
+   {
+    "date": "2026-01-15",
+    "face_unit": "RUB",
+    "face_value": "800",
+    "initial_face_value": "1000",
+    "kind": "amortization",
+    "secid": "RU000A107KV4",
+    "value_pct_of_initial": "5",
+    "value_per_bond": "50",
+    "value_rub_per_bond": "50"
+   },
+   {
+    "date": "2026-04-16",
+    "face_unit": "RUB",
+    "face_value": "800",
+    "initial_face_value": "1000",
+    "kind": "amortization",
+    "secid": "RU000A107KV4",
+    "value_pct_of_initial": "5",
+    "value_per_bond": "50",
+    "value_rub_per_bond": "50"
+   },
+   {
+    "date": "2026-07-16",
+    "face_unit": "RUB",
+    "face_value": "800",
+    "initial_face_value": "1000",
+    "kind": "amortization",
+    "secid": "RU000A107KV4",
+    "value_pct_of_initial": "5",
+    "value_per_bond": "50",
+    "value_rub_per_bond": "50"
+   },
+   {
+    "date": "2026-10-15",
+    "face_unit": "RUB",
+    "face_value": "800",
+    "initial_face_value": "1000",
+    "kind": "amortization",
+    "secid": "RU000A107KV4",
+    "value_pct_of_initial": "5",
+    "value_per_bond": "50",
+    "value_rub_per_bond": "50"
+   },
+   {
+    "date": "2027-01-14",
+    "face_unit": "RUB",
+    "face_value": "800",
+    "initial_face_value": "1000",
+    "kind": "amortization",
+    "secid": "RU000A107KV4",
+    "value_pct_of_initial": "7.5",
+    "value_per_bond": "75",
+    "value_rub_per_bond": "75"
+   },
+   {
+    "date": "2027-04-15",
+    "face_unit": "RUB",
+    "face_value": "800",
+    "initial_face_value": "1000",
+    "kind": "amortization",
+    "secid": "RU000A107KV4",
+    "value_pct_of_initial": "7.5",
+    "value_per_bond": "75",
+    "value_rub_per_bond": "75"
+   },
+   {
+    "date": "2027-07-15",
+    "face_unit": "RUB",
+    "face_value": "800",
+    "initial_face_value": "1000",
+    "kind": "amortization",
+    "secid": "RU000A107KV4",
+    "value_pct_of_initial": "7.5",
+    "value_per_bond": "75",
+    "value_rub_per_bond": "75"
+   },
+   {
+    "date": "2027-10-14",
+    "face_unit": "RUB",
+    "face_value": "800",
+    "initial_face_value": "1000",
+    "kind": "amortization",
+    "secid": "RU000A107KV4",
+    "value_pct_of_initial": "7.5",
+    "value_per_bond": "75",
+    "value_rub_per_bond": "75"
+   },
+   {
+    "date": "2028-01-13",
+    "face_unit": "RUB",
+    "face_value": "800",
+    "initial_face_value": "1000",
+    "kind": "amortization",
+    "secid": "RU000A107KV4",
+    "value_pct_of_initial": "10",
+    "value_per_bond": "100",
+    "value_rub_per_bond": "100"
+   },
+   {
+    "date": "2028-04-13",
+    "face_unit": "RUB",
+    "face_value": "800",
+    "initial_face_value": "1000",
+    "kind": "amortization",
+    "secid": "RU000A107KV4",
+    "value_pct_of_initial": "10",
+    "value_per_bond": "100",
+    "value_rub_per_bond": "100"
+   },
+   {
+    "date": "2028-07-13",
+    "face_unit": "RUB",
+    "face_value": "800",
+    "initial_face_value": "1000",
+    "kind": "amortization",
+    "secid": "RU000A107KV4",
+    "value_pct_of_initial": "10",
+    "value_per_bond": "100",
+    "value_rub_per_bond": "100"
+   },
+   {
+    "date": "2028-10-12",
+    "face_unit": "RUB",
+    "face_value": "800",
+    "initial_face_value": "1000",
+    "kind": "amortization",
+    "secid": "RU000A107KV4",
+    "value_pct_of_initial": "10",
+    "value_per_bond": "100",
+    "value_rub_per_bond": "100"
+   },
+   {
+    "date": "2029-01-11",
+    "face_unit": "RUB",
+    "face_value": "800",
+    "initial_face_value": "1000",
+    "kind": "amortization",
+    "secid": "RU000A107KV4",
+    "value_pct_of_initial": "10",
+    "value_per_bond": "100",
+    "value_rub_per_bond": "100"
    },
    {
     "date": "2026-04-22",
@@ -6224,26 +6789,26 @@
   {
    "coverage": {
     "by_coupon_type": {
-     "fixed": 6,
+     "fixed": 7,
      "floating": 2,
      "indexed_face": 1,
      "unknown": 1
     },
     "by_status": {
-     "active": 10
+     "active": 11
     },
     "labels": {
      "coupon_type_unknown": 1,
-     "day_count_not_published": 10,
+     "day_count_not_published": 11,
      "perpetual": 2,
      "perpetual_no_call_date": 2
     },
     "since": "2026-09-14",
-    "universe": "status active, or matured with maturity_date >= since"
+    "universe": "status active, or matured with maturity_date >= since, or delisted and alive (perpetual or maturity_date >= business_date)"
    },
    "name": "instruments",
-   "rows": 10,
-   "sha256": "3cf7528d1b8b92197c751ce5d8dfdaaf3963ea1239803ebb34adab8ff9c7f599",
+   "rows": 11,
+   "sha256": "e2240378734247b186ba2c9a3ab470eccf9663e9c54a8b3b67925f22fe24233d",
    "stale": false,
    "stale_reasons": []
   },
@@ -6251,22 +6816,22 @@
    "coverage": {
     "by_status": {
      "current_published": 1,
-     "known": 279,
+     "known": 299,
      "projected_by_moex": 62,
      "unknown": 32
     }
    },
    "name": "coupon_periods",
-   "rows": 374,
-   "sha256": "94a3a55beda63f05d18130cfb75e5bacd6fc872b14eb9f5171a3e2de4016af8f",
+   "rows": 394,
+   "sha256": "eb350410f97cd9aaec865cca9bd0f703073f00935886ed5423c51d8ed81bd681",
    "stale": false,
    "stale_reasons": []
   },
   {
    "coverage": {},
    "name": "redemptions",
-   "rows": 25,
-   "sha256": "669b1981a869bfd0120e7d83cd08fba607157c958a4266c3ae1c445f2628511f",
+   "rows": 38,
+   "sha256": "a7e9381d8ab8bd05f8b88a70012f39031bce2ecda360bef17fcb8f25633632ac",
    "stale": false,
    "stale_reasons": []
   },
@@ -6274,7 +6839,7 @@
    "coverage": {},
    "name": "offers",
    "rows": 5,
-   "sha256": "a2ea1753ea51e9e3d9866f3b54098bcbc7ded3bc2f2c51da2c516f0454946b76",
+   "sha256": "cae1bc7a1fcb3d46beeed35ec74f60a2bfa00fe139840231eb9082f3185cf987",
    "stale": false,
    "stale_reasons": []
   },
@@ -6292,10 +6857,61 @@
    "stale_reasons": []
   },
   {
-   "coverage": {},
+   "coverage": {
+    "by_sector": {
+     "banks": 2,
+     "chemicals": 1,
+     "it": 1,
+     "none": 1,
+     "sovereign": 1,
+     "transport": 1
+    },
+    "by_sector_source": {
+     "curated": 1,
+     "none": 1,
+     "rule": 5
+    },
+    "issuers": 7,
+    "large_issuer_threshold_rub": 5000000000,
+    "large_issuers_rub": 5,
+    "large_issuers_without_group": [
+     465,
+     1013,
+     1228
+    ],
+    "of_active_non_structured": {
+     "issuers": 7,
+     "with_country": 7,
+     "with_ogrn": 7,
+     "with_sector": 6,
+     "with_short_name": 7
+    },
+    "with_country": 7,
+    "with_group": 2,
+    "with_ogrn": 7,
+    "with_sector": 6,
+    "with_short_name": 7,
+    "without_sector": [
+     14320
+    ]
+   },
    "name": "issuers",
-   "rows": 6,
-   "sha256": "b3a37a4fe55bd494f11a093e65f57df7b5657965ac96e1d2dd8a8baffaea9770",
+   "rows": 7,
+   "sha256": "9c2ecb58ad7af3f662f5d22d0174f8e30094d5dd9a59e2b0874fca9c26a83c17",
+   "stale": false,
+   "stale_reasons": []
+  },
+  {
+   "coverage": {
+    "active_rub_corporate_issuers": 6,
+    "active_rub_corporate_issuers_rated": 0,
+    "by_agency": {},
+    "rows": 0,
+    "sources": []
+   },
+   "name": "ratings",
+   "rows": 0,
+   "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
    "stale": false,
    "stale_reasons": []
   },
@@ -6314,8 +6930,8 @@
     "ambiguous_isin": 0
    },
    "name": "id_map",
-   "rows": 10,
-   "sha256": "dc1fd7cb3d9fff888e2dc65230d525bd640207c4051d761194a02967381125ee",
+   "rows": 11,
+   "sha256": "596e61fe10965512722ff7fd4b8cb47c999f3e5d70ba9e2a0059662c6613c04f",
    "stale": false,
    "stale_reasons": []
   }
@@ -6326,13 +6942,13 @@
  "parameters": {
   "bond_calendar": "MOEX_STOCK",
   "matured_lookback_days": 31,
-  "universe": "active_or_recently_matured"
+  "universe": "active_or_recently_matured_or_alive"
  },
  "producer": {
   "name": "market-data-hub",
   "version": "0.1.0"
  },
- "schema_version": "market_snapshot/1.0",
+ "schema_version": "market_snapshot/1.1",
  "sources": [
   {
    "dataset": "calendars",
@@ -6409,7 +7025,7 @@
   {
    "dataset": "coupon_periods",
    "ingested_from": "2026-10-16T08:50:29.318174Z",
-   "ingested_to": "2026-10-16T12:03:36.515613Z",
+   "ingested_to": "2026-10-16T15:42:44.435784Z",
    "run_ids": [
     13,
     76,
@@ -6429,7 +7045,7 @@
   {
    "dataset": "id_map",
    "ingested_from": "2026-10-16T08:50:29.318174Z",
-   "ingested_to": "2026-10-16T12:03:36.515613Z",
+   "ingested_to": "2026-10-16T15:42:44.435784Z",
    "run_ids": [
     13,
     76,
@@ -6440,7 +7056,7 @@
   {
    "dataset": "instruments",
    "ingested_from": "2026-10-16T08:50:29.318174Z",
-   "ingested_to": "2026-10-16T12:03:36.515613Z",
+   "ingested_to": "2026-10-16T15:42:44.435784Z",
    "run_ids": [
     13,
     76,
@@ -6450,11 +7066,9 @@
   },
   {
    "dataset": "issuers",
-   "ingested_from": "2026-10-16T08:50:29.318174Z",
-   "ingested_to": "2026-10-16T08:50:29.318174Z",
-   "run_ids": [
-    13
-   ],
+   "ingested_from": "2026-10-16T15:42:44.435784Z",
+   "ingested_to": "2026-10-16T15:42:44.435784Z",
+   "run_ids": [],
    "source": "moex_iss"
   },
   {
@@ -6469,7 +7083,7 @@
   {
    "dataset": "redemptions",
    "ingested_from": "2026-10-16T08:50:29.318174Z",
-   "ingested_to": "2026-10-16T08:50:29.318174Z",
+   "ingested_to": "2026-10-16T15:42:44.435784Z",
    "run_ids": [
     13
    ],

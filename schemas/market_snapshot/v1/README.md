@@ -14,9 +14,18 @@ are in [`docs/DESIGN.md`](../../../docs/DESIGN.md) §11.
 | `common.schema.json` | Shared definitions: decimal strings, dates, UTC instants, sha256, labels |
 | `fixtures/` | Golden bundles built from public data (`index.json` lists their ids) |
 
-`schema_version` is `market_snapshot/1.0`. Every schema object has
+`schema_version` is `market_snapshot/1.1`. Every schema object has
 `additionalProperties: false`: a new field is a schema version bump, so a consumer pinned to
 an older version fails its conformance tests instead of silently ignoring it.
+
+**Versions.** A minor version (`1.x`) only adds fields, datasets, enum values or labels; it
+never removes, renames or changes the meaning or unit of an existing field. A consumer that
+reads `1.x` and ignores unknown additive fields stays correct; a new major (`2.0`) is refused.
+
+| Version | Change (all additive) |
+|---|---|
+| 1.0 | initial contract |
+| 1.1 (WEB-13, TDM brief R9) | Instrument `lat_name` (HS12), `coupon_frequency_schedule` (HS7), `face_value_date` (HS11); Issuer `sector_source`, `okved`, `okved_version` (HS3), `group_id`, `group_name`, `group_relation`, `is_state_owned` (HS4); dataset `ratings` (HS5) |
 
 ## Identity
 
@@ -73,14 +82,31 @@ the static universe), `fx_swap`, `not_an_outright`, `non_rub_pair`, `precious_me
 
 | Array | Object | Notes |
 |---|---|---|
-| `instruments` | Instrument | `ref.bond` + boards. Universe: `active`, plus `matured` with maturity within `parameters.matured_lookback_days`; linked EOD static also retains known instruments with price/yield on the market date, even if now matured/delisted. All reads respect `known_at`; stored terms/status are not rewritten. `labels`: `retained_for_market_quote` (outside default universe), `coupon_type_unknown`, `perpetual`, `perpetual_no_call_date`, `day_count_not_published`, `floater_formula_missing`, `floater_formula_partial`, `coupon_schedule_empty`, `no_issuer`, `structured`, `matured` |
+| `instruments` | Instrument | `ref.bond` + boards. Universe: `active`, plus `matured` with maturity within `parameters.matured_lookback_days`, plus alive bonds MOEX no longer trades (`delisted` with `maturity_date >= business_date`, or perpetual; label `not_traded`; `parameters.universe = active_or_recently_matured_or_alive`); linked EOD static also retains known instruments with price/yield on the market date, even if now matured/delisted. All reads respect `known_at`; stored terms/status are not rewritten. `labels`: `retained_for_market_quote` (outside default universe), `not_traded` (alive but delisted: no MOEX board lists it), `coupon_type_unknown`, `perpetual`, `perpetual_no_call_date`, `day_count_not_published`, `floater_formula_missing`, `floater_formula_partial`, `coupon_schedule_empty`, `no_issuer`, `structured`, `matured`, `face_value_not_in_schedule` (initial face minus the scheduled redemptions never equals `face_value`; not for indexed face), `future_redemptions_differ_from_face` (redemptions still to be paid do not add up to `face_value`) — MOEX values are published unchanged |
+| | | 1.1: `lat_name` (MOEX LATNAME); `coupon_frequency_schedule` = `round(365.25 / median period)` of the published coupon schedule (null with < 2 dated periods) next to `coupon_frequency` as MOEX states it (MOEX omits it when the first period is irregular) |
 | `coupon_periods` | CouponPeriod | `status`: only `known` is a fact; `current_published`, `projected_by_moex`, `unknown` are MOEX projections / gaps |
 | `redemptions` | Redemption | `kind` amortization / maturity |
 | `offers` | Offer | every source; `labels`: `date_missing` |
 | `floater_formulas` | FloaterFormula | resolved formula; `benchmark` and `benchmark_raw` verbatim, `status` curated / inferred / partial |
-| `issuers` | Issuer | |
+| `issuers` | Issuer | `short_name`, `ogrn`, `country` (ISO 3166-1 alpha-2) from the MOEX emitter card; `sector` = a code of the desk taxonomy in `mdhub/data/sector_map.json` (`banks`, `leasing`, `oil_gas`, `metals_mining`, `utilities`, `telecom`, `real_estate`, `transport`, `retail`, `agro`, `chemicals`, `it`, `financial_spv`, `securitization_spv`, `sovereign`, `subfederal`, `municipal`, `supranational`, `other`) or `null` when no versioned rule assigns one (never guessed). 1.1: `sector_source` (`okved` / `curated` / `group` / `rule`), `okved` + `okved_version` (null: OKVED not loaded, FNS registers unreachable), `group_id`, `group_name`, `group_relation` (`parent`, `subsidiary`, `spv`, `securitization_spv`, `affiliate`), `is_state_owned` (only where an evidence document states it) from the curated `mdhub/data/issuer_groups_curated.json` (evidence per row). `coverage`: `with_group`, `large_issuers_without_group` (active RUB bonds outstanding ≥ 5 bn RUB), fill rates over all issuers and over issuers of active non-structured bonds, `by_sector`, `by_sector_source`, `without_sector` |
+| `ratings` | Rating | 1.1 (HS5): `ref.bond_rating` as known at `known_at` (issue scope; agency, scale and rating verbatim; `watch` / `action` null while no source publishes them). Source today: Cbonds `get_rating_emission_maxdate`, which is blocked (HTTP 401, WEB-8), so the dataset is empty. Nothing is inferred; `coverage.active_rub_corporate_issuers_rated` shows the gap |
 | `calendars` | Calendar | from `ref.calendar_effective` only (MOEX weekend sessions are **not** business days): `valid_from`..`valid_to` (outside: unknown), `holidays`, `working_weekends`, `provisional_from` (first day decided by an unverified curated row), `version`, `fingerprint` |
 | `id_map` | IdMap | `isin_shared_with`: other SECIDs with the same ISIN (an ISIN join is ambiguous when non-empty) |
+
+### Face value on payment days (1.1, HS11)
+
+`Instrument.face_value` is the face MOEX published when the static was built. MOEX deducts a
+redemption from FACEVALUE during the redemption day, so on a payment day the value depends on
+the build time. `face_value_date` makes it explicit: the date from which `face_value` is
+outstanding according to `redemptions` (the date of the latest redemption already deducted
+from `initial_face_value`; `issue_date` when none is; `null` when no step of the schedule
+equals `face_value`, see label `face_value_not_in_schedule`).
+
+Rule for consumers: the face outstanding **before** the redemptions of day `D` is
+`initial_face_value − Σ redemptions.value_per_bond with date < D`. On `D = business_date`,
+`face_value_date = business_date` means `face_value` is already **after** that day's
+redemption; an earlier `face_value_date` means it is still **before** it. The golden static
+fixture carries a payment-day amortizer (see `fixtures/index.json`).
 
 ## Market objects (`data`)
 
@@ -88,7 +114,7 @@ the static universe), `fx_swap`, `not_an_outright`, `non_rub_pair`, `precious_me
 |---|---|---|
 | `bond_quotes` | BondQuote (EOD) | `md.bond_eod` + `md.bond_eod_yield` of the business date; empty in intraday cuts |
 | `bond_quotes_intraday` | BondQuote (intraday) | latest stored quote per (secid, board) on the business date; empty in EOD cuts |
-| `curve_quote_sets` | CurveQuoteSet | latest snapshot per (source, dataset) fetched on the business date; `labels`: `mid_only`, `market_closed`, `source_clock_not_on_business_date` |
+| `curve_quote_sets` | CurveQuoteSet | latest snapshot per (source, dataset) fetched on the business date; `labels`: `mid_only`, `market_closed`, `source_clock_not_on_business_date`. `coverage.required_without_any_source` lists `ruonia_ois` / `key_rate_swap` when no source delivered it on the date (the dataset is then `stale`) |
 | `zcyc_params` | ZcycParams | EOD cuts: the end-of-day publication (else the latest, flagged stale); intraday: the latest |
 | `fixings` | Fixing | `md.fixing` and the RUSFAR family from `md.index_eod` (`origin`) |
 | `fx_rates` | FxRate | RUB per 1 unit: `cbr_official`, `moex_eod` (raw price, `quote_units`, exact per-unit value), `moex_indicative_14` / `_19` |
