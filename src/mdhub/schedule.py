@@ -107,6 +107,11 @@ KNOWN_JOBS: Final = (
     "cbr_meetings",
     "ecb_fx",
     "rosstat_cpi",
+    "cbr_inflation",
+    "estr_fixing",
+    "sofr_fixing",
+    "fx_cross",
+    "proxy_curves",
     "swaps_ratescalcs",
     "swaps_otc_monitor",
     "quality",
@@ -302,6 +307,27 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
     "rosstat_cpi": (
         _r("5 10 * * *", days="all"),
         _r("35 19 * * *", days="all", note="monthly CPI release ~19:00 mid-month"),
+    ),
+    "cbr_inflation": (
+        _r("15 10 * * *", days="all"),
+        _r("45 19 * * *", days="all", note="CBR republishes the Rosstat y/y after the release"),
+    ),
+    "estr_fixing": (
+        _r("20 10 * * *", days="all", note="ECB publishes D at 08:00 CET on D+1"),
+        _r("20 13 * * *", days="all"),
+    ),
+    "sofr_fixing": (
+        _r("30 16 * * *", days="all", note="NY Fed publishes D at ~08:00 New York on D+1"),
+        _r("30 22 * * *", days="all", note="after revisions (by 14:30 New York)"),
+    ),
+    "fx_cross": (
+        _r("15 9 * * *", days="all", note="after cbr_daily 09:00"),
+        _r("45 18 * * *", days="all", note="after cbr_daily 18:30 (rates set today)"),
+        _r("20 19 * * *", days="all", note="after fx_indicative 19:10"),
+    ),
+    "proxy_curves": (
+        _r("40 7 * * *", days="all", note="before eod_final 08:00: Treasury curve of D-1"),
+        _r("40 23 * * *", days="all", note="Treasury publishes ~23:00-01:00 MSK"),
     ),
     "swaps_ratescalcs": (
         _poll("0,30 9-22 * * *", note="every 30 min 09:00-23:00; skip identical content"),

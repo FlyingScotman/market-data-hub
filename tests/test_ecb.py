@@ -29,11 +29,11 @@ Conn = psycopg.Connection[DictRow]
 
 
 def _http_factory(**kw: Any) -> HttpClient:
+    kw["max_retries"] = 0
     return HttpClient(
         limiter=RateLimiter(default_rps=None),
         rate_limits={"www.ecb.europa.eu": 1e6},
         sleep=lambda _s: None,
-        max_retries=0,
         **kw,
     )
 
