@@ -221,6 +221,10 @@ def _fred_rows(ctx: JobContext, d1: date, d2: date) -> tuple[list[dict[str, Any]
         )
     rows = []
     for o in obs:
+        # FRED can return history outside cosd/coed; bound normalized writes locally,
+        # as the ESTR/SOFR loaders do, while retaining the complete raw response.
+        if not d1 <= o.day <= d2:
+            continue
         base, quote = fred.H10_PAIRS[o.series]
         rows.append(
             {
