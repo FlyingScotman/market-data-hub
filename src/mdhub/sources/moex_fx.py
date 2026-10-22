@@ -87,7 +87,7 @@ __all__ = [
 ]
 
 PARSER_VERSION: Final = "moex_fx/2"
-"""2 (contract 1.4, H2): listings also yield the session's SETTLEDATE per instrument
+"""2 (contract 1.5, H2): listings also yield the session's SETTLEDATE per instrument
 (:func:`parse_fx_settle_dates`)."""
 
 SELT_SECURITIES: Final = "/engines/currency/markets/selt/securities.json"

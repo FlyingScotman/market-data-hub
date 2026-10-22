@@ -21,6 +21,7 @@ import mdhub.loaders.ecb
 import mdhub.loaders.proxy_curves
 import mdhub.loaders.ref_rates  # noqa: F401 - registers the jobs
 from mdhub.config import Settings
+from mdhub.core.capture import load_capture_payload
 from mdhub.core.errors import FormatDriftError
 from mdhub.core.http import HttpClient, RateLimiter
 from mdhub.db.pool import Database
@@ -361,6 +362,43 @@ def test_sofr_nyfed_then_fred(
     assert fred_rows[-1]["details"]["series"] == "SOFR30DAYAVG"
 
 
+@pytest.mark.parametrize(
+    ("job", "payload", "codes"),
+    [
+        ("estr_fixing", FRED_EST, {"ESTR"}),
+        (
+            "sofr_fixing",
+            FRED_SOFR,
+            {"SOFR", "SOFR30DAVG", "SOFR90DAVG", "SOFR180DAVG", "SOFRINDEX"},
+        ),
+    ],
+)
+def test_fred_reference_rates_filter_oversized_responses(
+    web: respx.MockRouter,
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    today_is: Callable[[date], None],
+    job: str,
+    payload: bytes,
+    codes: set[str],
+) -> None:
+    today_is(date(2026, 10, 21))
+    route = web.get(fred.BASE_URL).respond(200, content=payload)
+    out = _run(
+        job, {"date_from": "2026-10-15", "date_to": "2026-10-16", "sources": ["fred"]}, settings, db
+    )
+    assert out.status == "succeeded"
+    rows = conn.execute("SELECT * FROM md.fixing WHERE source = 'fred'").fetchall()
+    assert {(r["index_code"], r["fixing_date"]) for r in rows} == {
+        (code, day) for code in codes for day in (date(2026, 10, 15), date(2026, 10, 16))
+    }
+    assert all(isinstance(r["value"], Decimal) for r in rows)
+    assert route.calls.last.request.url.params["cosd"] == "2026-10-15"
+    assert route.calls.last.request.url.params["coed"] == "2026-10-16"
+    assert load_capture_payload(conn, rows[0]["capture_id"]) == payload
+
+
 def test_ecb_fx_falls_back_to_the_data_portal(
     web: respx.MockRouter,
     settings: Settings,
@@ -454,6 +492,85 @@ def test_fx_cross_kinds(
     web.route(host="fred.stlouisfed.org").mock(side_effect=httpx.ConnectError("blocked"))
     out = _run("fx_cross", {}, settings, db)
     assert out.status == "succeeded" and out.result["fred_error"].startswith("TransportFailure")
+
+
+@pytest.mark.parametrize(
+    ("params", "days", "expected_count"),
+    [
+        ({"date_from": "2026-10-16", "date_to": "2026-10-21"}, {16, 19, 21}, 19),
+        ({"date_from": "2026-10-17", "date_to": "2026-10-18"}, set(), 0),
+        ({}, {15, 16, 19, 21}, 26),  # scheduled lookback: never write tomorrow's observation
+    ],
+)
+def test_fx_cross_fred_filters_oversized_response(
+    web: respx.MockRouter,
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    today_is: Callable[[date], None],
+    params: dict[str, str],
+    days: set[int],
+    expected_count: int,
+) -> None:
+    today_is(date(2026, 10, 21))
+    payload = _b("fred_h10_outside_range_synthetic.csv")
+    route = web.get(fred.BASE_URL).respond(200, content=payload)
+    # A previously stored out-of-range observation must not be revised or touched.
+    conn.execute(
+        "INSERT INTO md.fx_cross (rate_date, base_ccy, quote_ccy, kind, source, rate) "
+        "VALUES ('1971-01-04', 'GBP', 'USD', 'fred_h10', 'fred', 99)"
+    )
+    conn.commit()
+    before = conn.execute("SELECT * FROM md.fx_cross").fetchone()
+    conn.rollback()
+    out = _run("fx_cross", {**params, "sources": ["fred"]}, settings, db)
+    assert out.status == "succeeded" and out.result["fred_error"] is None
+    assert out.result["inserted"] == expected_count and out.result["updated"] == 0
+    assert out.result["rows_by_kind"] == ({"fred_h10": expected_count} if days else {})
+    rows = conn.execute("SELECT * FROM md.fx_cross WHERE run_id = %s", (out.run_id,)).fetchall()
+    assert len(rows) == expected_count
+    assert {r["rate_date"] for r in rows} == {date(2026, 10, day) for day in days}
+    assert all(isinstance(r["rate"], Decimal) for r in rows)
+    if days:
+        eurusd = next(
+            r for r in rows if r["rate_date"] == date(2026, 10, 16) and r["base_ccy"] == "EUR"
+        )
+        assert eurusd["rate"] == Decimal("1.1204")
+        assert eurusd["details"] == {"series": "DEXUSEU"}
+    unchanged = conn.execute("SELECT * FROM md.fx_cross WHERE rate_date = '1971-01-04'").fetchone()
+    assert unchanged == before
+    cap = conn.execute("SELECT id FROM ops.raw_capture WHERE run_id = %s", (out.run_id,)).fetchone()
+    assert cap is not None and load_capture_payload(conn, cap["id"]) == payload
+    assert route.calls.last.request.url.params["cosd"] == params.get("date_from", "2026-10-11")
+    assert route.calls.last.request.url.params["coed"] == params.get("date_to", "2026-10-21")
+    conn.rollback()
+    again = _run("fx_cross", {**params, "sources": ["fred"]}, settings, db)
+    assert again.result["inserted"] == 0 and again.result["updated"] == 0
+
+
+@pytest.mark.parametrize("invalid", [b"-1", b"not-a-number"])
+def test_fx_cross_fred_outside_range_still_validates_payload(
+    web: respx.MockRouter,
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    today_is: Callable[[date], None],
+    invalid: bytes,
+) -> None:
+    today_is(date(2026, 10, 21))
+    payload = _b("fred_h10_outside_range_synthetic.csv").replace(
+        b"1971-01-04,,1.2001", b"1971-01-04,," + invalid
+    )
+    web.get(fred.BASE_URL).respond(200, content=payload)
+    out = _run(
+        "fx_cross",
+        {"date_from": "2026-10-16", "date_to": "2026-10-21", "sources": ["fred"]},
+        settings,
+        db,
+    )
+    assert out.result["fred_error"].startswith("FormatDriftError")
+    assert out.result["inserted"] == 0 and out.result["updated"] == 0
+    assert conn.execute("SELECT 1 FROM md.fx_cross").fetchone() is None
 
 
 def test_proxy_curves_usd_and_eur_fallback(
@@ -562,7 +679,7 @@ def test_rosstat_published_on_and_cbr_yoy(
     assert off.status == "partial" and off.result["chain_mismatches"][0].startswith("2026-09")
 
 
-# ---------------------------------------------------------------------- SARON (1.4, P6)
+# ---------------------------------------------------------------------- SARON (1.5, P6)
 
 
 def test_snb_saron_csv_and_drift() -> None:

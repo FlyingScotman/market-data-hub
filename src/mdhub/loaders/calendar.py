@@ -35,7 +35,7 @@ CN_INTERBANK    ``curated`` (State Council    ``curated`` for the decreed years 
                                               every year, never guessed
 =============== ============================ ===============================================
 
-The foreign calendars (contract 1.4, TDM brief H13 / package H4) give the FX value dates of
+The foreign calendars (contract 1.5, TDM brief H13 / package H4) give the FX value dates of
 non-RUB legs: a consumer builds the settlement calendar of a pair as the joint calendar of the
 MOEX / Russian one and the currency's (e.g. ``MOEX_FX`` + ``CN_INTERBANK`` for CNY/RUB). Rule
 calendars cover regular closures only; an extraordinary closure is a ``curated`` override.
@@ -300,7 +300,7 @@ def target_rule_days(start: date, end: date) -> dict[date, bool]:
     return rule_days(target_closing_days, start, end)
 
 
-# ------------------------------------------------- foreign settlement calendars (1.4, H4)
+# ------------------------------------------------- foreign settlement calendars (1.5, H4)
 
 
 def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:

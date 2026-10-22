@@ -38,6 +38,14 @@ layout (preamble `CubeId` / `PublishingDate`, empty line, `"Date";"D0";"Value"`,
 semicolon-separated, CRLF, an empty `Value` on 2026-10-16). Check the cube id, the `SARON` series
 code and the layout with `mdhub probe-sources -s snb` on the server before relying on it.
 
+`fred_h10_outside_range_synthetic.csv` is a **synthetic regression fixture**, not a recorded
+response or historical market values. It reproduces the oversized-response behavior confirmed
+in issue #23: a bounded H.10 request returned observations dating back to 1971. It includes
+dates before, on both bounds of, within, and after the requested 2026-10-16..2026-10-21 interval,
+with both empty and `.` missing values. The loader must keep the full raw response while
+writing only eligible observations. Tests for the other FRED callers use the existing ESTR
+and SOFR CSVs with a narrower requested interval to exercise the same provider behavior.
+
 CBR inflation (`../official/cbr_infl_2024-01_2026-09.html`, recorded:
 `www.cbr.ru/hd_base/infl/?UniDbQuery.Posted=True&UniDbQuery.From=01.01.2024&UniDbQuery.To=30.09.2026`)
 and the Rosstat price page excerpt (`../rosstat/price_page_excerpt.html`, three document items of

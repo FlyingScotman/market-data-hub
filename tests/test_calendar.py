@@ -764,7 +764,7 @@ def test_ru_production_is_the_official_calendar_and_missing_ruonia_is_a_gap(
     assert date(2025, 12, 30) in {g.day for g in scan.gaps}
 
 
-# ------------------------------------------- foreign settlement calendars (contract 1.4, H4)
+# ------------------------------------------- foreign settlement calendars (contract 1.5, H4)
 
 
 def test_us_fed_and_zurich_rules() -> None:

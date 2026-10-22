@@ -5406,18 +5406,26 @@
     "benchmark": "KEY_RATE",
     "benchmark_raw": "RREFKEYR",
     "benchmark_source": "moex_iss",
+    "benchmark_tenor_years": null,
     "cap_pct": null,
     "evidence_document_url": null,
     "evidence_page": null,
+    "fixing_anchor": null,
+    "fixing_basis": null,
     "fixing_day": null,
+    "fixing_offset": null,
+    "fixing_offset_unit": null,
     "floor_pct": null,
     "lag_days": null,
     "multiplier": null,
+    "rate_rounding_decimals": null,
+    "reproduction": null,
     "secid": "RU000A109XR1",
     "sources": [
      "moex_iss"
     ],
     "spread_bp": "175.0",
+    "spread_schedule": null,
     "status": "inferred",
     "variable_rate_type": null
    },
@@ -5426,18 +5434,26 @@
     "benchmark": "RUONIA",
     "benchmark_raw": "RUONIA",
     "benchmark_source": "moex_iss",
+    "benchmark_tenor_years": null,
     "cap_pct": null,
     "evidence_document_url": null,
     "evidence_page": null,
+    "fixing_anchor": null,
+    "fixing_basis": null,
     "fixing_day": null,
+    "fixing_offset": null,
+    "fixing_offset_unit": null,
     "floor_pct": null,
     "lag_days": null,
     "multiplier": null,
+    "rate_rounding_decimals": null,
+    "reproduction": null,
     "secid": "SU29008RMFS8",
     "sources": [
      "moex_iss"
     ],
     "spread_bp": "140.0",
+    "spread_schedule": null,
     "status": "inferred",
     "variable_rate_type": null
    }
@@ -7005,11 +7021,17 @@
     },
     "floaters_without_formula": 0,
     "key_rate_ruonia_floaters": 2,
-    "key_rate_ruonia_floaters_curated": 0
+    "key_rate_ruonia_floaters_curated": 0,
+    "zcyc_coupon_periods_checked": 0,
+    "zcyc_coupon_periods_matched": 0,
+    "zcyc_floaters": 0,
+    "zcyc_floaters_curated": 0,
+    "zcyc_floaters_reproduced": 0,
+    "zcyc_floaters_with_tenor": 0
    },
    "name": "floater_formulas",
    "rows": 2,
-   "sha256": "1aee370b7f6b8ae3bfe33f02f4d660d78f81dfec52e9b3c78866fcef7007d041",
+   "sha256": "155db75bc46852d76a2821f3182ca777903fe8558f97a3b97dda049de3e5cd79",
    "stale": false,
    "stale_reasons": []
   },
@@ -7112,7 +7134,7 @@
   "name": "market-data-hub",
   "version": "0.1.0"
  },
- "schema_version": "market_snapshot/1.4",
+ "schema_version": "market_snapshot/1.5",
  "sources": [
   {
    "dataset": "calendars",

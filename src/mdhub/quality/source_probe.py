@@ -16,6 +16,11 @@ certificate's ``notAfter`` and a sanitized error. Probe payloads are not stored 
 * ``not_configured`` - the source needs credentials that are not set: the same request goes out
   without them and ``ok`` only says the source answered (any status below 500).
 
+For Cbonds, only HTTP 401 rejects credentials. HTTP 403 may be a denied method or an
+oversized result set; even HTTP 200 can carry a provider error. Its ``ok`` requires a valid
+result body. ``auth=ok`` with ``ok=false`` means no explicit credential rejection, not verified
+access; the sanitized error explains the failed check.
+
 Sources and requests (:data:`PROBES`): ``moex_iss`` ``/iss/engines.json``, ``moex_apim``
 ``/iss/engines.json`` with ``MOEX_API_KEY``, ``cbr`` ``XML_daily.asp``, ``ecb``
 ``eurofxref-daily.xml``, ``rosstat`` ``/statistics/price``, the reference-rate sources (WEB-16:
@@ -24,10 +29,10 @@ days, ``nyfed`` the latest SOFR, ``snb`` the dimensions of the SARON cube, ``us_
 par-curve feed of the month - at most hourly,
 the feed is slow), ``ratescalcs`` the JSON snapshot
 (Basic auth; only Mon-Fri 08:50-23:00 MSK, when the service answers), ``otc_monitor``
-``/api/bond/`` (bearer), ``cbonds`` one ``get_emissions`` query with ``limit=1`` - at most
-hourly (:attr:`ProbeSpec.min_interval_s`), so a rejected login does not hit the provider 288
-times a day; the rating agencies ``nkr``, ``nra``, ``raexpert`` (WEB-18) their ``robots.txt``,
-at most hourly.
+``/api/bond/`` (bearer), ``cbonds`` one ``get_emissions`` query for a fixed ISIN with ``limit=1``
+- at most hourly (:attr:`ProbeSpec.min_interval_s`), so a rejected login does not hit the
+provider 288 times a day; the rating agencies ``nkr``, ``nra``, ``raexpert`` (WEB-18)
+their ``robots.txt``, at most hourly.
 """
 
 from __future__ import annotations
@@ -44,6 +49,7 @@ from typing import Any, Final
 import httpx
 
 from mdhub.config import Settings
+from mdhub.core.errors import FormatDriftError
 from mdhub.core.http import HttpClient, HttpError
 from mdhub.core.iss import APIM_BASE_URL, ISS_BASE_URL
 from mdhub.core.redact import redact_url, sanitize_text
@@ -151,7 +157,7 @@ def _cbonds(settings: Settings) -> ProbeRequest:
             "login": login.get_secret_value() if login else "",
             "password": password.get_secret_value() if password else "",
         },
-        "filters": [],
+        "filters": [{"field": "isin_code", "operator": "eq", "value": cbonds.PROBE_ISIN}],
         "quantity": {"limit": 1, "offset": 0},
         "sorting": [],
         "fields": [{"field": "id"}],
@@ -256,7 +262,20 @@ def probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult:
     latency_ms = round((time.perf_counter() - started) * 1000, 1)
     status = response.status_code
     error: str | None = None
-    if req.configured is None:
+    if spec.source == "cbonds" and req.configured:
+        try:
+            cbonds.validate_response(
+                response,
+                "get_emissions",
+                creds=cbonds.CbondsCredentials(**req.json["auth"]),
+            )
+            ok = True
+        except (cbonds.CbondsError, FormatDriftError) as exc:
+            ok = False
+            if isinstance(exc, cbonds.CbondsAuthError):
+                auth = "rejected"
+            error = sanitize_text(str(exc), settings.secret_values())[:_MAX_ERROR]
+    elif req.configured is None:
         ok = 200 <= status < 400
     elif not req.configured:
         ok = status < 500
@@ -264,7 +283,7 @@ def probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult:
         auth, ok = "rejected", False
     else:
         ok = 200 <= status < 400
-    if not ok:
+    if not ok and error is None:
         error = f"HTTP {status}"
     return ProbeResult(
         source=spec.source,

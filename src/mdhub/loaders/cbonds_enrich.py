@@ -1,8 +1,8 @@
 """Optional Cbonds enrichment of bond static (job ``cbonds_enrich``, daily 07:30).
 
 1. Credentials missing -> run ``skipped``.
-2. One tiny probe query (``get_emissions``, 1 ISIN, 2 fields). HTTP 401/403 -> run ``skipped``
-   with the reason (the account is currently rejected - likely an IP allow-list); nothing else
+2. One tiny probe query (``get_emissions``, 1 ISIN, 2 fields). HTTP 401 -> run ``skipped``
+   with the reason (credentials rejected); nothing else
    is requested, so a rejected account is never hammered.
 3. For active MOEX bonds with an ISIN (floaters first, ``max_isins``), in batches of 50 ISINs
    (``in`` filter): ``get_emissions``, ``get_offert``, ``get_rating_emission_maxdate``; for
@@ -39,7 +39,6 @@ from mdhub.sources.moex_static import canonical_sha256, map_benchmark
 __all__ = ["cbonds_enrich"]
 
 SOURCE: Final = "cbonds"
-PROBE_ISIN: Final = "RU000A1038V6"  # OFZ 26238, any valid ISIN works for the auth probe
 
 
 def _chunks(items: Sequence[str], size: int) -> Iterator[list[str]]:
@@ -69,7 +68,7 @@ def cbonds_enrich(
             probe = cb.query(
                 http,
                 "get_emissions",
-                filters=[{"field": "isin_code", "operator": "eq", "value": PROBE_ISIN}],
+                filters=[{"field": "isin_code", "operator": "eq", "value": cb.PROBE_ISIN}],
                 fields=["id", "isin_code"],
                 limit=1,
                 creds=creds,
@@ -179,6 +178,7 @@ def _fetch_all(
         "flows": [],
     }
     isins = list(bonds)
+    denied: set[str] = set()
     try:
         for batch in _chunks(isins, batch_size):
             joined = ";".join(batch)
@@ -195,32 +195,30 @@ def _fetch_all(
                     limit=len(batch),
                 )
             ]
-            out["offers"] += [
-                cb.parse_offer(r)
-                for r in _paged(
-                    ctx,
-                    conn,
-                    http,
-                    creds,
-                    "get_offert",
-                    [{"field": "emission_isin_code", "operator": "in", "value": joined}],
-                    cb.OFFER_FIELDS,
-                    limit=250,
-                )
-            ]
-            out["ratings"] += [
-                cb.parse_rating(r)
-                for r in _paged(
-                    ctx,
-                    conn,
-                    http,
-                    creds,
-                    "get_rating_emission_maxdate",
-                    [{"field": "emission_isin_code", "operator": "in", "value": joined}],
-                    cb.RATING_FIELDS,
-                    limit=250,
-                )
-            ]
+            for kind, operation, fields, parse in (
+                ("offers", "get_offert", cb.OFFER_FIELDS, cb.parse_offer),
+                ("ratings", "get_rating_emission_maxdate", cb.RATING_FIELDS, cb.parse_rating),
+            ):
+                if operation in denied:
+                    continue
+                try:
+                    out[kind] += [
+                        parse(r)
+                        for r in _paged(
+                            ctx,
+                            conn,
+                            http,
+                            creds,
+                            operation,
+                            [{"field": "emission_isin_code", "operator": "in", "value": joined}],
+                            fields,
+                            limit=250,
+                        )
+                    ]
+                except cb.CbondsAccessError as exc:
+                    # Do not repeat a denied method for every batch, or block accessible data.
+                    denied.add(operation)
+                    ctx.run.mark_partial(str(exc))
         floaters = [i for i in isins if bonds[i]["coupon_type"] == "floating"][: max(0, flow_limit)]
         for isin in floaters:
             out["flows"] += [

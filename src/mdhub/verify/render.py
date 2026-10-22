@@ -426,6 +426,61 @@ def _amount_conventions(run: VerificationRun) -> list[str]:
 # ---------------------------------------------------------------------------- render
 
 
+def _zcyc_floaters(run: VerificationRun) -> list[str]:
+    rows = []
+    for z in run.zcyc_floaters:
+        r = z.reproduction
+        rows.append(
+            [
+                z.secid,
+                r["method"],
+                r["tenor_years"] or "-",
+                r["fixing_offset"] if r["fixing_offset"] is not None else "-",
+                f"{r['periods_matched']}/{r['periods_checked']}",
+                r["max_abs_error_pct"] or "-",
+                "yes" if r["accepted"] else f"no: {r['reason']}",
+                ", ".join(map(str, r["unmatched_coupon_nos"])) or "-",
+            ]
+        )
+    if not rows:
+        return ["No floater with benchmark ZCYC."]
+    ok = sum(1 for z in run.zcyc_floaters if z.reproduction["accepted"])
+    return [
+        f"{ok} of {len(rows)} KBD floaters reproduced (accepted).",
+        "",
+        *_md_table(
+            [
+                "secid",
+                "terms",
+                "T, years",
+                "N",
+                "matched",
+                "max error, pp",
+                "accepted",
+                "unmatched coupons",
+            ],
+            rows,
+        ),
+    ]
+
+
+def _zcyc_calendar(run: VerificationRun) -> list[str]:
+    c = run.zcyc_calendar
+    if c is None or c.first is None:
+        return ["No end-of-day KBD publication in md.zcyc_snapshot."]
+
+    def days(ds: Sequence[Any]) -> str:
+        return ", ".join(str(d) for d in ds[:20]) + (" ..." if len(ds) > 20 else "") or "none"
+
+    return [
+        f"* End-of-day publications: {c.publication_days:,} days, {c.first} .. {c.last}.",
+        f"* MOEX_STOCK business days without a publication ({len(c.business_without_publication)}):"
+        f" {days(c.business_without_publication)}.",
+        f"* Publications on a non-business day ({len(c.publication_not_business)}):"
+        f" {days(c.publication_not_business)}.",
+    ]
+
+
 def render_markdown(run: VerificationRun) -> str:
     """The generated block (including the markers)."""
     with_ai = [b for b in run.bonds if b.ai_rows]
@@ -510,6 +565,19 @@ def render_markdown(run: VerificationRun) -> str:
         "### Coupon amount convention by bond class (bonds, most coupons explained)",
         "",
         *_amount_conventions(run),
+        "",
+        "## 4. KBD (ZCYC) floaters: coupon rates reproduced from the ZCYC history",
+        "",
+        "rate % = round(Y_KBD(T; N-th KBD publication day before the period start), 2) +"
+        " margin of the period; a coupon matches within 0.005 pp. `check` = documented"
+        " (curated) terms, `fit` = the hub's fit (job `zcyc_floater_fit`; tenor and offset are"
+        " published only when accepted).",
+        "",
+        *_zcyc_floaters(run),
+        "",
+        "### KBD publication calendar (`zcyc_publication_days`)",
+        "",
+        *_zcyc_calendar(run),
         "",
         END,
     ]

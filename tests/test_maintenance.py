@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
@@ -214,6 +215,52 @@ def test_backup_failure_is_sanitized(
         mt.rotate_backups(tmp_path, 0)
 
 
+@pytest.mark.parametrize("mask", [0o022, 0o777])
+def test_backup_permissions_during_write_and_after_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, db: Database, mask: int
+) -> None:
+    written_inodes = []
+
+    def dump(argv: list[str], env: dict[str, str], timeout: float) -> Any:
+        partial = Path(next(a.removeprefix("--file=") for a in argv if a.startswith("--file=")))
+        with partial.open("wb") as stream:
+            st = os.fstat(stream.fileno())
+            assert stat.S_IMODE(st.st_mode) == 0o600
+            written_inodes.append(st.st_ino)
+            stream.write(b"PGDMP fake")
+        return subprocess.CompletedProcess(argv, 0, "", "")
+
+    monkeypatch.setattr(mt.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(mt, "_run_command", dump)
+    previous = os.umask(mask)
+    try:
+        result = mt.run_backup(db, directory=tmp_path, keep=2, secrets=[])
+    finally:
+        os.umask(previous)
+    assert stat.S_IMODE(result.path.stat().st_mode) == 0o600
+    assert result.path.stat().st_ino == written_inodes[0]
+    assert not list(tmp_path.glob("*.partial"))
+
+
+@pytest.mark.parametrize("kind", ["file", "symlink", "dangling_symlink"])
+def test_private_backup_file_preserves_existing_paths(tmp_path: Path, kind: str) -> None:
+    target = tmp_path / "dump.partial"
+    existing = tmp_path / "existing"
+    if kind == "file":
+        target.write_bytes(b"keep")
+    else:
+        if kind == "symlink":
+            existing.write_bytes(b"keep")
+        target.symlink_to(existing)
+    with pytest.raises(FileExistsError), mt.private_backup_file(target):
+        pytest.fail("an existing path must not be opened")
+    assert target.is_symlink() if kind != "file" else target.read_bytes() == b"keep"
+    if kind == "symlink":
+        assert existing.read_bytes() == b"keep"
+    if kind == "dangling_symlink":
+        assert not existing.exists()
+
+
 @pytest.mark.skipif(not (PG_BIN / "pg_dump").exists(), reason="pgserver pg_dump not available")
 def test_real_backup_and_restore_roundtrip(
     tmp_path: Path,
@@ -231,6 +278,14 @@ def test_real_backup_and_restore_roundtrip(
         db, directory=tmp_path, keep=5, secrets=[], now=datetime(2026, 10, 16, tzinfo=UTC)
     )
     assert res.path.name.endswith("-20261016T000000Z.dump") and res.size_bytes > 0
+    assert stat.S_IMODE(res.path.stat().st_mode) == 0o600
+    listing = subprocess.run(
+        [str(PG_BIN / "pg_restore"), "--list", str(res.path)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "mt_roundtrip" in listing.stdout
 
     target = pg_server.create_db()
     try:

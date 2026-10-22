@@ -54,7 +54,7 @@ The 16 October list (items 1–10) stands as follows:
 | 9 | Alerting and backups | Open: gaps are visible in `/v1/gaps`, but there is no alert channel (review P0-4); backups stay on the VPS until WEB-6 (off-host copy) |
 | 10 | Intraday data; foreign and CPI series | Intraday market cuts done (every 30 min); €STR, SOFR and CPI y/y done in WEB-16. The remaining derivatives inputs are tracked in [ROADMAP.md](../ROADMAP.md), section "TDM H10–H15, SARON, H17" |
 
-The desk's brief to the hub is `trading-desk-monitor/docs/architecture/briefs/HUB.md` (items H0–H26; H6 is this rewrite). Items the hub accepts are tracked in [ROADMAP.md](../ROADMAP.md). On the desk's critical path now (monitor ROADMAP revision 4, wave A package P6): H11 futures prices and H13 FX value dates, swap points and CETS FX swaps in the snapshot, then H12 RUONIA unpublished days, H10 CPI levels, SARON and H17 publication calendars, as contract `market_snapshot/1.4`.
+The desk's brief to the hub is `trading-desk-monitor/docs/architecture/briefs/HUB.md` (items H0–H26; H6 is this rewrite). Items the hub accepts are tracked in [ROADMAP.md](../ROADMAP.md). On the desk's critical path now (monitor ROADMAP revision 4, wave A package P6): H11 futures prices and H13 FX value dates, swap points and CETS FX swaps in the snapshot, then H12 RUONIA unpublished days, H10 CPI levels, SARON and H17 publication calendars, as contract `market_snapshot/1.5`.
 
 ## Relevant system documents
 

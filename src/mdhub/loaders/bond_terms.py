@@ -20,7 +20,17 @@ entry must match):
   ``inferred``;
 * ``call`` / ``offer`` -> ``ref.bond_offer`` (``source = 'curated'``, ``offer_type_basis =
   'document'``, status ``scheduled`` / ``past`` by the date);
+* ``floater_spread`` (one entry per margin step, key = ``effective_from``, the start date of
+  the first coupon period it applies to) -> ``spread_schedule`` of that curated formula row,
+  each step with its own document (a margin revised at an offer is announced separately);
+  a step without a ``floater_formula`` entry of the same SECID is rejected;
 * ``replacement_bond`` is read by the static snapshot builder (basis ``document``).
+
+KBD floaters (``benchmark = ZCYC``, contract 1.4) state ``benchmark_tenor_years``,
+``fixing_anchor`` (``accrual_start``), ``fixing_offset`` + ``fixing_offset_unit``
+(``zcyc_publication_days`` | ``business_days`` | ``calendar_days``) and
+``rate_rounding_decimals``; the job ``zcyc_floater_fit`` checks them against the published
+coupons.
 
 Rows of this file that disappear from it are soft-deleted (``is_deleted``), never removed;
 rows of other writers with ``source = 'curated'`` (the legacy mapping) are not touched.
@@ -55,11 +65,17 @@ __all__ = [
 ]
 
 TERMS_RESOURCE: Final = "bond_terms_curated.json"
-TERMS: Final = frozenset({"floater_formula", "call", "offer", "replacement_bond"})
+TERMS: Final = frozenset({"floater_formula", "floater_spread", "call", "offer", "replacement_bond"})
 EVIDENCE_REQUIRED: Final = ("document_url", "document_title", "extracted_text", "retrieved_on")
-FORMULA_DECIMALS: Final = ("spread_bp", "multiplier", "floor_pct", "cap_pct")
-FORMULA_INTS: Final = ("lag_days", "fixing_day")
+FORMULA_DECIMALS: Final = (
+    "spread_bp", "multiplier", "floor_pct", "cap_pct", "benchmark_tenor_years",
+)  # fmt: skip
+FORMULA_INTS: Final = ("lag_days", "fixing_day", "fixing_offset", "rate_rounding_decimals")
 FORMULA_TEXT: Final = ("benchmark", "benchmark_raw", "averaging", "variable_rate_type")
+FORMULA_ENUMS: Final = {
+    "fixing_anchor": frozenset({"accrual_start"}),
+    "fixing_offset_unit": frozenset({"zcyc_publication_days", "business_days", "calendar_days"}),
+}
 OFFER_TYPES: Final = frozenset({"call", "put"})
 
 
@@ -96,7 +112,7 @@ def _day(v: Any, where: str) -> date | None:
 def _check_value(term: str, value: Mapping[str, Any], where: str) -> str:
     """Validate ``value`` of ``term``; returns the term key (date of a call / offer)."""
     if term == "floater_formula":
-        allowed = {*FORMULA_DECIMALS, *FORMULA_INTS, *FORMULA_TEXT}
+        allowed = {*FORMULA_DECIMALS, *FORMULA_INTS, *FORMULA_TEXT, *FORMULA_ENUMS}
         if set(value) - allowed:
             raise ValueError(f"{where}: unknown formula fields {sorted(set(value) - allowed)}")
         if not value.get("benchmark"):
@@ -104,9 +120,26 @@ def _check_value(term: str, value: Mapping[str, Any], where: str) -> str:
         for k in FORMULA_DECIMALS:
             _dec(value.get(k), f"{where}.{k}")
         for k in FORMULA_INTS:
-            if value.get(k) is not None and not isinstance(value[k], int):
-                raise ValueError(f"{where}.{k}: not an integer")
+            if value.get(k) is not None and (
+                not isinstance(value[k], int) or isinstance(value[k], bool) or value[k] < 0
+            ):
+                raise ValueError(f"{where}.{k}: not a non-negative integer")
+        for k, known in FORMULA_ENUMS.items():
+            if value.get(k) is not None and value[k] not in known:
+                raise ValueError(f"{where}.{k}: {value[k]!r} not in {sorted(known)}")
+        tenor = _dec(value.get("benchmark_tenor_years"), f"{where}.benchmark_tenor_years")
+        if tenor is not None and tenor <= 0:
+            raise ValueError(f"{where}.benchmark_tenor_years must be positive")
+        if (tenor is None) != (value.get("fixing_offset") is None):
+            raise ValueError(f"{where}: benchmark_tenor_years and fixing_offset go together")
         return ""
+    if term == "floater_spread":
+        if set(value) - {"effective_from", "spread_bp"}:
+            raise ValueError(f"{where}: floater_spread has effective_from and spread_bp only")
+        d = _day(value.get("effective_from"), f"{where}.effective_from")
+        if d is None or _dec(value.get("spread_bp"), f"{where}.spread_bp") is None:
+            raise ValueError(f"{where}: floater_spread needs effective_from and spread_bp")
+        return d.isoformat()
     if term in ("call", "offer"):
         d = _day(value.get("date"), f"{where}.date")
         if d is None:
@@ -153,6 +186,10 @@ def load_terms(doc: Mapping[str, Any]) -> tuple[str, list[CuratedTerm]]:
             value=dict(value),
             evidence=dict(evidence),
         )
+    with_formula = {s for s, t, _ in out if t == "floater_formula"}
+    orphan = sorted({s for s, t, _ in out if t == "floater_spread"} - with_formula)
+    if orphan:
+        raise ValueError(f"bond_terms_curated: floater_spread without floater_formula: {orphan}")
     return version, [out[k] for k in sorted(out)]
 
 
@@ -166,7 +203,26 @@ def _evidence(t: CuratedTerm, version: str) -> Jsonb:
     return Jsonb({"file": TERMS_RESOURCE, "version": version, **t.evidence})
 
 
-def _formula_row(t: CuratedTerm, version: str, run_id: int) -> dict[str, Any]:
+def _spread_schedule(steps: list[CuratedTerm]) -> Jsonb | None:
+    """Margin per period of a curated formula (``floater_spread`` entries), by date."""
+    if not steps:
+        return None
+    return Jsonb(
+        [
+            {
+                "effective_from": s.term_key,
+                "spread_bp": f"{_dec(s.value['spread_bp'], 'spread_bp'):f}",
+                "basis": "document",
+                "evidence_document_url": s.evidence.get("document_url"),
+            }
+            for s in sorted(steps, key=lambda s: s.term_key)
+        ]
+    )
+
+
+def _formula_row(
+    t: CuratedTerm, version: str, run_id: int, steps: list[CuratedTerm] | None = None
+) -> dict[str, Any]:
     v = t.value
     return {
         "secid": t.secid,
@@ -181,6 +237,12 @@ def _formula_row(t: CuratedTerm, version: str, run_id: int) -> dict[str, Any]:
         "cap_pct": _dec(v.get("cap_pct"), "cap_pct"),
         "variable_rate_type": v.get("variable_rate_type"),
         "fixing_day": v.get("fixing_day"),
+        "benchmark_tenor_years": _dec(v.get("benchmark_tenor_years"), "benchmark_tenor_years"),
+        "fixing_anchor": v.get("fixing_anchor"),
+        "fixing_offset": v.get("fixing_offset"),
+        "fixing_offset_unit": v.get("fixing_offset_unit"),
+        "rate_rounding_decimals": v.get("rate_rounding_decimals"),
+        "spread_schedule": _spread_schedule(steps or []),
         "status": "curated",
         "evidence": _evidence(t, version),
         "is_deleted": False,
@@ -271,7 +333,15 @@ def bond_terms_curated(ctx: JobContext) -> dict[str, Any]:
             }
             for t in use
         ]
-        formulas = [_formula_row(t, version, run_id) for t in use if t.term == "floater_formula"]
+        steps: dict[str, list[CuratedTerm]] = {}
+        for t in use:
+            if t.term == "floater_spread":
+                steps.setdefault(t.secid, []).append(t)
+        formulas = [
+            _formula_row(t, version, run_id, steps.get(t.secid))
+            for t in use
+            if t.term == "floater_formula"
+        ]
         offers = [_offer_row(t, version, today, run_id) for t in use if t.term in ("call", "offer")]
         ctx.run.add_counts(
             upsert_rows(

@@ -250,8 +250,10 @@ def default_rate_limits(settings: Settings) -> dict[str, float]:
         "cbr.ru": 1.0,
         "ratescalcs.ru": 1.0,
         "otc-monitor.ru": 1.0,
-        "ws2.cbonds.info": 2.0,
-        "ws.cbonds.info": 2.0,
+        # Cbonds permits 30 requests/minute per method. A shared host bucket is
+        # deliberately stricter; capacity=1 at this rate prevents an initial burst.
+        "ws2.cbonds.info": 0.5,
+        "ws.cbonds.info": 0.5,
         "www.ecb.europa.eu": 2.0,
         # rating agencies' public pages (WEB-18): polite, one request per 2 s
         "www.ratings.ru": 0.5,

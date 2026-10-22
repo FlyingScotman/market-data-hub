@@ -159,6 +159,106 @@ def test_bonds_paging_with_cursor(seeded: TestClient) -> None:
     assert r.status_code == 400
 
 
+@pytest.mark.parametrize("board", ["primary", "all", "TQCB"])
+@pytest.mark.parametrize("known", [None, "2026-10-15T17:00:00Z"])
+def test_bonds_page_union_boundaries(
+    client: TestClient, conn: Conn, board: str, known: str | None
+) -> None:
+    """A page must retain price-only, yield-only and overlapping keys on every board."""
+    conn.execute(
+        """
+        INSERT INTO ref.bond (secid, bond_class, coupon_type, coupon_type_basis, status,
+                              primary_board, marketprice_board, ingested_at, updated_at)
+        VALUES ('A', 'corporate', 'fixed', 'moex_label', 'active', 'TQCB', 'PSOB',
+                '2026-01-01Z', '2026-01-01Z'),
+               ('b', 'corporate', 'fixed', 'moex_label', 'active', 'TQCB', NULL,
+                '2026-01-01Z', '2026-01-01Z');
+        INSERT INTO md.bond_eod (trade_date, secid, board, close, ingested_at)
+        SELECT '2026-10-01'::date + d, s, b, 97.123456789, '2026-10-15Z'
+        FROM generate_series(0, 8) d, unnest(ARRAY['A', 'b']) s,
+             unnest(ARRAY['PSOB', 'TQCB']) b WHERE d % 3 <> 0;
+        INSERT INTO md.bond_eod_yield
+            (trade_date, secid, board, effective_yield_pct, ingested_at)
+        SELECT '2026-10-01'::date + d, s, b, 15.123456789, '2026-10-15Z'
+        FROM generate_series(0, 8) d, unnest(ARRAY['A', 'b']) s,
+             unnest(ARRAY['PSOB', 'TQCB']) b WHERE d % 3 <> 1;
+        """
+    )
+    conn.commit()
+    q = {
+        "from": "2026-10-01",
+        "to": "2026-10-09",
+        "board": board,
+        "fields": "close_pct,effective_yield_pct",
+        **({"known_at": known} if known else {}),
+    }
+    expected = [
+        [
+            f"2026-10-{day + 1:02d}",
+            secid,
+            b,
+            Decimal("97.123456789") if day % 3 != 0 else None,
+            Decimal("15.123456789") if day % 3 != 1 else None,
+        ]
+        for secid in ("A", "b")
+        for day in range(9)
+        for b in ("PSOB", "TQCB")
+        if board == "all"
+        or b == ({"A": "PSOB", "b": "TQCB"}[secid] if board == "primary" else board)
+    ]
+    for limit in (2, 3):
+        rows: list[Any] = []
+        cursor = None
+        while True:
+            body = _get(
+                client,
+                "/v1/history/bonds",
+                **q,
+                limit=limit,
+                **({"cursor": cursor} if cursor else {}),
+            )
+            rows.extend(body["rows"])
+            cursor = body["next"]
+            if cursor is None:
+                break
+            assert len(rows) < len(expected)
+        assert rows == expected
+    only_lower = _get(client, "/v1/history/bonds", **q, secid="b")
+    assert only_lower["rows"] == [r for r in expected if r[1] == "b"]
+
+
+def test_bonds_page_etag_tracks_changes_beyond_page(seeded: TestClient, conn: Conn) -> None:
+    q = {"from": "2026-10-01", "to": "2026-10-15", "limit": 1}
+    first = seeded.get("/v1/history/bonds", params=q, headers=AUTH)
+    assert first.status_code == 200
+    # These changes concern the last bond, outside the one-row page. Version calculation
+    # must continue to cover the full selection, including yield-only inserts/deletes.
+    changes = [
+        "UPDATE md.bond_eod_yield SET icpi = 2, updated_at = now() WHERE secid = 'SU26242RMFS0'",
+        "INSERT INTO md.bond_eod_yield (trade_date, secid, board, effective_yield_pct) "
+        "VALUES ('2026-10-13', 'SU26242RMFS0', 'TQOB', 16)",
+        "DELETE FROM md.bond_eod_yield WHERE trade_date = '2026-10-13'",
+        "UPDATE ref.bond SET marketprice_board = 'PSOB', updated_at = now() "
+        "WHERE secid = 'SU26242RMFS0'",
+    ]
+    for statement in changes:
+        conn.execute(statement)
+        conn.commit()
+        changed = seeded.get(
+            "/v1/history/bonds", params=q, headers={**AUTH, "If-None-Match": first.headers["etag"]}
+        )
+        assert changed.status_code == 200
+        assert changed.headers["etag"] != first.headers["etag"]
+        assert changed.json()["rows"] == first.json()["rows"]
+        hit = seeded.get(
+            "/v1/history/bonds",
+            params=q,
+            headers={**AUTH, "If-None-Match": changed.headers["etag"]},
+        )
+        assert hit.status_code == 304
+        first = changed
+
+
 def test_etag_last_modified_and_gzip(seeded: TestClient, conn: Conn) -> None:
     q = {"from": "2026-10-01", "to": "2026-10-15"}
     r = seeded.get("/v1/history/bonds", params=q, headers={**AUTH, "Accept-Encoding": "gzip"})

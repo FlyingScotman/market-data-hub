@@ -1,4 +1,4 @@
-"""Market Snapshot Contract 1.4 (additive; package P6, TDM brief H10-H13, FX forwards H1-H4):
+"""Market Snapshot Contract 1.5 (additive; package P6, TDM brief H10-H13, FX forwards H1-H4):
 ``fx_rates`` value dates and settlement calendars, dataset ``fx_swaps`` (MOEX swaps, formerly
 excluded as ``fx_swap``), ``futures_prices`` / ``futures_prices_intraday`` (FORTS), ``cpi``
 (monthly CPI history), ``fixings`` coverage ``ruonia_unpublished_days`` and the foreign
@@ -47,7 +47,7 @@ def _bundle(conn: Conn, sid: str) -> dict[str, Any]:
 
 
 def test_version() -> None:
-    assert SCHEMA_VERSION == "market_snapshot/1.4"
+    assert SCHEMA_VERSION == "market_snapshot/1.5"
 
 
 def test_settlement_calendar_mapping() -> None:
@@ -174,7 +174,7 @@ def _ds(doc: dict[str, Any], name: str) -> dict[str, Any]:
 
 def test_fx_rates_value_dates(market: tuple[dict[str, Any], dict[str, Any]]) -> None:
     eod, _ = market
-    assert eod["schema_version"] == "market_snapshot/1.4"
+    assert eod["schema_version"] == "market_snapshot/1.5"
     moex = {r["secid"]: r for r in eod["data"]["fx_rates"] if r["kind"] == "moex_eod"}
     assert moex["CNY000000TOD"]["settle_date"] == "2026-10-15"
     assert moex["CNYRUB_TOM"]["settle_date"] == "2026-10-16"

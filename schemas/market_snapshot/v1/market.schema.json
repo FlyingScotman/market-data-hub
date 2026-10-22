@@ -701,7 +701,7 @@
       }
     },
     "fx_rate": {
-      "description": "FxRate: RUB rates only (RUB per 1 unit of ccy); the desk FX mark is a consumer override. 1.4: settle_date and settlement_calendars of moex_eod rows",
+      "description": "FxRate: RUB rates only (RUB per 1 unit of ccy); the desk FX mark is a consumer override. 1.5: settle_date and settlement_calendars of moex_eod rows",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -849,7 +849,7 @@
           ]
         },
         "settle_date": {
-          "description": "moex_eod: value date of the instrument for trades of trade_date (MOEX SETTLEDATE of that session, md.fx_settle_date); null when the hub did not observe it (label settle_date_not_observed) and for other kinds. 1.4",
+          "description": "moex_eod: value date of the instrument for trades of trade_date (MOEX SETTLEDATE of that session, md.fx_settle_date); null when the hub did not observe it (label settle_date_not_observed) and for other kinds. 1.5",
           "allOf": [
             {
               "$ref": "common.schema.json#/$defs/date_or_null"
@@ -857,7 +857,7 @@
           ]
         },
         "settlement_calendars": {
-          "description": "moex_eod: Hub calendars whose joint business days the pair settles on: MOEX_FX plus the currency's settlement calendar (CNY CN_INTERBANK, USD US_FED, EUR TARGET, CHF CH_ZURICH); a hub mapping, not a MOEX publication (1.4); null for other kinds",
+          "description": "moex_eod: Hub calendars whose joint business days the pair settles on: MOEX_FX plus the currency's settlement calendar (CNY CN_INTERBANK, USD US_FED, EUR TARGET, CHF CH_ZURICH); a hub mapping, not a MOEX publication (1.5); null for other kinds",
           "type": [
             "array",
             "null"
@@ -961,7 +961,7 @@
       }
     },
     "fx_swap": {
-      "description": "FxSwap: MOEX currency-market (CETS and other selt boards) X/RUB swap of the business date (md.fx_eod + ref.fx_instrument kind swap). The price is the swap difference as MOEX publishes it: far-leg rate minus near-leg rate, RUB per quote_units (1.4, H13)",
+      "description": "FxSwap: MOEX currency-market (CETS and other selt boards) X/RUB swap of the business date (md.fx_eod + ref.fx_instrument kind swap). The price is the swap difference as MOEX publishes it: far-leg rate minus near-leg rate, RUB per quote_units (1.5, H13)",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -1073,7 +1073,7 @@
           ]
         },
         "settlement_calendars": {
-          "description": "Hub calendars whose joint business days the pair settles on: MOEX_FX plus the currency's settlement calendar (CNY CN_INTERBANK, USD US_FED, EUR TARGET, CHF CH_ZURICH); a hub mapping, not a MOEX publication (1.4)",
+          "description": "Hub calendars whose joint business days the pair settles on: MOEX_FX plus the currency's settlement calendar (CNY CN_INTERBANK, USD US_FED, EUR TARGET, CHF CH_ZURICH); a hub mapping, not a MOEX publication (1.5)",
           "type": "array",
           "items": {
             "$ref": "common.schema.json#/$defs/calendar_code"
@@ -1109,7 +1109,7 @@
       ]
     },
     "futures_price": {
-      "description": "FuturesPrice: FORTS future of the business date (md.futures_eod, every outright FORTS future; calendar spreads are not stored) with its contract static (ref.futures_contract). Prices in the contract's quotation as MOEX publishes them (1.4, H11)",
+      "description": "FuturesPrice: FORTS future of the business date (md.futures_eod, every outright FORTS future; calendar spreads are not stored) with its contract static (ref.futures_contract). Prices in the contract's quotation as MOEX publishes them (1.5, H11)",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -1347,7 +1347,7 @@
       ]
     },
     "futures_price_intraday": {
-      "description": "FuturesPriceIntraday: latest stored FORTS FX futures quote per contract on the business date (md.futures_intraday: APIM realtime, else public ISS delayed) with its contract static (1.4, H11)",
+      "description": "FuturesPriceIntraday: latest stored FORTS FX futures quote per contract on the business date (md.futures_intraday: APIM realtime, else public ISS delayed) with its contract static (1.5, H11)",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -1723,7 +1723,7 @@
           }
         },
         "cpi": {
-          "description": "Monthly CPI history from parameters.cpi_from (CPI_RU_MOM rosstat, CPI_RU_YOY cbr) as Fixing objects; label published_on_unknown (1.4, H10)",
+          "description": "Monthly CPI history from parameters.cpi_from (CPI_RU_MOM rosstat, CPI_RU_YOY cbr) as Fixing objects; label published_on_unknown (1.5, H10)",
           "type": "array",
           "items": {
             "$ref": "#/$defs/fixing"

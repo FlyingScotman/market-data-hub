@@ -99,6 +99,7 @@ KNOWN_JOBS: Final = (
     "cbonds_enrich",
     "ratings_agencies",
     "bond_terms_curated",
+    "zcyc_floater_fit",
     "bonds_eod",
     "bonds_intraday",
     "fx_moex_intraday",
@@ -274,6 +275,13 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
     ),
     "bond_terms_curated": (
         _r("55 6 * * *", note="curated issue terms with evidence; after bonds_static"),
+    ),
+    "zcyc_floater_fit": (
+        _r(
+            "20 7 * * *",
+            note="KBD floater terms fitted / checked on the ZCYC history; after zcyc final, "
+            "bonds_static and bond_terms_curated",
+        ),
     ),
     "bonds_eod": (
         _r("20 19 * * *", mode="prelim", days_back=[0]),

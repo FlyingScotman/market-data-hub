@@ -2,6 +2,7 @@
 {% block title %}Jobs{% endblock %}
 {% block content %}
 <h1>Jobs</h1>
+<p class="small">Job success describes execution, not data freshness. A succeeded source_probe run does not prove provider access; see <a href="/sources">Sources</a> for individual checks. Times are UTC unless marked MSK.</p>
 {% set can_run = user.at_least('operator') %}
 
 <section class="card">
@@ -47,14 +48,14 @@
 <section class="card">
   <h2>Schedule and health</h2>
   <table>
-    <thead><tr><th>Job</th><th>Health</th><th>Last run</th><th>Last success</th><th>Fails in a row</th><th>Next fire (UTC)</th><th>Cron (MSK)</th>{% if can_run %}<th></th>{% endif %}</tr></thead>
+    <thead><tr><th>Job</th><th>Schedule / execution health</th><th>Last run</th><th>Last succeeded / partial</th><th>Fails in a row</th><th>Next fire (UTC)</th><th>Cron (MSK)</th>{% if can_run %}<th></th>{% endif %}</tr></thead>
     <tbody>
     {% for j in jobs %}
     <tr>
       <td><a href="/jobs?job={{ j.h.job }}">{{ j.h.job }}</a></td>
-      <td><span class="pill {{ 'bad' if j.h.problem else ('warn' if j.h.status in ('degraded', 'not_registered') else 'ok') }}">{{ j.h.status }}</span>{% if j.h.missed_by_lock %} <span class="small">(lock busy)</span>{% endif %}</td>
-      <td>{{ j.h.last_status or '-' }} {{ j.h.last_started_at|ago(now) if j.h.last_started_at else '' }}</td>
-      <td>{{ j.h.last_success_at|ago(now) if j.h.last_success_at else 'never' }}</td>
+      <td><span class="pill {{ 'bad' if j.h.problem else ('warn' if j.h.last_status == 'partial' or j.h.status in ('degraded', 'not_registered', 'never_run') else 'ok') }}">{{ j.h.status }}</span>{% if j.h.missed_by_lock %} <span class="small">(lock busy)</span>{% endif %}</td>
+      <td>{% if j.h.last_status == 'partial' %}<span class="pill warn">partial</span>{% else %}{{ j.h.last_status or '-' }}{% endif %} {{ j.h.last_started_at|dt }}</td>
+      <td>{{ j.h.last_success_at|dt if j.h.last_success_at else 'never' }}</td>
       <td>{{ j.h.consecutive_failures }}</td>
       <td>{{ j.next|dt if j.next else '-' }}</td>
       <td class="small">{{ j.crons }}</td>
@@ -92,6 +93,7 @@
 
 <section class="card">
   <h2>Run history</h2>
+  <p class="small">Rows +/~ counts inserted / updated rows. Zero changes can mean identical data or no rows returned; it does not establish freshness.</p>
   <form method="get" action="/jobs" class="row">
     <label>Job <input name="job" value="{{ filter_job }}" maxlength="64"></label>
     <label>Status <select name="status"><option value="">any</option>{% for s in statuses %}<option{% if s == filter_status %} selected{% endif %}>{{ s }}</option>{% endfor %}</select></label>
@@ -101,7 +103,7 @@
     <thead><tr><th>Run</th><th>Job</th><th>Status</th><th>Trigger</th><th>Started</th><th>Finished</th><th>Rows +/~</th><th>Error</th></tr></thead>
     <tbody>
     {% for r in history %}
-    <tr id="run-{{ r.id }}"><td>{{ r.id }}</td><td>{{ r.job }}</td><td>{{ r.status }}</td><td>{{ r.trigger or '-' }}</td><td>{{ r.started_at|dt }}</td><td>{{ r.finished_at|dt }}</td><td>{{ r.rows_inserted|num }} / {{ r.rows_updated|num }}</td><td class="small">{{ r.error or '' }}</td></tr>
+    <tr id="run-{{ r.id }}"><td>{{ r.id }}</td><td>{{ r.job }}</td><td>{{ r.status }}</td><td>{{ r.trigger or '-' }}</td><td>{{ r.started_at|dt }}</td><td>{{ r.finished_at|dt }}</td><td>{{ r.rows_inserted|num }} / {{ r.rows_updated|num }}{% if r.status in ('succeeded', 'partial') and r.rows_inserted == 0 and r.rows_updated == 0 %}<br><span class="small">no changed rows</span>{% endif %}</td><td class="small">{{ r.error or '' }}</td></tr>
     {% else %}
     <tr><td colspan="8">No runs.</td></tr>
     {% endfor %}

@@ -42,7 +42,8 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
 from pathlib import Path
@@ -77,6 +78,7 @@ __all__ = [
     "blocking_capture_refs",
     "is_intraday_endpoint",
     "maintenance",
+    "private_backup_file",
     "purge_algopack_window",
     "purge_host_metrics",
     "purge_intraday_raw",
@@ -218,6 +220,22 @@ class BackupResult:
     removed: list[Path]
 
 
+@contextmanager
+def private_backup_file(target: Path) -> Iterator[None]:
+    """Reserve a new owner-only dump file and clean it up unless renamed by the caller."""
+    # Exclusive creation refuses existing files/symlinks without touching or deleting them.
+    fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    try:
+        try:
+            # Restore owner access even with an unusually restrictive process umask.
+            os.fchmod(fd, 0o600)
+        finally:
+            os.close(fd)
+        yield
+    finally:
+        target.unlink(missing_ok=True)
+
+
 def run_backup(
     db: Database,
     *,
@@ -235,13 +253,11 @@ def run_backup(
     final = directory / f"{BACKUP_PREFIX}{dbname}-{stamp}{BACKUP_SUFFIX}"
     partial = final.with_name(final.name + ".partial")
     argv, env = backup_command(db.conninfo, partial)
-    try:
+    with private_backup_file(partial):
         run_command(argv, env, timeout=PG_DUMP_TIMEOUT_S, secrets=secrets)
         if not partial.exists() or partial.stat().st_size == 0:
             raise RuntimeError("pg_dump produced no output")
         partial.replace(final)
-    finally:
-        partial.unlink(missing_ok=True)
     removed = rotate_backups(directory, keep)
     return BackupResult(path=final, size_bytes=final.stat().st_size, removed=removed)
 

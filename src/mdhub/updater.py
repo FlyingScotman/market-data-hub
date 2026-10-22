@@ -87,6 +87,7 @@ from mdhub.loaders.maintenance import (
     _split_password,
     backup_command,
     backup_dir,
+    private_backup_file,
     run_command,
 )
 from mdhub.release import (
@@ -976,13 +977,11 @@ class Updater:
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         target = self.backup_dir / f"{name}.dump"
         partial = target.with_name(target.name + ".partial")
-        try:
+        with private_backup_file(partial):
             self.host.dump(partial)
             if not partial.is_file() or partial.stat().st_size == 0:
                 raise UpdateError("pg_dump produced no output")
             partial.replace(target)
-        finally:
-            partial.unlink(missing_ok=True)
         self._update(int(request["id"]), backup_path=str(target))
         self._log(
             int(request["id"]),

@@ -15,7 +15,7 @@ bonds and the business date 2026-10-15, stored as ``tests/fixtures/snapshot/sour
   hub database fed by public MOEX ISS on 2026-10-20 (``issuers_static``, ``bonds_static``);
   their version times are set to the seed's latest version time, so ``known_at`` is unchanged.
 
-* 2026-10-22 (contract 1.4, package P6; the version times of these rows are the seed's latest
+* 2026-10-22 (contract 1.5, package P6; the version times of these rows are the seed's latest
   version time, so ``known_at`` is unchanged): calendars ``CN_INTERBANK`` (the curated 2026
   State Council year), ``US_FED`` and ``CH_ZURICH`` (rule rows) for the calendar window;
   ``md.futures_eod`` / ``ref.futures_contract`` of 2026-10-15 for the five contracts of the

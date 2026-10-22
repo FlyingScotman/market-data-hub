@@ -85,7 +85,7 @@ CURRENCY_CALENDARS: Final = {
     "EUR": "TARGET",
     "CHF": "CH_ZURICH",
 }
-"""Hub calendar of a currency's settlement (contract 1.4). ``settlement_calendars`` of a MOEX
+"""Hub calendar of a currency's settlement (contract 1.5). ``settlement_calendars`` of a MOEX
 X/RUB row = ``[MOEX_FX, CURRENCY_CALENDARS[X]]``: the calendars whose joint business days the
 pair settles on (a hub mapping, not a MOEX publication); a currency without one gets
 ``[MOEX_FX]`` and the label ``foreign_calendar_unknown``."""
@@ -157,7 +157,7 @@ class MarketParams:
     """EOD cuts: the curve EOD rule's cutoff (:func:`curve_eod_order`, ``MDHUB_CURVE_EOD_CUTOFF``).
     Recorded in the coverage of ``curve_quote_sets``."""
     cpi_from: date = DEFAULT_CPI_FROM
-    """``cpi``: first month of the CPI history (contract 1.4, H10)."""
+    """``cpi``: first month of the CPI history (contract 1.5, H10)."""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -782,7 +782,7 @@ def _fixings(
 
 
 def _cpi(conn: DictConnection, t: datetime, d: date, start: date, prov: Provenance) -> Dataset:
-    """Monthly CPI history from ``start`` (contract 1.4, H10): Rosstat CPI to the previous
+    """Monthly CPI history from ``start`` (contract 1.5, H10): Rosstat CPI to the previous
     month (``CPI_RU_MOM``, ``unit = index``) and the CBR-republished y/y (``CPI_RU_YOY``,
     ``unit = pct``) as ``md.fixing`` stores them, known at the cut. ``published_on`` is the
     release date where the source stated it (Rosstat: the newest month of each workbook since the
@@ -851,7 +851,7 @@ def _contract_labels(r: Mapping[str, Any]) -> tuple[str | None, ...]:
 def _futures_eod(
     conn: DictConnection, t: datetime, d: date, eod: bool, prov: Provenance
 ) -> Dataset:
-    """FORTS futures of ``d`` (contract 1.4, H11): settlement price (``SETTLEPRICE``, the price
+    """FORTS futures of ``d`` (contract 1.5, H11): settlement price (``SETTLEPRICE``, the price
     variation margin is computed on), OHLC / WAP, volume and open interest as MOEX publishes them
     (``md.futures_eod``: every outright FORTS future, calendar spreads are not stored) and the
     contract static. ``*_rub_per_unit`` (RUB per 1 unit of the base currency) only for
@@ -919,7 +919,7 @@ def _futures_intraday(
     conn: DictConnection, t: datetime, d: date, eod: bool, prov: Provenance
 ) -> Dataset:
     """Latest stored FORTS FX futures quote per contract on ``d`` (``md.futures_intraday``: APIM
-    realtime, else public ISS delayed; contract 1.4, H11): ``settle_price`` is MOEX's current
+    realtime, else public ISS delayed; contract 1.5, H11): ``settle_price`` is MOEX's current
     estimate of the day's settlement price. Empty in EOD cuts (``futures_prices``)."""
     if eod:
         return Dataset("futures_prices_intraday", [], {"not_in_cut": "eod"})
@@ -1085,7 +1085,7 @@ def _fx(
             key = {"secid": r["secid"], "board": r["board"], "trade_date": r["trade_date"]}
             reason = None
             if r["inst_kind"] == "swap":
-                swaps.append(r)  # 1.4: published in fx_swaps (1.0-1.3: excluded, fx_swap)
+                swaps.append(r)  # 1.5: published in fx_swaps (1.0-1.3: excluded, fx_swap)
                 continue
             if r["inst_kind"] is None:
                 reason = "instrument_unknown"
@@ -1188,7 +1188,7 @@ def _fx_swaps(
     prov: Provenance,
     excluded: Excluded,
 ) -> Dataset:
-    """MOEX CETS / selt FX swaps of ``d`` (contract 1.4, H13): the swap price as published
+    """MOEX CETS / selt FX swaps of ``d`` (contract 1.5, H13): the swap price as published
     (far-leg rate minus near-leg rate, RUB per ``quote_units``), its exact per-unit value and
     the leg value dates."""
     if not eod:

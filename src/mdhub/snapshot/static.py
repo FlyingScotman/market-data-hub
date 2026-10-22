@@ -517,6 +517,61 @@ def _documented_coverage(
     }
 
 
+def _zcyc_terms(f: Mapping[str, Any]) -> dict[str, Any]:
+    """1.4: KBD floater terms (tenor, fixing rule, rounding, margin per period) and the hub's
+    reproduction of the published coupon rates (``ref.bond_rate_formula`` 0820)."""
+    rep = f["reproduction"]
+    return {
+        "benchmark_tenor_years": f["benchmark_tenor_years"],
+        "fixing_anchor": f["fixing_anchor"],
+        "fixing_offset": f["fixing_offset"],
+        "fixing_offset_unit": f["fixing_offset_unit"],
+        "rate_rounding_decimals": f["rate_rounding_decimals"],
+        "fixing_basis": f["fixing_basis"],
+        "spread_schedule": [
+            {
+                "effective_from": s["effective_from"],
+                "spread_bp": s["spread_bp"],
+                "basis": s["basis"],
+                "evidence_document_url": s.get("evidence_document_url"),
+            }
+            for s in f["spread_schedule"] or []
+        ]
+        or None,
+        "reproduction": None
+        if rep is None
+        else {
+            "method": rep["method"],
+            "tenor_years": rep["tenor_years"],
+            "fixing_offset": rep["fixing_offset"],
+            "periods_checked": rep["periods_checked"],
+            "periods_matched": rep["periods_matched"],
+            "unmatched_coupon_nos": list(rep["unmatched_coupon_nos"]),
+            "tolerance_pct": rep["tolerance_pct"],
+            "max_abs_error_pct": rep["max_abs_error_pct"],
+            "checked_through": rep["checked_through"],
+            "accepted": rep["accepted"],
+            "reason": rep["reason"],
+        },
+    }
+
+
+def _zcyc_coverage(bonds: list[dict[str, Any]], formulas: list[dict[str, Any]]) -> dict[str, Any]:
+    """1.4: active KBD floaters, with a tenor (any basis), with documented terms, and those
+    whose published coupons the hub reproduces (accepted reproduction)."""
+    active = {b["secid"] for b in bonds if b["status"] == "active"}
+    zcyc = [f for f in formulas if f["secid"] in active and f["benchmark"] == "ZCYC"]
+    reps = [f["reproduction"] for f in zcyc if f["reproduction"] is not None]
+    return {
+        "zcyc_floaters": len(zcyc),
+        "zcyc_floaters_with_tenor": sum(1 for f in zcyc if f["benchmark_tenor_years"] is not None),
+        "zcyc_floaters_curated": sum(1 for f in zcyc if f["fixing_basis"] == "document"),
+        "zcyc_floaters_reproduced": sum(1 for r in reps if r["accepted"]),
+        "zcyc_coupon_periods_checked": sum(int(r["periods_checked"]) for r in reps),
+        "zcyc_coupon_periods_matched": sum(int(r["periods_matched"]) for r in reps),
+    }
+
+
 def _issuer_coverage(
     issuers: list[dict[str, Any]], bonds: list[dict[str, Any]], rows: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -776,6 +831,7 @@ def build_static(
             "sources": list(f["sources"] or []),
             "evidence_document_url": _document_url(curated_formula.get(f["secid"])),
             "evidence_page": _evidence_field(curated_formula.get(f["secid"]), "page"),
+            **_zcyc_terms(f),
         }
         for f in formulas
     ]
@@ -860,6 +916,7 @@ def build_static(
                 "by_status": dict(sorted(Counter(f["status"] for f in formulas).items())),
                 "floaters_without_formula": label_counts.get("floater_formula_missing", 0),
                 **_documented_coverage(bonds, formulas, scheduled_calls),
+                **_zcyc_coverage(bonds, formulas),
             },
         ),
         Dataset("issuers", issuer_out, _issuer_coverage(issuer_out, bonds, issuers)),

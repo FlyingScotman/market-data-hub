@@ -8,7 +8,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import shutil
+import stat
 import subprocess
 import tarfile
 import threading
@@ -43,6 +45,7 @@ from mdhub.updater import (
     parse_size,
     read_env_value,
 )
+from test_maintenance import PG_BIN
 from test_release import COMMIT, SigningKey, _sums
 
 Conn = psycopg.Connection[DictRow]
@@ -253,6 +256,91 @@ def req(conn: Conn, request_id: int) -> dict[str, Any]:
     row = conn.execute("SELECT * FROM ops.update_request WHERE id = %s", (request_id,)).fetchone()
     assert row is not None
     return dict(row)
+
+
+@pytest.mark.parametrize("mask", [0o022, 0o777])
+def test_updater_backup_permissions_during_write_and_after_rename(
+    db_url: str,
+    conn: Conn,
+    host: FakeHost,
+    layout: Layout,
+    tmp_path: Path,
+    keys_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mask: int,
+) -> None:
+    up = make(db_url, host, layout, tmp_path, keys_dir)
+    up.backup_dir.mkdir()
+    request_id = queue(conn, "1.1.0")
+    request = {**req(conn, request_id), "from_version": "1.0.0"}
+    written_inodes = []
+
+    def dump(partial: Path) -> None:
+        with partial.open("wb") as stream:
+            st = os.fstat(stream.fileno())
+            assert stat.S_IMODE(st.st_mode) == 0o600
+            written_inodes.append(st.st_ino)
+            stream.write(b"PGDMP fake")
+
+    monkeypatch.setattr(host, "dump", dump)
+    previous = os.umask(mask)
+    try:
+        up._backing_up(request)
+    finally:
+        os.umask(previous)
+    final = Path(req(conn, request_id)["backup_path"])
+    assert stat.S_IMODE(final.stat().st_mode) == 0o600
+    assert final.stat().st_ino == written_inodes[0]
+    assert not list(up.backup_dir.glob("*.partial"))
+
+
+def test_updater_failed_dump_cleans_partial(
+    db_url: str,
+    conn: Conn,
+    host: FakeHost,
+    layout: Layout,
+    tmp_path: Path,
+    keys_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    up = make(db_url, host, layout, tmp_path, keys_dir)
+    request_id = queue(conn, "1.1.0")
+
+    def failing_dump(partial: Path) -> None:
+        partial.write_bytes(b"incomplete")
+        raise RuntimeError("dump failed")
+
+    monkeypatch.setattr(host, "dump", failing_dump)
+    with pytest.raises(RuntimeError, match="dump failed"):
+        up._backing_up({**req(conn, request_id), "from_version": "1.0.0"})
+    assert list(up.backup_dir.iterdir()) == []
+    assert req(conn, request_id)["backup_path"] is None
+
+
+@pytest.mark.skipif(not (PG_BIN / "pg_dump").exists(), reason="pgserver pg_dump not available")
+def test_updater_real_dump_is_readable_and_private(
+    db_url: str,
+    conn: Conn,
+    host: FakeHost,
+    layout: Layout,
+    tmp_path: Path,
+    keys_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PATH", f"{PG_BIN}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setattr(host, "dump", ComposeHost(db_url).dump)
+    up = make(db_url, host, layout, tmp_path, keys_dir)
+    request_id = queue(conn, "1.1.0")
+    up._backing_up({**req(conn, request_id), "from_version": "1.0.0"})
+    final = Path(req(conn, request_id)["backup_path"])
+    assert stat.S_IMODE(final.stat().st_mode) == 0o600
+    listing = subprocess.run(
+        [str(PG_BIN / "pg_restore"), "--list", str(final)],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "schema_migration" in listing.stdout
 
 
 def log_lines(conn: Conn, request_id: int) -> str:

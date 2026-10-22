@@ -6,7 +6,7 @@ Jobs (names fixed by :data:`mdhub.schedule.KNOWN_JOBS`):
   FIXN/FIXS fixing auctions, WAPN/WAPS, SDBP), one transaction per date; refreshes
   ``ref.fx_instrument`` from the full selt listing first. Both listings (this one and the
   intraday CETS board) also store the session's SETTLEDATE per instrument in
-  ``md.fx_settle_date`` (contract 1.4, H2; session = ``dataversion.trade_date``): the history
+  ``md.fx_settle_date`` (contract 1.5, H2; session = ``dataversion.trade_date``): the history
   carries no value date, the listing only the current session's.
 * ``fx_moex_intraday`` - ``md.fx_intraday`` from the CETS board snapshot (public ISS =
   15-min delayed); only rows whose values changed since the last stored row are written.
@@ -186,7 +186,7 @@ def refresh_fx_instruments(
 ) -> UpsertResult:
     """Upsert ``ref.fx_instrument`` from a selt ``securities`` block; ``first_seen`` is only
     written on insert, ``last_seen`` is set to ``today``. With a ``dataversion`` block the
-    session's SETTLEDATE of every instrument goes to ``md.fx_settle_date`` (contract 1.4, H2:
+    session's SETTLEDATE of every instrument goes to ``md.fx_settle_date`` (contract 1.5, H2:
     the value date of an outright, the near-leg date of a swap, keyed by the session date)."""
     rows = _with_provenance(parse_fx_instruments(payload), capture_id, run_id)
     if not rows:
