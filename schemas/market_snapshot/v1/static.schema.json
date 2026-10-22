@@ -742,7 +742,15 @@
         "status",
         "sources",
         "evidence_document_url",
-        "evidence_page"
+        "evidence_page",
+        "benchmark_tenor_years",
+        "fixing_anchor",
+        "fixing_offset",
+        "fixing_offset_unit",
+        "rate_rounding_decimals",
+        "fixing_basis",
+        "spread_schedule",
+        "reproduction"
       ],
       "properties": {
         "secid": {
@@ -826,6 +834,178 @@
         },
         "evidence_page": {
           "description": "Page / clause of that document, as curated; null otherwise (1.3)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "benchmark_tenor_years": {
+          "description": "1.4, benchmark ZCYC: fixed KBD tenor T (years) whose MOEX zero yield sets the coupon; null when neither an issue document nor an accepted fit gives it",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "fixing_anchor": {
+          "description": "1.4: date the fixing offset counts back from; accrual_start = start date of the coupon period",
+          "enum": [
+            "accrual_start",
+            null
+          ]
+        },
+        "fixing_offset": {
+          "description": "1.4: N - the fixing day is the N-th day (fixing_offset_unit) before fixing_anchor; 0 = the anchor itself, or the last such day before it. The coupon is fixed in advance",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "fixing_offset_unit": {
+          "description": "1.4: zcyc_publication_days = days with an end-of-day KBD publication (GET /v1/history/zcyc rows with is_eod = true; in the past the same days as calendar MOEX_STOCK business days), business_days = MOEX_STOCK business days, calendar_days",
+          "enum": [
+            "zcyc_publication_days",
+            "business_days",
+            "calendar_days",
+            null
+          ]
+        },
+        "rate_rounding_decimals": {
+          "description": "1.4: the KBD yield in percent is rounded half-up to this many decimals before the margin is added: rate % = round(Y_KBD(T; fixing day), rate_rounding_decimals) + margin bp / 100",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "fixing_basis": {
+          "description": "1.4: where tenor, fixing rule and rounding come from: document (status curated: an issue document, evidence_document_url) or coupon_history_fit (the hub fitted them to the published coupon rates over its ZCYC history and they reproduce them: reproduction); null when not known",
+          "enum": [
+            "document",
+            "coupon_history_fit",
+            null
+          ]
+        },
+        "spread_schedule": {
+          "description": "1.4: margin per period, ascending effective_from; the margin of a coupon period is the last step with effective_from <= its start date. spread_bp of the formula stays the current margin. Null when no schedule is known",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/spread_step"
+          }
+        },
+        "reproduction": {
+          "description": "1.4, benchmark ZCYC: the hub's check of the published coupon rates (coupon_periods.rate_pct of coupons that are facts) against the formula over its ZCYC history; null for other benchmarks",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/zcyc_reproduction"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "spread_step": {
+      "description": "1.4: one margin step of a floater",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "effective_from",
+        "spread_bp",
+        "basis",
+        "evidence_document_url"
+      ],
+      "properties": {
+        "effective_from": {
+          "description": "Start date of the first coupon period the margin applies to",
+          "$ref": "common.schema.json#/$defs/date"
+        },
+        "spread_bp": {
+          "$ref": "common.schema.json#/$defs/decimal"
+        },
+        "basis": {
+          "description": "document (an issue document or a notice of the coupon rate) or coupon_history_fit (implied by the published rates under the formula's terms)",
+          "enum": [
+            "document",
+            "coupon_history_fit"
+          ]
+        },
+        "evidence_document_url": {
+          "description": "basis document: URL of the document",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "zcyc_reproduction": {
+      "description": "1.4: reproduction of the published KBD floater coupons. method fit: the hub searched tenor and fixing offset (tested terms below; published in the formula only when accepted); check: the documented terms were tested. A coupon matches when the formula gives its rate within tolerance_pct. accepted: at least 80 % of at least 6 coupons after the first match (the first coupon is often set at placement), the latest coupon matches and, for a fit, no other tenor / offset does as well",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "method",
+        "tenor_years",
+        "fixing_offset",
+        "periods_checked",
+        "periods_matched",
+        "unmatched_coupon_nos",
+        "tolerance_pct",
+        "max_abs_error_pct",
+        "checked_through",
+        "accepted",
+        "reason"
+      ],
+      "properties": {
+        "method": {
+          "enum": [
+            "fit",
+            "check"
+          ]
+        },
+        "tenor_years": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "fixing_offset": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "periods_checked": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "periods_matched": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unmatched_coupon_nos": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "tolerance_pct": {
+          "$ref": "common.schema.json#/$defs/decimal"
+        },
+        "max_abs_error_pct": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "checked_through": {
+          "description": "Start date of the latest coupon checked",
+          "$ref": "common.schema.json#/$defs/date_or_null"
+        },
+        "accepted": {
+          "type": "boolean"
+        },
+        "reason": {
+          "description": "Why not accepted; null when accepted",
           "type": [
             "string",
             "null"

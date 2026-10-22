@@ -421,6 +421,62 @@ why. Numbers refer to the run above; SECIDs are examples.
 9. **Coupon date defects**: 13 old delisted bonds have gaps between periods (e.g. RU0001987620), and
    XS0503839622 has a record date after the pay date. These come from MOEX data, so there is no fix.
 
+## KBD (ZCYC) floaters (2026-10-22, contract 1.4)
+
+Run of the fit (`mdhub.verify.zcycfloat`, same rule as the job `zcyc_floater_fit` and section 4
+of the generated block) on the production hub data of 2026-10-22: the static snapshot of that day
+(`coupon_periods` with status `known` / `current_published`, `offers`) and the end-of-day
+KBD history from `/v1/history/zcyc` (2,216 publications, 2018-01-03 .. 2026-10-21). Formula
+`rate % = round(Y_KBD(T; N-th KBD publication day before the period start), 2) + margin`; a
+coupon matches within 0.005 pp; the margin may change only at a dated offer (put or call).
+
+| secid | bond | T, years | N | matched | max error, pp | accepted | margin schedule, bp | unmatched coupons |
+|---|---|---|---|---|---|---|---|---|
+| RU000A0JWTV5 | ГТЛК 1P-01 | - | - | 18/35 | - | no: best candidate reproduces 18 of 35 coupons (18 of 35 after the first) | - | 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 23, 39, 41 |
+| RU000A0ZZ877 | КАМАЗ БО10 | 7 | 5 | 16/17 | 0.24 | yes | 75 from 2018-05-29 | 1 |
+| RU000A0ZZ885 | КАМАЗ БО-9 | 7 | 5 | 16/17 | 0.24 | yes | 75 from 2018-05-29 | 1 |
+| RU000A0ZZ893 | КАМАЗ БО11 | 7 | 5 | 16/17 | 0.24 | yes | 75 from 2018-05-29 | 1 |
+| RU000A0ZZGT5 | РЖД 1Р-08R | 7 | 5 | 15/17 | 0.73 | yes | 49 from 2018-08-16 | 1, 2 |
+| RU000A0ZZRY2 | РЖД 1Р-09R | 7 | 5 | 14/16 | 1.15 | yes | 50 from 2018-11-02 | 1, 2 |
+| RU000A0ZZTL5 | ФПК 1P-05 | - | - | 7/16 | - | no: best candidate reproduces 7 of 16 coupons (7 of 15 after the first) | - | 1, 2, 5, 6, 7, 10, 11, 14, 15 |
+| RU000A100030 | Автодор2Р1 | 7 | 5 | 12/16 | 0.97 | yes | 75 from 2018-12-27 | 1, 2, 12, 14 |
+| RU000A1008V9 | РОСНАНО 8 | 7 | 5 | 16/16 | 0.00 | yes | 157 from 2019-04-08 | - |
+| RU000A1014J2 | ВТБ Т2-3 | - | - | 2/14 | - | no: best candidate reproduces 2 of 14 coupons (2 of 13 after the first) | - | 1, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 |
+| RU000A101TT2 | РЖД 1Б-01 | - | - | 2/13 | - | no: best candidate reproduces 2 of 13 coupons (1 of 12 after the first) | - | 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13 |
+| RU000A101Y18 | РЖД 1Б-02 | - | - | 3/13 | - | no: best candidate reproduces 3 of 13 coupons (3 of 12 after the first) | - | 1, 2, 3, 4, 5, 6, 7, 8, 12, 13 |
+| RU000A102564 | РЖД 1Б-03 | 5 | 4 | 12/13 | 0.02 | yes | 165 from 2020-09-30, 215 from 2025-09-24 | 1 |
+| RU000A1028U9 | РЖД 1Б-04 | 5 | 4 | 12/13 | 0.22 | yes | 165 from 2020-10-22, 210 from 2025-10-16 | 1 |
+| RU000A102FE1 | РЖД 1Б-06 | 5 | 4 | 11/12 | 0.18 | yes | 175 from 2020-12-03, 225 from 2026-03-30 | 1 |
+| RU000A102S72 | РЖД 1Б-08 | 5 | 4 | 10/11 | 0.16 | yes | 175 from 2021-02-25, 225 from 2026-06-12 | 1 |
+| RU000A1039A8 | ГазпромК 2 | - | - | 2/11 | - | no: best candidate reproduces 2 of 11 coupons (2 of 10 after the first) | - | 1, 2, 3, 4, 5, 6, 8, 10, 11 |
+| RU000A103QN7 | ГазпромК 3 | - | - | 2/11 | - | no: best candidate reproduces 2 of 11 coupons (2 of 10 after the first) | - | 1, 2, 5, 6, 7, 8, 9, 10, 11 |
+
+* **Two families are reproduced**, as the desk's analysis found: 7-year KBD on the 5th
+  publication day (KAMAZ БО-09/10/11, RUSNANO 08, RZD 001Р-08R/09R, Avtodor БО-002Р-01) and
+  5-year KBD on the 4th publication day (RZD 001Б-03/04/06/08). The RZD 001Б margins step at the
+  issuer call dates (1.65 → 2.15 / 2.10, 1.75 → 2.25), so the margin is published per period
+  (`spread_schedule`). `lag_days = 6` of RU000A1028U9 (legacy curated row) is not the fixing
+  rule: the coupons fix on the 4th KBD publication day.
+* The first coupon (and the second of RZD 001Р-08R/09R and Avtodor) does not follow the formula:
+  set at placement. Avtodor coupons 12 and 14 differ by 0.03 and 0.10 pp - open until the
+  issue documents are read; the fit is still accepted (12 of 15 after the first).
+* **Not reproduced, no terms published** (`reproduction.accepted = false`): FPK 001P-05 (7 of 16
+  under the best candidate), GTLK 001P-01, VTB T2-3, RZD 001Б-01/02, Gazprom kapital 001Б-02/03:
+  early coupons are far from any KBD tenor (fixed periods or another index). Their terms must
+  come from the issue documents (`bond_terms_curated.json`, terms `floater_formula` with
+  `benchmark_tenor_years` / `fixing_offset` and `floater_spread`).
+  Secondary sources (Cbonds base-rate field, aggregator sites; not issue documents, so not
+  curated) point the same way: GTLK 001P-01 on the **10-year** KBD, 7th working day, +0.75 % (the
+  best fit candidate is exactly T = 10, N = 7, but only its later coupons match); RZD 001Б-01/02,
+  VTB T2-3 and Gazprom kapital 001Б-02/03 have a fixed initial period and then **one** KBD fixing
+  held flat for many periods (a reset structure the per-period fixing model does not describe).
+  The RZD 001Б margin steps are described there as step-ups from coupon 11 written into the issue
+  terms; the published schedule is the same either way.
+* **Fixing calendar**: the end-of-day KBD publication days equal the `MOEX_STOCK` business days
+  of the hub calendar over the whole history, except 2022-01-07 (a business day in the calendar
+  without a publication - the calendar row is the suspect). No separate calendar is needed:
+  past fixings use `/v1/history/zcyc` rows with `is_eod = true`, future ones `MOEX_STOCK`.
+
 ## Not static errors (for the record)
 
 * `floater_accrual_vs_final_coupon` (93k rows, 417 bonds): in-arrears accrual (item 6).
