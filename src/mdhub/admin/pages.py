@@ -114,7 +114,8 @@ def overview_data(ctx: Ctx) -> dict[str, Any]:
             "FROM ops.v_source_status ORDER BY source"
         ).fetchall()
         coverage = conn.execute(
-            "SELECT dataset, is_stale, open_gaps, unfillable_gaps, problem FROM ops.v_coverage"
+            "SELECT dataset, is_stale, open_gaps, unfillable_gaps, problem, checked_at "
+            "FROM ops.v_coverage"
         ).fetchall()
         health = job_health(
             conn,
@@ -137,19 +138,26 @@ def overview_data(ctx: Ctx) -> dict[str, Any]:
     if backup_at is None or now - backup_at > timedelta(hours=36):
         problems.append("No successful backup in the last 36 hours.")
     bad_sources = [s for s in sources if s["ok"] is False or s["auth"] == "rejected"]
+    unconfigured = [s for s in sources if s["auth"] == "not_configured" and s not in bad_sources]
     unprobed = [s for s in sources if s["ok"] is None]
     for s in bad_sources:
-        what = "credentials rejected" if s["auth"] == "rejected" else "unreachable"
+        what = "credentials rejected" if s["auth"] == "rejected" else "probe failed"
         problems.append(f"Source {s['source']}: {what}.")
+    for s in unconfigured:
+        problems.append(f"Source {s['source']}: credentials not configured.")
     job_problems = [j for j in health if j.problem]
+    partial_jobs = [j for j in health if j.last_status == "partial"]
     for j in job_problems:
         problems.append(f"Job {j.job}: {j.status}.")
+    for j in partial_jobs:
+        problems.append(f"Job {j.job}: last run was partial.")
     stale = [c for c in coverage if c["is_stale"]]
     open_gaps = sum(int(c["open_gaps"] or 0) for c in coverage)
     unfillable = sum(int(c["unfillable_gaps"] or 0) for c in coverage)
     if stale:
         problems.append(
-            f"{len(stale)} stale dataset(s): {', '.join(c['dataset'] for c in stale[:5])}."
+            f"Quality snapshot: {len(stale)} stale dataset(s) at check: "
+            f"{', '.join(c['dataset'] for c in stale[:5])}."
         )
     if failed_tasks:
         problems.append(f"{failed_tasks} backfill task(s) failed.")
@@ -190,15 +198,24 @@ def overview_data(ctx: Ctx) -> dict[str, Any]:
         ),
         (
             "Sources",
-            _light(not bad_sources and not unprobed, not bad_sources),
-            f"{len(sources) - len(bad_sources) - len(unprobed)}/{len(sources)} ok"
-            + (f", {len(unprobed)} not probed" if unprobed else ""),
+            _light(not bad_sources and not unprobed and not unconfigured, not bad_sources),
+            f"{len(bad_sources)} failed probes, {len(unconfigured)} not configured, "
+            f"{len(unprobed)} not probed",
         ),
-        ("Jobs", _light(not job_problems), f"{len(job_problems)} problem(s)"),
         (
-            "Data",
-            _light(not stale and not open_gaps, not stale),
-            f"{len(stale)} stale, {open_gaps} open gaps, {unfillable} unfillable",
+            "Jobs",
+            _light(not job_problems and not partial_jobs, not job_problems),
+            f"{len(job_problems)} problem(s), {len(partial_jobs)} latest partial run(s)",
+        ),
+        (
+            "Quality snapshot",
+            _light(bool(coverage) and not stale and not open_gaps, not stale),
+            f"{len(stale)} stale at check, {open_gaps} open gaps, {unfillable} unfillable; "
+            + (
+                f"oldest check {min(c['checked_at'] for c in coverage):%Y-%m-%d %H:%M} UTC"
+                if coverage
+                else "not checked"
+            ),
         ),
         ("Version", "ok" if not any(v != __version__ for v in versions) else "warn", __version__),
         *_machine_lights(machine),
@@ -524,7 +541,11 @@ def gap_not_expected(
 @router.get("/sources")
 def sources_page(ctx: Annotated[Ctx, Depends(viewer)]) -> Response:
     with ctx.db.connection() as conn:
-        rows = conn.execute("SELECT * FROM ops.v_source_status ORDER BY source").fetchall()
+        rows = conn.execute(
+            "SELECT s.*, r.status AS last_load_status, r.rows_inserted, r.rows_updated "
+            "FROM ops.v_source_status s "
+            "LEFT JOIN ops.job_run r ON r.id = s.last_load_run_id ORDER BY s.source"
+        ).fetchall()
         now = _one(conn, "SELECT now() AS v")
     return render(ctx, "sources.html", sources=rows, now=now)
 

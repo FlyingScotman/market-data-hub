@@ -5,19 +5,21 @@
 {% set can_act = user.at_least('operator') %}
 <section class="card">
   <h2>Datasets</h2>
+  <p class="small">Quality snapshot: dates, row counts and stale flags describe the quality job's last check, not live table contents. Later loads can change them. Check times are UTC; observation dates differ from fetch times.</p>
   <table>
-    <thead><tr><th>Dataset</th><th>First</th><th>Last</th><th>Rows</th><th>Expected latest</th><th>Stale</th><th>Open gaps</th><th>Unfillable</th><th>Not expected</th><th>Tasks</th><th>Problem</th></tr></thead>
+    <thead><tr><th>Dataset</th><th>First</th><th>Last observation date</th><th>Rows</th><th>Expected latest at check</th><th>Freshness at check</th><th>Checked at</th><th>Open gaps</th><th>Unfillable</th><th>Not expected</th><th>Tasks</th><th>Problem</th></tr></thead>
     <tbody>
     {% for c in coverage %}
     <tr>
       <td>{{ c.dataset }}</td><td>{{ c.first_date or '-' }}</td><td>{{ c.last_date or '-' }}</td><td class="num">{{ c.row_count|num }}</td>
       <td>{{ c.expected_latest or '-' }}</td>
-      <td>{% if c.is_stale %}<span class="pill bad">stale</span>{% else %}<span class="pill ok">ok</span>{% endif %}</td>
+      <td>{% if c.is_stale %}<span class="pill bad">stale at check</span>{% else %}<span class="pill">not stale at check</span>{% endif %}</td>
+      <td>{{ c.checked_at|dt }} UTC</td>
       <td class="num">{{ c.open_gaps }}</td><td class="num">{{ c.unfillable_gaps }}</td><td class="num">{{ c.not_expected_gaps }}</td><td class="num">{{ c.open_tasks }}</td>
       <td class="small">{{ c.problem or '' }}</td>
     </tr>
     {% else %}
-    <tr><td colspan="11">No dataset status yet (the quality job writes it).</td></tr>
+    <tr><td colspan="12">No dataset status yet (the quality job writes it).</td></tr>
     {% endfor %}
     </tbody>
   </table>
