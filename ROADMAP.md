@@ -53,22 +53,26 @@ production здесь не проверялась). Новые наборы да
   intraday 200). Нет: ряда уровней (цепочки от базы) или полной истории м/м от базового месяца
   самого старого ОФЗ-ИН; в `bond_quotes` есть только `icpi` MOEX (`source_analytics`).
   Готово: срез несёт ИПЦ на всю глубину, нужную ОФЗ-ИН, с датой публикации каждого месяца.
-- [ ] **H11 цены фьючерсов в срезе** (FX, RUONIA, КС, ОФЗ; ядро `fx_futures`, `rate_futures`,
+  22.10 (контракт 1.4): набор `cpi` — м/м и г/г с 2015-01 (`cpi_from`), метка `published_on_unknown`. Остаётся: уровни ИПЦ и даты публикации прошлых месяцев — нет источника.
+- [x] **H11 цены фьючерсов в срезе** (FX, RUONIA, КС, ОФЗ; ядро `fx_futures`, `rate_futures`,
   `ofz_futures`) — *не начато в срезе*. Данные в БД есть: `md.futures_eod` (все outright FORTS,
   settle, OI; задание `futures_eod`), `md.futures_intraday` (FX-фьючерсы через APIM),
   `/v1/futures/eod`, `/v1/futures/contracts`; в `snapshot/market.py` набора нет.
   Готово: `eod_*` и `intraday` срезы несут расчётную цену и спецификацию контракта (static).
-- [ ] **H12 индекс RUONIA и объявленные пропуски** — *частично*. `RUONIA_INDEX` и
+  Сделано 22.10 (контракт 1.4): `futures_prices` (EOD, все FORTS + static) и `futures_prices_intraday` (FX).
+- [x] **H12 индекс RUONIA и объявленные пропуски** — *частично*. `RUONIA_INDEX` и
   `TERM_RUONIA_1M/3M/6M` (задание `cbr_daily`, набор `cbr_ruonia_index`) уже едут в `fixings` среза (видно в golden
   `market_eod_final.json`). Пропущенная публикация RUONIA — `ops.data_gap` `cbr_ruonia`
   (WEB-17), видна в `/v1/gaps`, но в срезе не объявлена. Готово: срез явно перечисляет
   неопубликованные дни RUONIA окна фиксингов.
-- [ ] **H13 FX с датой валютирования, своп-пункты и FX-свопы CETS** — *частично*. В `fx_rates`
+  Сделано 22.10 (контракт 1.4): coverage `fixings.ruonia_unpublished_days`.
+- [x] **H13 FX с датой валютирования, своп-пункты и FX-свопы CETS** — *частично*. В `fx_rates`
   (`moex_eod`) есть outrights TOD/TOM/SPT/FWD и др. с `tenor`, но без даты расчётов:
   `ref.fx_instrument.settle_date` загрузчик `fx_moex` наблюдает, а срез не публикует. FX-свопы
   CETS (`inst_kind = swap`, напр. `USDRUBTODTOM`, `…_TOM1D`) исключаются с причиной `fx_swap`.
   Готово: у каждой FX-строки дата валютирования и календарь расчётов; свопы CETS в срезе с
   обеими датами ног и своп-пунктами (новый kind или набор).
+  Сделано 22.10 (контракт 1.4): `fx_rates.settle_date` / `settlement_calendars` (`md.fx_settle_date`, накапливается с установки), набор `fx_swaps`; календари `CN_INTERBANK`, `US_FED`, `CH_ZURICH`.
 - [ ] **H14 иностранные O/N-фиксинги** — *в основном сделано (WEB-16), не установлено*. `SOFR`,
   `SOFR30/90/180DAVG`, `SOFRINDEX`, `ESTR` — в `md.fixing` и в `fixings` среза (контракт 1.3);
   CNY — семейство `RUSFARCNY*` MOEX. Остаток: проверить на production (`probe-sources`,
@@ -80,6 +84,7 @@ production здесь не проверялась). Новые наборы да
   (`export/tdm.py`: «no source in the hub»). Кандидат — публикация SNB (data.snb.ch) с запасным
   источником; проверить условия использования данных SIX. Готово: `SARON` в `md.fixing` и в
   `fixings` среза, набор в `/v1/coverage`.
+  22.10: код готов (`saron_fixing`, источник `snb`); SNB из среды разработки недоступен — проверить `mdhub probe-sources -s snb` на сервере.
 - [ ] **H17 календари публикаций СПФИ и RUONIA** — *не начато* (WEB-15: «не делались»). В
   срезе календари `MOEX_FORTS`, `MOEX_FX`, `MOEX_STOCK`, `RU_PRODUCTION` (официальный с WEB-17;
   RUONIA — только сверка), `TARGET`. Нужны явный календарь расчётов СПФИ (MOEX OIS RUONIA
