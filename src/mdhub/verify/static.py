@@ -34,7 +34,7 @@ import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from itertools import groupby
 from typing import Any, Final
@@ -69,6 +69,8 @@ __all__ = [
     "BusinessCalendar",
     "VerificationRun",
     "YieldRow",
+    "ZcycCalendarCheck",
+    "ZcycFloaterResult",
     "classify_ai_mismatch",
     "load_bonds",
     "run_verification",
@@ -229,6 +231,30 @@ class VerificationRun:
     eod_rows: int = 0
     bonds_in_ref: int = 0
     duration_s: float = 0.0
+    zcyc_floaters: list[ZcycFloaterResult] = field(default_factory=list)
+    zcyc_calendar: ZcycCalendarCheck | None = None
+
+
+@dataclass(slots=True)
+class ZcycFloaterResult:
+    """A KBD floater: its published coupon rates reproduced from the ZCYC history under the
+    documented terms (``check``) or the hub's fit (``fit``; job ``zcyc_floater_fit``)."""
+
+    secid: str
+    status: str | None
+    reproduction: dict[str, Any]
+
+
+@dataclass(slots=True)
+class ZcycCalendarCheck:
+    """End-of-day KBD publication days vs ``MOEX_STOCK`` business days over the history (the
+    fixing calendar ``zcyc_publication_days``)."""
+
+    first: date | None
+    last: date | None
+    publication_days: int
+    business_without_publication: list[date]
+    publication_not_business: list[date]
 
 
 # --------------------------------------------------------------------- accrued interest
@@ -787,6 +813,8 @@ def _run(
     for b in bonds.values():
         res = result_for(b)
         res.invariants, res.amount_votes = invariants(b, as_of)
+    zcyc_results, zcyc_cal = _zcyc_floaters(conn, cal, secids)
+    say(f"checked {len(zcyc_results)} KBD floaters")
     return VerificationRun(
         generated_at=now or datetime.now(UTC),
         date_from=date_from,
@@ -800,7 +828,49 @@ def _run(
         eod_rows=eod_rows,
         bonds_in_ref=len(bonds),
         duration_s=time.monotonic() - started,
+        zcyc_floaters=zcyc_results,
+        zcyc_calendar=zcyc_cal,
     )
+
+
+def _zcyc_floaters(
+    conn: Conn, cal: BusinessCalendar, secids: Sequence[str] | None
+) -> tuple[list[ZcycFloaterResult], ZcycCalendarCheck]:
+    """KBD floaters: reproduce the published coupon rates (same rule as the job
+    ``zcyc_floater_fit``, recomputed here, nothing written) and compare the KBD publication
+    days with the business calendar."""
+    # imported here: the loader imports BusinessCalendar from this module
+    from mdhub.loaders.zcyc_floater_fit import fit_bond, load_history, load_inputs
+
+    h = load_history(conn)
+    status = {
+        str(r[0]): r[1]
+        for r in _rows(
+            conn, "SELECT secid, status FROM ref.bond_rate_formula_resolved WHERE benchmark = %s",
+            ("ZCYC",),
+        )
+    }  # fmt: skip
+    out = [
+        ZcycFloaterResult(secid, status.get(secid), fit_bond(h, b)[2].as_json())
+        for secid, b in sorted(load_inputs(conn).items())
+        if not secids or secid in secids
+    ]
+    pub = set(h.days)
+    missing: list[date] = []
+    if h.days:
+        d = h.days[0]
+        while d <= h.days[-1]:
+            if cal(d) and d not in pub:
+                missing.append(d)
+            d += timedelta(days=1)
+    check = ZcycCalendarCheck(
+        first=h.days[0] if h.days else None,
+        last=h.days[-1] if h.days else None,
+        publication_days=len(h.days),
+        business_without_publication=missing,
+        publication_not_business=[d for d in h.days if not cal(d)],
+    )
+    return out, check
 
 
 def iter_failed(run: VerificationRun) -> Iterable[tuple[BondResult, InvariantResult]]:
