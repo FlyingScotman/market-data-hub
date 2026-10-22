@@ -145,7 +145,7 @@ def test_static_snapshot_1_3_fields(conn: Conn, db: Database) -> None:
         cut_ts=datetime(2026, 10, 15, 7, 45, tzinfo=MSK).astimezone(UTC),
         known_at=utc_now(),
     )
-    doc = _bundle(conn, out.id)  # validated against the 1.3 schema when published
+    doc = _bundle(conn, out.id)  # validated against the current schema when published
     assert doc["schema_version"] == SCHEMA_VERSION
     inst = {i["secid"]: i for i in doc["data"]["instruments"]}
 

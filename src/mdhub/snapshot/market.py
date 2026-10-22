@@ -41,17 +41,22 @@ from mdhub.sources.moex_market import INDEX_GROUPS
 __all__ = [
     "BASIS_HISTORY",
     "BASIS_INTRADAY_CLOSE",
+    "CPI_CODES",
+    "CURRENCY_CALENDARS",
     "CURVE_EOD_RULE",
+    "DEFAULT_CPI_FROM",
     "DEFAULT_CURVE_EOD_CUTOFF",
     "EXPECTED_CURVES",
     "PRECIOUS_METALS",
     "REQUIRED_CURVE_DATASETS",
+    "RUB_SETTLEMENT_CALENDAR",
     "RUSFAR_INDEX_SERIES",
     "RUSFAR_RATE_SERIES",
     "MarketParams",
     "build_market",
     "curve_eod_order",
     "rusfar_unit",
+    "settlement_calendars",
 ]
 
 EXPECTED_CURVES: Final = (
@@ -73,6 +78,18 @@ key-rate curves); a cut without any source of one is flagged stale, never filled
 
 PRECIOUS_METALS: Final = frozenset({"GLD", "SLV", "PLT", "PLD"})
 
+RUB_SETTLEMENT_CALENDAR: Final = "MOEX_FX"
+CURRENCY_CALENDARS: Final = {
+    "CNY": "CN_INTERBANK",
+    "USD": "US_FED",
+    "EUR": "TARGET",
+    "CHF": "CH_ZURICH",
+}
+"""Hub calendar of a currency's settlement (contract 1.5). ``settlement_calendars`` of a MOEX
+X/RUB row = ``[MOEX_FX, CURRENCY_CALENDARS[X]]``: the calendars whose joint business days the
+pair settles on (a hub mapping, not a MOEX publication); a currency without one gets
+``[MOEX_FX]`` and the label ``foreign_calendar_unknown``."""
+
 RUSFAR_RATE_SERIES: Final = (*INDEX_GROUPS["rusfar"], *INDEX_GROUPS["rusfarrt"])
 """MOEX RUSFAR series published as rates in % p.a. (``unit = pct``): the explicit lists of the
 ``indices_rusfar`` / ``indices_rusfarrt`` datasets (contract 1.2; 1.0/1.1 took every
@@ -91,6 +108,10 @@ BASIS_INTRADAY_CLOSE: Final = "intraday_close"
 before ISS publishes the history) the latest intraday marketdata of the date."""
 
 DEFAULT_CURVE_EOD_CUTOFF: Final = "19:00"
+DEFAULT_CPI_FROM: Final = date(2015, 1, 1)
+"""``cpi`` history start: the first OFZ-IN (52001, placed 2015-07) indexes from the CPI of
+2015-03 (the month M-4 of its placement), so 2015-01 covers every OFZ-IN."""
+CPI_CODES: Final = ("CPI_RU_MOM", "CPI_RU_YOY")
 CURVE_EOD_RULE: Final = "latest_bid_ask_within_cutoff_else_latest"
 
 
@@ -135,6 +156,8 @@ class MarketParams:
     curve_eod_cutoff: str = DEFAULT_CURVE_EOD_CUTOFF
     """EOD cuts: the curve EOD rule's cutoff (:func:`curve_eod_order`, ``MDHUB_CURVE_EOD_CUTOFF``).
     Recorded in the coverage of ``curve_quote_sets``."""
+    cpi_from: date = DEFAULT_CPI_FROM
+    """``cpi``: first month of the CPI history (contract 1.5, H10)."""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -143,6 +166,7 @@ class MarketParams:
             "fx_lookback_days": self.fx_lookback_days,
             "fx_forward_days": self.fx_forward_days,
             "ecb_lookback_days": self.ecb_lookback_days,
+            "cpi_from": self.cpi_from,
         }
 
 
@@ -154,6 +178,12 @@ def rusfar_unit(secid: str) -> str | None:
     if secid in RUSFAR_INDEX_SERIES:
         return "index"
     return None
+
+
+def settlement_calendars(base_ccy: str | None) -> tuple[list[str], bool]:
+    """``(settlement_calendars, foreign calendar known)`` of a ``base_ccy``/RUB MOEX row."""
+    foreign = CURRENCY_CALENDARS.get(base_ccy or "")
+    return [RUB_SETTLEMENT_CALENDAR, *([foreign] if foreign else [])], foreign is not None
 
 
 def _day_bounds(d: date) -> tuple[datetime, datetime]:
@@ -625,6 +655,53 @@ def _zcyc(conn: DictConnection, t: datetime, d: date, eod: bool, prov: Provenanc
 # --------------------------------------------------------------------------- fixings
 
 
+def _fixing_row(f: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "index_code": f["index_code"],
+        "source": f["source"],
+        "fixing_date": f["fixing_date"],
+        "effective_date": f["effective_date"],
+        "published_on": f["published_on"],
+        "published_at": f["published_at"],
+        "hub_ingested_at": f["ingested_at"],
+        "value": f["value"],
+        "unit": f["unit"],
+        "origin": "md.fixing",
+        "labels": [],
+    }
+
+
+def _ruonia_unpublished(
+    conn: DictConnection, calendar_t: datetime, lo: date, rows: Sequence[Mapping[str, Any]]
+) -> list[date]:
+    """Business days of ``RU_PRODUCTION`` (as known at ``calendar_t``, the static cut) between
+    the first and the latest CBR RUONIA fixing of the window (from ``lo``) without a fixing: CBR
+    publishes RUONIA in day order and the ``cbr_daily`` job re-reads its recent history, so a
+    skipped day before a published one is a day CBR did not publish (2025-12-30, the last
+    business day of a year). Core's rate futures need these declared
+    (``RuoniaFixings.unpublished_dates``). Days before the hub's first fixing of the window or
+    after the latest one are never listed."""
+    days = {r["fixing_date"] for r in rows if r["index_code"] == "RUONIA" and r["source"] == "cbr"}
+    if not days:
+        return []
+    lo, hi = max(lo, min(days)), max(days)
+    flags = {
+        r["day"]: bool(r["is_business_day"])
+        for r in conn.execute(
+            "SELECT day, is_business_day FROM ref.calendar_effective_known_at(%(t)s) "
+            "WHERE calendar = 'RU_PRODUCTION' AND day BETWEEN %(lo)s AND %(hi)s",
+            {"t": calendar_t, "lo": lo, "hi": hi},
+        ).fetchall()
+    }
+    out = []
+    day = lo
+    while day < hi:
+        if flags.get(day, day.weekday() < 5) and day not in days:
+            out.append(day)
+        day += timedelta(days=1)
+    return out
+
+
 def _fixings(
     conn: DictConnection,
     t: datetime,
@@ -633,6 +710,7 @@ def _fixings(
     forward: int,
     prov: Provenance,
     excluded: Excluded,
+    calendar_t: datetime,
 ) -> Dataset:
     lo, hi = d - timedelta(days=lookback), d + timedelta(days=forward)
     fix = conn.execute(
@@ -649,21 +727,7 @@ def _fixings(
     out: list[dict[str, Any]] = []
     for f in fix:
         prov.add("fixings", f["source"], f["run_id"], f["ingested_at"])
-        out.append(
-            {
-                "index_code": f["index_code"],
-                "source": f["source"],
-                "fixing_date": f["fixing_date"],
-                "effective_date": f["effective_date"],
-                "published_on": f["published_on"],
-                "published_at": f["published_at"],
-                "hub_ingested_at": f["ingested_at"],
-                "value": f["value"],
-                "unit": f["unit"],
-                "origin": "md.fixing",
-                "labels": [],
-            }
-        )
+        out.append(_fixing_row(f))
     for i in rusfar:
         unit = rusfar_unit(i["secid"])
         if unit is None:
@@ -704,12 +768,255 @@ def _fixings(
     return Dataset(
         "fixings",
         out,
-        {"window_from": lo, "window_to": hi, "latest": dict(sorted(last.items()))},
+        {
+            "window_from": lo,
+            "window_to": hi,
+            "latest": dict(sorted(last.items())),
+            "ruonia_unpublished_days": _ruonia_unpublished(conn, calendar_t, lo, out),
+        },
         stale,
     )
 
 
+# ------------------------------------------------------------------------------- CPI
+
+
+def _cpi(conn: DictConnection, t: datetime, d: date, start: date, prov: Provenance) -> Dataset:
+    """Monthly CPI history from ``start`` (contract 1.5, H10): Rosstat CPI to the previous
+    month (``CPI_RU_MOM``, ``unit = index``) and the CBR-republished y/y (``CPI_RU_YOY``,
+    ``unit = pct``) as ``md.fixing`` stores them, known at the cut. ``published_on`` is the
+    release date where the source stated it (Rosstat: the newest month of each workbook since the
+    hub loads it); months loaded from history have none (label ``published_on_unknown``), never
+    a guess. No index levels: the hub has no source for Rosstat's level series; a consumer
+    chains the m/m indices (rounded to 2 decimals as published)."""
+    rows = conn.execute(
+        "SELECT f.* FROM md.fixing_known_at(%(t)s, %(lo)s, %(d)s) f "
+        "WHERE f.index_code = ANY(%(codes)s) ORDER BY f.index_code, f.source, f.fixing_date",
+        {"t": t, "lo": start, "d": d, "codes": list(CPI_CODES)},
+    ).fetchall()
+    out = []
+    for f in rows:
+        prov.add("cpi", f["source"], f["run_id"], f["ingested_at"])
+        row = _fixing_row(f)
+        row["labels"] = sorted_labels(None if f["published_on"] else "published_on_unknown")
+        out.append(row)
+    latest: dict[str, date] = {}
+    for r in out:
+        latest[r["index_code"]] = max(
+            latest.get(r["index_code"], r["fixing_date"]), r["fixing_date"]
+        )
+    return Dataset(
+        "cpi",
+        out,
+        {
+            "window_from": start,
+            "window_to": d,
+            "latest_month": dict(sorted(latest.items())),
+            "months": dict(sorted(Counter(r["index_code"] for r in out).items())),
+            "without_published_on": sum(1 for r in out if not r["published_on"]),
+        },
+        [] if "CPI_RU_MOM" in latest else [f"no CPI_RU_MOM month in [{start}, {d}]"],
+    )
+
+
+# --------------------------------------------------------------------------- futures
+
+
+def _contract_fields(r: Mapping[str, Any]) -> dict[str, Any]:
+    """Contract static of a FORTS future (``ref.futures_contract`` as known at the cut)."""
+    return {
+        "asset_code": r["asset_code"],
+        "sec_type": r["sec_type"],
+        "short_name": r["c_short_name"],
+        "contract_type": r["contract_type"],
+        "is_fx": r["is_fx"],
+        "base_ccy": r["base_ccy"],
+        "quote_ccy": r["quote_ccy"],
+        "first_trade_date": r["first_trade_date"],
+        "last_trade_date": r["last_trade_date"],
+        "last_del_date": r["last_del_date"],
+        "lot_volume": r["lot_volume"],
+        "min_step": r["min_step"],
+        "step_price": r["step_price"],
+    }
+
+
+def _contract_labels(r: Mapping[str, Any]) -> tuple[str | None, ...]:
+    return (
+        "contract_static_unknown" if r["contract_type"] is None else None,
+        "perpetual" if r["contract_type"] == "perpetual" else None,
+    )
+
+
+def _futures_eod(
+    conn: DictConnection, t: datetime, d: date, eod: bool, prov: Provenance
+) -> Dataset:
+    """FORTS futures of ``d`` (contract 1.5, H11): settlement price (``SETTLEPRICE``, the price
+    variation margin is computed on), OHLC / WAP, volume and open interest as MOEX publishes them
+    (``md.futures_eod``: every outright FORTS future, calendar spreads are not stored) and the
+    contract static. ``*_rub_per_unit`` (RUB per 1 unit of the base currency) only for
+    RUB-quoted FX futures, as the loader computes it."""
+    if not eod:
+        return Dataset("futures_prices", [], {"not_in_cut": "intraday"})
+    rows = conn.execute(
+        """
+        SELECT e.*, c.sec_type, c.short_name AS c_short_name, c.contract_type, c.is_fx,
+               c.base_ccy, c.quote_ccy, c.first_trade_date, c.last_trade_date, c.last_del_date,
+               c.lot_volume, c.min_step, c.step_price, c.asset_code AS c_asset_code
+        FROM md.futures_eod_known_at(%(t)s, %(d)s, %(d)s) e
+        LEFT JOIN ref.futures_contract_known_at(%(t)s) c ON c.secid = e.secid
+        ORDER BY e.secid
+        """,
+        {"t": t, "d": d},
+    ).fetchall()
+    out = []
+    for r in rows:
+        prov.add("futures_prices", "moex_iss", r["run_id"], r["ingested_at"])
+        r = {**r, "asset_code": r["asset_code"] or r["c_asset_code"]}
+        out.append(
+            {
+                "trade_date": r["trade_date"],
+                "secid": r["secid"],
+                "board": r["board"],
+                **_contract_fields(r),
+                "settle_price": r["settle_price"],
+                "open": r["open"],
+                "low": r["low"],
+                "high": r["high"],
+                "close": r["close"],
+                "waprice": r["waprice"],
+                "swap_rate": r["swap_rate"],
+                "volume": r["volume"],
+                "value_rub": r["value"],
+                "open_position": r["open_position"],
+                "open_position_value_rub": r["open_position_value"],
+                "num_trades": r["num_trades"],
+                "settle_rub_per_unit": r["settle_rub_per_unit"],
+                "close_rub_per_unit": r["close_rub_per_unit"],
+                "labels": sorted_labels(
+                    *_contract_labels(r),
+                    "no_settle_price" if r["settle_price"] is None else None,
+                ),
+            }
+        )
+    fx = [r for r in out if r["is_fx"]]
+    return Dataset(
+        "futures_prices",
+        out,
+        {
+            "trade_date": d,
+            "contracts": len(out),
+            "fx_contracts": len(fx),
+            "with_settle_price": sum(1 for r in out if r["settle_price"] is not None),
+            "without_contract_static": sum(1 for r in out if r["contract_type"] is None),
+            "assets": len({r["asset_code"] for r in out}),
+        },
+        [] if out else [f"no FORTS futures history on {d.isoformat()}"],
+    )
+
+
+def _futures_intraday(
+    conn: DictConnection, t: datetime, d: date, eod: bool, prov: Provenance
+) -> Dataset:
+    """Latest stored FORTS FX futures quote per contract on ``d`` (``md.futures_intraday``: APIM
+    realtime, else public ISS delayed; contract 1.5, H11): ``settle_price`` is MOEX's current
+    estimate of the day's settlement price. Empty in EOD cuts (``futures_prices``)."""
+    if eod:
+        return Dataset("futures_prices_intraday", [], {"not_in_cut": "eod"})
+    start, end = _day_bounds(d)
+    rows = conn.execute(
+        """
+        SELECT q.*, c.asset_code, c.sec_type, c.short_name AS c_short_name, c.contract_type,
+               c.is_fx, c.base_ccy, c.quote_ccy, c.first_trade_date, c.last_trade_date,
+               c.last_del_date, c.lot_volume, c.min_step, c.step_price
+        FROM (
+            SELECT DISTINCT ON (f.secid) f.*
+            FROM md.futures_intraday f
+            WHERE f.ts >= %(start)s AND f.ts < %(end)s AND f.ingested_at <= %(t)s
+            ORDER BY f.secid, f.ts DESC, f.source, f.source_variant
+        ) q
+        LEFT JOIN ref.futures_contract_known_at(%(t)s) c ON c.secid = q.secid
+        ORDER BY q.secid
+        """,
+        {"start": start, "end": end, "t": t},
+    ).fetchall()
+    out = []
+    for r in rows:
+        prov.add("futures_prices_intraday", r["source"], r["run_id"], r["ingested_at"])
+        out.append(
+            {
+                "secid": r["secid"],
+                "ts": r["ts"],
+                "trade_date": r["trade_date"],
+                "source": r["source"],
+                "source_variant": r["source_variant"],
+                "source_ts": r["source_ts"],
+                "latency": r["latency"],
+                **_contract_fields(r),
+                "bid": r["bid"],
+                "offer": r["offer"],
+                "last": r["last"],
+                "open": r["open"],
+                "high": r["high"],
+                "low": r["low"],
+                "settle_price": r["settle_price"],
+                "swap_rate": r["swap_rate"],
+                "open_position": r["open_position"],
+                "num_trades": r["num_trades"],
+                "vol_today": r["vol_today"],
+                "val_today": r["val_today"],
+                "bid_rub_per_unit": r["bid_rub_per_unit"],
+                "offer_rub_per_unit": r["offer_rub_per_unit"],
+                "last_rub_per_unit": r["last_rub_per_unit"],
+                "labels": sorted_labels(*_contract_labels(r)),
+            }
+        )
+    latest = max((r["ts"] for r in out), default=None)
+    return Dataset(
+        "futures_prices_intraday",
+        out,
+        {"contracts": len(out), "latest_ts": latest},
+        [] if out else [f"no intraday FORTS futures quotes on {d.isoformat()}"],
+    )
+
+
 # -------------------------------------------------------------------------------- FX
+
+
+@dataclass(frozen=True, slots=True)
+class _Settle:
+    """Value dates of the session ``d`` as known at the cut (``md.fx_settle_date``)."""
+
+    by_instrument: dict[tuple[str, str], date]
+    """(secid, board) -> SETTLEDATE (outright: value date; swap: near-leg date)."""
+    by_code: dict[tuple[str, str, str, str], date | None]
+    """(base_ccy, quote_ccy, board, tenor) of the outrights -> their SETTLEDATE (``None`` when
+    two instruments of the same code disagree): the far-leg date of a swap whose far leg is a
+    named value date (TOD/TOM/SPT...)."""
+
+
+def _settle_dates(conn: DictConnection, t: datetime, d: date) -> _Settle:
+    rows = conn.execute(
+        """
+        SELECT s.secid, s.board, s.settle_date, i.kind, i.base_ccy, i.quote_ccy, i.tenor
+        FROM md.fx_settle_date_known_at(%(t)s, %(d)s, %(d)s) s
+        LEFT JOIN ref.fx_instrument_known_at(%(t)s) i
+          ON i.secid = s.secid AND i.board = s.board
+        ORDER BY s.secid, s.board
+        """,
+        {"t": t, "d": d},
+    ).fetchall()
+    by_instrument: dict[tuple[str, str], date] = {}
+    by_code: dict[tuple[str, str, str, str], date | None] = {}
+    for r in rows:
+        by_instrument[(r["secid"], r["board"])] = r["settle_date"]
+        if r["kind"] == "outright" and r["tenor"] and r["base_ccy"] and r["quote_ccy"]:
+            code = (r["base_ccy"], r["quote_ccy"], r["board"], r["tenor"])
+            if code in by_code and by_code[code] != r["settle_date"]:
+                by_code[code] = None
+            else:
+                by_code.setdefault(code, r["settle_date"])
+    return _Settle(by_instrument, by_code)
 
 
 def _fx(
@@ -720,7 +1027,10 @@ def _fx(
     eod: bool,
     prov: Provenance,
     excluded: Excluded,
+    settle: _Settle,
+    swaps: list[dict[str, Any]],
 ) -> Dataset:
+    """``fx_rates``; MOEX EOD swap rows are appended to ``swaps`` (dataset ``fx_swaps``)."""
     lo, hi = d - timedelta(days=params.fx_lookback_days), d + timedelta(days=params.fx_forward_days)
     out: list[dict[str, Any]] = []
     blank: dict[str, Any] = {
@@ -739,6 +1049,8 @@ def _fx(
         "close_rub_per_unit": None,
         "waprice_rub_per_unit": None,
         "num_trades": None,
+        "settle_date": None,
+        "settlement_calendars": None,
         "labels": [],
     }
     for r in conn.execute(
@@ -761,7 +1073,8 @@ def _fx(
     if eod:
         for r in conn.execute(
             """
-            SELECT e.*, i.kind AS inst_kind, i.base_ccy, i.quote_ccy, i.tenor, i.face_value
+            SELECT e.*, i.kind AS inst_kind, i.base_ccy, i.quote_ccy, i.tenor, i.face_value,
+                   i.near_leg, i.far_leg
             FROM md.fx_eod_known_at(%(t)s, %(d)s, %(d)s) e
             LEFT JOIN ref.fx_instrument_known_at(%(t)s) i
               ON i.secid = e.secid AND i.board = e.board
@@ -771,10 +1084,13 @@ def _fx(
         ).fetchall():
             key = {"secid": r["secid"], "board": r["board"], "trade_date": r["trade_date"]}
             reason = None
+            if r["inst_kind"] == "swap":
+                swaps.append(r)  # 1.5: published in fx_swaps (1.0-1.3: excluded, fx_swap)
+                continue
             if r["inst_kind"] is None:
                 reason = "instrument_unknown"
             elif r["inst_kind"] != "outright":
-                reason = "fx_swap" if r["inst_kind"] == "swap" else "not_an_outright"
+                reason = "not_an_outright"
             elif r["quote_ccy"] != "RUB":
                 reason = "non_rub_pair"
             elif r["base_ccy"] in PRECIOUS_METALS:
@@ -785,6 +1101,8 @@ def _fx(
             prov.add("fx_rates", "moex_iss", r["run_id"], r["ingested_at"])
             close_u = _scale_exact(r["close"], r["face_value"])
             wap_u = _scale_exact(r["waprice"], r["face_value"])
+            value_date = settle.by_instrument.get((r["secid"], r["board"]))
+            calendars, foreign_known = settlement_calendars(r["base_ccy"])
             out.append(
                 {
                     **blank,
@@ -800,12 +1118,16 @@ def _fx(
                     "close_rub_per_unit": close_u,
                     "waprice_rub_per_unit": wap_u,
                     "num_trades": r["num_trades"],
+                    "settle_date": value_date,
+                    "settlement_calendars": calendars,
                     "labels": sorted_labels(
                         "quote_units_not_power_of_ten"
                         if r["face_value"] is not None
                         and _scale_exact(Decimal(1), r["face_value"]) is None
                         else None,
                         "no_price" if r["close"] is None and r["waprice"] is None else None,
+                        None if value_date else "settle_date_not_observed",
+                        None if foreign_known else "foreign_calendar_unknown",
                     ),
                 }
             )
@@ -836,11 +1158,115 @@ def _fx(
     out.sort(key=sort_key)
     kinds = Counter(r["kind"] for r in out)
     stale = [] if in_force else [f"cbr_official: no rate in force on {d.isoformat()}"]
+    moex = [r for r in out if r["kind"] == "moex_eod"]
     return Dataset(
         "fx_rates",
         out,
-        {"by_kind": dict(sorted(kinds.items())), "cbr_window_from": lo, "cbr_window_to": hi},
+        {
+            "by_kind": dict(sorted(kinds.items())),
+            "cbr_window_from": lo,
+            "cbr_window_to": hi,
+            "moex_eod_with_settle_date": sum(1 for r in moex if r["settle_date"]),
+            "moex_eod_without_settle_date": sum(1 for r in moex if not r["settle_date"]),
+        },
         stale,
+    )
+
+
+# --------------------------------------------------------------------------- FX swaps
+
+_NAMED_LEGS: Final = frozenset({"TOD", "TOM", "SPT", "TDS", "TMS", "STS", "TDB", "TMB"})
+"""Swap legs that are named value dates of an outright of the same pair (their SETTLEDATE is
+the leg's date); other far legs are tenors (``1W``, ``1M``...) MOEX publishes no date for."""
+
+
+def _fx_swaps(
+    rows: list[dict[str, Any]],
+    d: date,
+    eod: bool,
+    settle: _Settle,
+    prov: Provenance,
+    excluded: Excluded,
+) -> Dataset:
+    """MOEX CETS / selt FX swaps of ``d`` (contract 1.5, H13): the swap price as published
+    (far-leg rate minus near-leg rate, RUB per ``quote_units``), its exact per-unit value and
+    the leg value dates."""
+    if not eod:
+        return Dataset("fx_swaps", [], {"not_in_cut": "intraday"})
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        key = {"secid": r["secid"], "board": r["board"], "trade_date": r["trade_date"]}
+        if r["quote_ccy"] != "RUB":
+            excluded.add("fx_swaps", key, "non_rub_pair")
+            continue
+        if r["base_ccy"] in PRECIOUS_METALS:
+            excluded.add("fx_swaps", key, "precious_metal")
+            continue
+        prov.add("fx_swaps", "moex_iss", r["run_id"], r["ingested_at"])
+        near = settle.by_instrument.get((r["secid"], r["board"]))
+        far_leg = r["far_leg"]
+        far = (
+            settle.by_code.get((r["base_ccy"], r["quote_ccy"], r["board"], far_leg))
+            if far_leg in _NAMED_LEGS
+            else None
+        )
+        calendars, foreign_known = settlement_calendars(r["base_ccy"])
+        out.append(
+            {
+                "trade_date": r["trade_date"],
+                "secid": r["secid"],
+                "board": r["board"],
+                "base_ccy": r["base_ccy"],
+                "quote_ccy": r["quote_ccy"],
+                "tenor": r["tenor"],
+                "near_leg": r["near_leg"],
+                "far_leg": far_leg,
+                "near_settle_date": near,
+                "far_settle_date": far,
+                "quote_units": r["face_value"],
+                "open": r["open"],
+                "low": r["low"],
+                "high": r["high"],
+                "close": r["close"],
+                "waprice": r["waprice"],
+                "close_rub_per_unit": _scale_exact(r["close"], r["face_value"]),
+                "waprice_rub_per_unit": _scale_exact(r["waprice"], r["face_value"]),
+                "num_trades": r["num_trades"],
+                "settlement_calendars": calendars,
+                "labels": sorted_labels(
+                    "no_price" if r["close"] is None and r["waprice"] is None else None,
+                    "quote_units_not_power_of_ten"
+                    if r["face_value"] is not None
+                    and _scale_exact(Decimal(1), r["face_value"]) is None
+                    else None,
+                    None if near else "near_settle_date_not_observed",
+                    None
+                    if far
+                    else (
+                        "far_settle_date_not_observed"
+                        if far_leg in _NAMED_LEGS
+                        else "far_settle_date_not_published"
+                    ),
+                    None if foreign_known else "foreign_calendar_unknown",
+                ),
+            }
+        )
+    out.sort(key=lambda r: (r["secid"], r["board"]))
+    by_ccy = Counter(r["base_ccy"] for r in out)
+    priced = [r for r in out if r["close"] is not None or r["waprice"] is not None]
+    return Dataset(
+        "fx_swaps",
+        out,
+        {
+            "trade_date": d,
+            "by_base_ccy": dict(sorted(by_ccy.items())),
+            "priced": len(priced),
+            "with_near_settle_date": sum(1 for r in out if r["near_settle_date"]),
+            "with_far_settle_date": sum(1 for r in out if r["far_settle_date"]),
+            "points": "far-leg rate minus near-leg rate as MOEX publishes the swap price, RUB "
+            "per quote_units; *_rub_per_unit = per 1 unit of base_ccy",
+        },
+        [] if out else [f"no MOEX FX swap rows on {d.isoformat()}"],
     )
 
 
@@ -962,15 +1388,22 @@ def build_market(
         quotes = Dataset("bond_quotes", [], {"not_in_cut": "intraday"})
         quotes_intraday = _bond_quotes_intraday(conn, t, d, universe, prov, excluded)
     lookback = params.fixing_lookback_days if eod else params.intraday_fixing_lookback_days
+    settle = _settle_dates(conn, t, d)
+    swap_rows: list[dict[str, Any]] = []
+    fx_rates = _fx(conn, t, d, params, eod, prov, excluded, settle, swap_rows)
     datasets = [
         quotes,
         quotes_intraday,
         _curve_sets(conn, t, d, prov, eod_cutoff=params.curve_eod_cutoff if eod else None),
         _zcyc(conn, t, d, eod, prov),
-        _fixings(conn, t, d, lookback, params.fx_forward_days, prov, excluded),
-        _fx(conn, t, d, params, eod, prov, excluded),
+        _fixings(conn, t, d, lookback, params.fx_forward_days, prov, excluded, static.cut.known_at),
+        fx_rates,
         _cross(conn, t, d, params.ecb_lookback_days, prov),
         _meetings(conn, t, prov),
+        _fx_swaps(swap_rows, d, eod, settle, prov, excluded),
+        _futures_eod(conn, t, d, eod, prov),
+        _futures_intraday(conn, t, d, eod, prov),
+        _cpi(conn, t, d, params.cpi_from, prov),
     ]
     for ds in datasets:
         ds.stale_reasons.extend((extra_stale or {}).get(ds.name, ()))

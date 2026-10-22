@@ -39,6 +39,7 @@ from mdhub.sources import (
     fred,
     nyfed,
     rosstat,
+    snb,
     us_treasury,
 )
 from mdhub.sources.observations import Observation
@@ -133,6 +134,11 @@ def _nyfed(rate: str) -> Callable[[HttpClient, date], tuple[httpx.Response, str]
         return r, f"{len(rows)} rows, latest {last.day} {last.index_code} = {last.value}"
 
     return run
+
+
+def _snb_saron(http: HttpClient, today: date) -> tuple[httpx.Response, str]:
+    r = snb.fetch(http, today - timedelta(days=LOOKBACK_DAYS), today)
+    return r, _latest(snb.parse_csv(r.content), " %")
 
 
 def _eurofxref(http: HttpClient, _today: date) -> tuple[httpx.Response, str]:
@@ -244,6 +250,7 @@ CHECKS: Final = (
     Check("nyfed", "sofr", "primary", _nyfed("sofr")),
     Check("nyfed", "sofr_averages", "primary", _nyfed("sofrai")),
     Check("fred", "sofr", "fallback 1", _fred((fred.SOFR_SERIES, *fred.SOFR_AVERAGES))),
+    Check("snb", "saron", "primary", _snb_saron),
     Check("ecb", "ecb_fx", "primary", _eurofxref),
     Check("ecb_data_portal", "ecb_fx", "fallback 1", _ecb_exr),
     Check("cbr", "fx_cross_cbr_cross", "input", _cbr_daily),

@@ -66,6 +66,7 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
 | DBnomics `api.db.nomics.world` (`dbnomics`) | — | €STR mirror `ECB/EST/B.EU000A2X2A25.WT` (fallback 2; may lag). Not verified live | daily |
 | FRED `fred.stlouisfed.org/graph/fredgraph.csv` (`fred`, no key; the JSON API needs one) | — | €STR (fallback 3), SOFR + averages/index (fallback 1), H.10 noon buying rates `DEX*` (cross kind `fred_h10`). Not verified live | daily; H.10 weekly |
 | NY Fed Markets API `markets.newyorkfed.org` (`nyfed`) | — | SOFR (+ percentiles, volume), SOFR 30/90/180-day averages and index (administrator, primary) | D at ~08:00 New York on D+1 |
+| SNB data portal `data.snb.ch` (`snb`) | — | SARON (cube `snbgwdzid`; SIX administers and fixes it at the Zurich close, the SNB republishes; one source; not reachable from the development environment, check with `probe-sources`) | D in the evening of D |
 | U.S. Treasury `home.treasury.gov` (`us_treasury`) | — | daily par yield curve XML (proxy curve `usd_ust_par`, **not OIS**) | ~15:30 New York, posted in the evening |
 | CBR `/hd_base/infl/` (`cbr`) | — | official CPI y/y (`Инфляция, % г/г`, Rosstat figure) from 2013-09 → `CPI_RU_YOY` | monthly, after the Rosstat release |
 | Cbonds JSON API | `CBONDS_LOGIN/PASSWORD` | static enrichment (day count, floater conventions, ratings, offers). **Currently HTTP 401** (likely IP allow-list) → optional, auto-disabled on 401 | — |
@@ -136,7 +137,7 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
 - `md.futures_intraday(ts, secid, source, source_variant, bid, offer, last, open_position, latency, capture_id)` PK (secid, source, source_variant, ts) — row history on. Dated with FORTS trading days: the Monday 08:50 poll that still shows the Sunday session's last trade dates it Sunday, not Friday.
 - `md.algopack_fo_tradestats` PK (secid, interval_ts) and `md.algopack_futoi` PK (ticker, interval_ts, clgroup) — AlgoPack 5-minute bars of FX futures (`*_rub_per_unit` normalized prices). **Rolling window, no history beyond it**: only `trade_date` within the last `MDHUB_ALGOPACK_RETENTION_DAYS` (90) calendar days is kept (§6 `maintenance`); row history stays on for revisions inside the window. `md.algopack_fo_obstats` (order-book stats) was dropped in 0423 (owner decision, AlgoPack scope option b; it was ~2 GB of the seed).
 - `md.index_eod(trade_date, secid, board, open, high, low, close, value, volume, duration_days, yield_pct, basis ∈ {history, marketdata}, source_ts, capture_id)` PK (trade_date, secid) (RUSFAR family, RGBI, RUCBI, MOEXREPO…); `basis = marketdata` is a same-day value later replaced by history.
-- `md.fixing(index_code, fixing_date, source, value, unit ∈ {pct, index}, effective_date, published_on, published_at, details jsonb, capture_id)` PK (index_code, fixing_date, source) — KEY_RATE (by effective date), RUONIA (+ details: volume, deals, percentiles), RUONIA_INDEX, TERM_RUONIA_1M/3M/6M, CBR_DEPOSIT_STANDING / CBR_LENDING_STANDING (lending: column 7 "Основной механизм" from 2023-10-16, column 9 before — one column per date, never spliced), CBR_REFINANCING_RATE (one row per calendar day 1992-01-01..2015-12-31, `details` = period and normative act; from 2016 the refinancing rate **is** KEY_RATE — Указание 3894-У — and is not duplicated), CPI_RU_MOM (source `rosstat`, `unit = index`: CPI of the month to the previous month in %, `fixing_date` = first day of the month, `details.period`, `published_on` = Rosstat release date of the newest month only — older months have none; chain the months for any period — OFZ-IN face indexation, CPI-linked coupons), CPI_RU_YOY (source `cbr`, `unit = pct`: official CPI y/y − 100 as CBR republishes it, from 2013-09; cross-checked against the Rosstat m/m chain), ESTR (WEB-16; source = the host that served: `ecb_data_portal`, `bundesbank`, `dbnomics` or `fred`; % p.a. by TARGET day), SOFR / SOFR30DAVG / SOFR90DAVG / SOFR180DAVG (% p.a.) / SOFRINDEX (`unit = index`) (source `nyfed` or `fred`), legacy RUSFAR/other sources…
+- `md.fixing(index_code, fixing_date, source, value, unit ∈ {pct, index}, effective_date, published_on, published_at, details jsonb, capture_id)` PK (index_code, fixing_date, source) — KEY_RATE (by effective date), RUONIA (+ details: volume, deals, percentiles), RUONIA_INDEX, TERM_RUONIA_1M/3M/6M, CBR_DEPOSIT_STANDING / CBR_LENDING_STANDING (lending: column 7 "Основной механизм" from 2023-10-16, column 9 before — one column per date, never spliced), CBR_REFINANCING_RATE (one row per calendar day 1992-01-01..2015-12-31, `details` = period and normative act; from 2016 the refinancing rate **is** KEY_RATE — Указание 3894-У — and is not duplicated), CPI_RU_MOM (source `rosstat`, `unit = index`: CPI of the month to the previous month in %, `fixing_date` = first day of the month, `details.period`, `published_on` = Rosstat release date of the newest month only — older months have none; chain the months for any period — OFZ-IN face indexation, CPI-linked coupons), CPI_RU_YOY (source `cbr`, `unit = pct`: official CPI y/y − 100 as CBR republishes it, from 2013-09; cross-checked against the Rosstat m/m chain), ESTR (WEB-16; source = the host that served: `ecb_data_portal`, `bundesbank`, `dbnomics` or `fred`; % p.a. by TARGET day), SOFR / SOFR30DAVG / SOFR90DAVG / SOFR180DAVG (% p.a.) / SOFRINDEX (`unit = index`) (source `nyfed` or `fred`), SARON (contract 1.5 package P6; source `snb`, % p.a. by Zurich business day), legacy RUSFAR/other sources…
 - `md.fx_fixing(fixing_date, secid, rate, rate_pct)` PK (fixing_date, secid) — MOEX currency-market fixings: USDFIXME (2013-03 → 2024-06-11), EURFIXME, CNYFIXME (→ 2025-04), EURUSDFIXME, USDCNYFIXME, HKDFIXME, TRYFIXME, SRATE_* (USD term rates to 2024; SRATE_CNY_ON current). The fixing list (`?date=`) is read at both ends of a range and every 28 days between, so fixings discontinued inside a backfill range are found.
 - `md.fx_official(effective_date, ccy, nominal, value, rate_per_unit, set_date, source='cbr', capture_id)` PK (effective_date, ccy)
 - `md.fx_indicative(trade_date, clearing ∈ {tc, mc}, ccy_pair, rate, source='moex', capture_id)` — MOEX indicative 14:00/19:00 (FX mark candidate).
@@ -216,6 +217,7 @@ Migration ownership (to avoid conflicts): `0001-0099` core/ops; `0100-0199` ref 
 | `cbr_inflation` | 10:15, 19:45 (all days) | CBR `/hd_base/infl/` | `CPI_RU_YOY`; chain cross-check with `CPI_RU_MOM` (±0.05 pp → warning, `partial`); dataset `cbr_cpi_yoy` monthly from 2013-09 |
 | `estr_fixing` | 10:20, 13:20 (all days) | ECB Data Portal → Bundesbank → DBnomics → FRED (`mdhub.loaders._fallback`) | last 10 days (empty series: from 2019-10-01); first answering source wins, stored under its own `source`; every attempt in the result (`tried`); `MDHUB_SKIP_SOURCES` drops sources; dataset `estr` (TARGET, any source) |
 | `sofr_fixing` | 16:30, 22:30 (all days) | NY Fed → FRED | SOFR + averages + index; datasets `sofr` (Mon–Fri; U.S. holidays → `unfillable`), `sofr_averages` |
+| `saron_fixing` | 19:20, 09:20 (all days) | SNB | SARON; dataset `saron` (Zurich business days; holidays → `unfillable`) |
 | `fx_cross` | 09:15, 18:45, 19:20 (all days) | stored CBR / MOEX rows; FRED H.10 | `md.fx_cross`; a FRED failure is logged, derived kinds stored anyway |
 | `proxy_curves` | 07:40, 23:40 (all days) | US Treasury; ECB Data Portal → Bundesbank | `md.curve_snapshot` datasets `usd_ust_par`, `eur_aaa_par` (fallback `eur_bund_par`): one snapshot per curve date, `fetched_at` 23:59:59 MSK of that date (synthetic: EOD cuts only), `meta.proxy`; revisions in place with row history |
 | `rosstat_cpi` | 10:05, 19:35 (all days) | Rosstat price page → newest `ipc_mes_MM-YYYY.xlsx` | identical workbook skipped (SHA-256); Dec/Dec chain cross-check per complete year (fail closed); dataset `rosstat_cpi` monthly, lag 50 days |
@@ -430,13 +432,20 @@ The hub's dispatch layer (system ADR-002, doc 02 §3/§6; milestone M1). The des
 only immutable snapshots; the TDM CSV export stays until it does.
 
 **Contract.** JSON Schema and golden fixtures in `schemas/market_snapshot/v1/` (see its
-README; `schema_version` `market_snapshot/1.3` since WEB-16: cross-rate kinds `cbr_cross`,
+README; `schema_version` `market_snapshot/1.5` since package P6 (TDM brief H10-H13): FX value
+dates (`fx_rates.settle_date`, `settlement_calendars`; `md.fx_settle_date` from the selt / CETS
+listings), MOEX FX swaps (`fx_swaps`), FORTS futures (`futures_prices`,
+`futures_prices_intraday`), monthly CPI history (`cpi`), `ruonia_unpublished_days`, the
+settlement calendars `CN_INTERBANK` / `US_FED` / `CH_ZURICH`; 1.4 (static part) since the KBD
+floater terms: `floater_formulas` of `benchmark = ZCYC` with tenor, fixing rule, rounding,
+margin schedule and the hub's reproduction; 1.3 since WEB-16: cross-rate kinds `cbr_cross`,
 `moex_indicative_cross`, `moex_cets`, `fred_h10` with `source` / `labels`, and the static part since
 WEB-18: agency ratings with issuer scope and `grade`, replacement bonds, `issue_size_moex`, document
 evidence of curated terms; 1.2 since WEB-15: linker
 / WAP analytics in `source_analytics`, `Fixing.hub_ingested_at`, explicit RUSFAR units): envelope/manifest, static objects (Instrument, CouponPeriod, Redemption, Offer,
 FloaterFormula, Issuer, Calendar, IdMap) and market objects (BondQuote EOD/intraday,
-CurveQuoteSet, ZcycParams, Fixing, FxRate, CrossRate, CbrMeeting). Decimals are strings with
+CurveQuoteSet, ZcycParams, Fixing, FxRate, CrossRate, CbrMeeting; 1.5 FxSwap, FuturesPrice,
+FuturesPriceIntraday). Decimals are strings with
 the stored digits, units in field names, instants UTC. The wheel carries the schemas as
 `mdhub/schemas`; every bundle is validated before it is stored (fail closed).
 
@@ -479,10 +488,13 @@ cut's) or publishes it (`cut_type = change`). The market snapshot names it in
 EOD cuts: bond EOD + yields of D, curve sets fetched on D (latest per source/dataset, labels
 `mid_only`, `source_clock_not_on_business_date`), the EOD ZCYC publication, fixings of
 [D-400, D+7] (RUSFAR family from `md.index_eod`), CBR official FX in force on [D, D+7], MOEX FX
-EOD (RUB outrights; swaps, non-RUB pairs, metals excluded with reasons), indicative 14:00/19:00,
-ECB of [D-7, D] plus the `md.fx_cross` kinds of [D-7, D] (1.3), CBR meetings. Proxy curve sets
+EOD (RUB outrights with their value date; non-RUB pairs, metals excluded with reasons; 1.5: RUB
+swaps in `fx_swaps`, before excluded), indicative 14:00/19:00, ECB of [D-7, D] plus the
+`md.fx_cross` kinds of [D-7, D] (1.3), CBR meetings, FORTS futures EOD of D with contract static
+(1.5), CPI months from `cpi_from` (1.5). Proxy curve sets
 (`meta.proxy`) carry the label `proxy_<proxy>`; €STR / SOFR / `CPI_RU_YOY` are ordinary fixings. Intraday cuts: latest intraday bond quotes of D, curves, latest
-ZCYC, fixings of [D-200, D+7] (floater coupon-period history, TDM HR3; was D-7), FX. Coverage (expected/missing curve series, `required_without_any_source` for
+ZCYC, fixings of [D-200, D+7] (floater coupon-period history, TDM HR3; was D-7), FX, the latest
+FX futures quotes of D (1.5), CPI. Coverage (expected/missing curve series, `required_without_any_source` for
 `ruonia_ois`/`key_rate_swap` — stale when a cut has neither source —, latest
 fixing dates, universe without quote) and stale reasons are per dataset in the manifest; no
 forward fill.

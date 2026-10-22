@@ -288,7 +288,7 @@ def test_no_rebuild_without_changes_or_when_disabled(
     assert queue_snapshot_corrections(db, settings, spec, DAY, DAY, unchanged_run) == []
     off = settings.model_copy(update={"snapshot_autocorrect": False})
     assert queue_snapshot_corrections(db, off, spec, DAY, DAY, changed_run) == []
-    other = DatasetSpec(**{**spec.__dict__, "backfill_job": "futures_eod"})
+    other = DatasetSpec(**{**spec.__dict__, "backfill_job": "algopack_fx_futures"})
     assert queue_snapshot_corrections(db, settings, other, DAY, DAY, changed_run) == []
     # no eod_final in the range
     assert (

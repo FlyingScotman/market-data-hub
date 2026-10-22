@@ -38,6 +38,7 @@ from mdhub.sources import (
     fred,
     nyfed,
     rosstat,
+    snb,
     us_treasury,
 )
 
@@ -62,6 +63,7 @@ NYFED_SOFR = _b("nyfed_sofr_2026-09-28_2026-10-20.json")
 NYFED_SOFRAI = _b("nyfed_sofrai_2026-09-28_2026-10-20.json")
 NYFED_FIRST = _b("nyfed_sofr_2018-04_first.json")
 UST = _b("ust_par_202610.xml")
+SNB_SARON = _b("snb_saron_synthetic.csv")  # synthetic values in the documented layout
 CBR_INFL = (FIX / "official" / "cbr_infl_2024-01_2026-09.html").read_text("utf-8")
 WORKBOOK = (FIX / "rosstat" / "ipc_mes_09-2026.xlsx").read_bytes()
 PRICE_PAGE = (FIX / "rosstat" / "price_page_excerpt.html").read_text("utf-8")
@@ -675,3 +677,55 @@ def test_rosstat_published_on_and_cbr_yoy(
     infl.respond(200, text=CBR_INFL.replace("<td>6,35</td>", "<td>7,35</td>", 1))
     off = _run("cbr_inflation", {"date_from": "2026-01-01"}, settings, db)
     assert off.status == "partial" and off.result["chain_mismatches"][0].startswith("2026-09")
+
+
+# ---------------------------------------------------------------------- SARON (1.5, P6)
+
+
+def test_snb_saron_csv_and_drift() -> None:
+    obs = snb.parse_csv(SNB_SARON)
+    assert [(o.day.isoformat(), str(o.value)) for o in obs][:2] == [
+        ("2026-10-12", "-0.05"),
+        ("2026-10-13", "-0.04"),
+    ]
+    assert date(2026, 10, 16) not in {o.day for o in obs}  # empty Value = no fixing
+    assert len(obs) == 6 and {o.series for o in obs} == {"SARON"}
+    other = SNB_SARON.replace(b'"SARON"', b'"LZ"')
+    with pytest.raises(FormatDriftError, match="not in the answer"):
+        snb.parse_csv(other)
+    with pytest.raises(FormatDriftError, match="cube"):
+        snb.parse_csv(SNB_SARON.replace(b"snbgwdzid", b"zirepo"))
+    with pytest.raises(FormatDriftError, match="header"):
+        snb.parse_csv(SNB_SARON.replace(b'"Value"', b'"Wert"'))
+    with pytest.raises(FormatDriftError, match="out of range"):
+        snb.parse_csv(SNB_SARON.replace(b'"-0.05"', b'"-50"', 1))  # basis points, not %
+    assert snb.parse_csv(b'"CubeId";"snbgwdzid"\r\n\r\n"Date";"D0";"Value"\r\n') == []
+
+
+def test_saron_fixing_job(
+    web: respx.MockRouter,
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    today_is: Callable[[date], None],
+) -> None:
+    today_is(date(2026, 10, 21))
+    route = web.route(host="data.snb.ch").respond(200, content=SNB_SARON)
+    out = _run("saron_fixing", {"date_from": "2026-10-12", "date_to": "2026-10-20"}, settings, db)
+    assert out.status == "succeeded" and out.result["source"] == "snb"
+    params = route.calls.last.request.url.params
+    assert (params["fromDate"], params["toDate"], params["dimSel"]) == (
+        "2026-10-12",
+        "2026-10-20",
+        "D0(SARON)",
+    )
+    rows = _fixings(conn, "SARON")
+    assert len(rows) == 6 and {(r["source"], r["unit"]) for r in rows} == {("snb", "pct")}
+    assert rows[0]["value"] == Decimal("-0.05")
+    assert rows[0]["details"] == {"series": "snbgwdzid/SARON", "administrator": "six"}
+    # a Zurich business day without a value (past the grace period) is source-confirmed no data
+    assert out.result["no_data"] == ["saron:2026-10-16"]
+    caps = conn.execute(
+        "SELECT source, endpoint FROM ops.raw_capture WHERE run_id = %s", (out.run_id,)
+    ).fetchall()
+    assert [(c["source"], c["endpoint"]) for c in caps] == [("snb", "snbgwdzid_saron")]

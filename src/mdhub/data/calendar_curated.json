@@ -1,8 +1,8 @@
 {
   "format": 1,
-  "version": "2026-10-21.2",
+  "version": "2026-10-22.1",
   "known_at": "2026-10-21T00:00:00+03:00",
-  "description": "Curated business-day calendars for days not yet observed. Per year: weekdays that are NOT business days (non_working) and weekend days that ARE business days (working_weekends); every other day follows Monday-Friday. MOEX calendars: past days are superseded by observed trading (ref.calendar_day source observed_*), current-year days by the MOEX ISS calendar (source moex_iss_calendar). RU_PRODUCTION is the official production calendar (Labour Code art. 112 + Government transfer decrees) for every listed year, past days included; RUONIA fixings only cross-check it.",
+  "description": "Curated business-day calendars for days not yet observed. Per year: weekdays that are NOT business days (non_working) and weekend days that ARE business days (working_weekends); every other day follows Monday-Friday. MOEX calendars: past days are superseded by observed trading (ref.calendar_day source observed_*), current-year days by the MOEX ISS calendar (source moex_iss_calendar). RU_PRODUCTION is the official production calendar (Labour Code art. 112 + Government transfer decrees) for every listed year, past days included; RUONIA fixings only cross-check it. CN_INTERBANK (China interbank market, CNY settlement) is the State Council holiday notice of each year with its adjusted working weekends, for the decreed years only (no rule: the lunar holidays and the transfers are decreed yearly).",
   "calendars": {
     "RU_PRODUCTION": [
       {
@@ -422,6 +422,36 @@
         "reference": "Provisional: rule inferred from MOEX practice 2023-2027 (closed on weekday official holidays Jan 1, 2, 7, Feb 23, Mar 8, May 1, May 9, Jun 12, Nov 4 and on Dec 31; open on transferred non-working days); working Saturdays follow the Government decree, not known yet",
         "non_working": ["2037-01-01", "2037-01-02", "2037-01-07", "2037-02-23", "2037-05-01", "2037-06-12", "2037-11-04", "2037-12-31"],
         "working_weekends": []
+      }
+    ],
+    "CN_INTERBANK": [
+      {
+        "year": 2024,
+        "source": "curated",
+        "reference": "State Council General Office notice on the 2024 holiday arrangements (国务院办公厅关于2024年部分节假日安排的通知, October 2023): New Year Jan 1; Spring Festival Feb 10-17 (work Feb 4, Feb 18); Qingming Apr 4-6 (work Apr 7); Labour Day May 1-5 (work Apr 28, May 11); Dragon Boat Jun 10; Mid-Autumn Sep 15-17 (work Sep 14); National Day Oct 1-7 (work Sep 29, Oct 12)",
+        "non_working": ["2024-01-01", "2024-02-12", "2024-02-13", "2024-02-14", "2024-02-15", "2024-02-16", "2024-04-04",
+                        "2024-04-05", "2024-05-01", "2024-05-02", "2024-05-03", "2024-06-10", "2024-09-16", "2024-09-17",
+                        "2024-10-01", "2024-10-02", "2024-10-03", "2024-10-04", "2024-10-07"],
+        "working_weekends": ["2024-02-04", "2024-02-18", "2024-04-07", "2024-04-28", "2024-05-11", "2024-09-14", "2024-09-29",
+                             "2024-10-12"]
+      },
+      {
+        "year": 2025,
+        "source": "curated",
+        "reference": "State Council General Office notice on the 2025 holiday arrangements (国务院办公厅关于2025年部分节假日安排的通知, November 2024, after the amended holiday regulation): New Year Jan 1; Spring Festival Jan 28-Feb 4 (work Jan 26, Feb 8); Qingming Apr 4-6; Labour Day May 1-5 (work Apr 27); Dragon Boat May 31-Jun 2; National Day and Mid-Autumn Oct 1-8 (work Sep 28, Oct 11)",
+        "non_working": ["2025-01-01", "2025-01-28", "2025-01-29", "2025-01-30", "2025-01-31", "2025-02-03", "2025-02-04",
+                        "2025-04-04", "2025-05-01", "2025-05-02", "2025-05-05", "2025-06-02", "2025-10-01", "2025-10-02",
+                        "2025-10-03", "2025-10-06", "2025-10-07", "2025-10-08"],
+        "working_weekends": ["2025-01-26", "2025-02-08", "2025-04-27", "2025-09-28", "2025-10-11"]
+      },
+      {
+        "year": 2026,
+        "source": "curated",
+        "reference": "State Council General Office notice on the 2026 holiday arrangements (国务院办公厅关于2026年部分节假日安排的通知, November 2025): New Year Jan 1-3 (work Jan 4); Spring Festival Feb 15-23 (work Feb 14, Feb 28); Qingming Apr 4-6; Labour Day May 1-5 (work May 9); Dragon Boat Jun 19-21; Mid-Autumn Sep 25-27; National Day Oct 1-7 (work Sep 20, Oct 10). Cross-check: MOEX CETS CNY/RUB TOD did not trade on the weekday holidays Jun 19, Sep 25, Oct 1-7 (TOD settlement needs a CNY business day)",
+        "non_working": ["2026-01-01", "2026-01-02", "2026-02-16", "2026-02-17", "2026-02-18", "2026-02-19", "2026-02-20",
+                        "2026-02-23", "2026-04-06", "2026-05-01", "2026-05-04", "2026-05-05", "2026-06-19", "2026-09-25",
+                        "2026-10-01", "2026-10-02", "2026-10-05", "2026-10-06", "2026-10-07"],
+        "working_weekends": ["2026-01-04", "2026-02-14", "2026-02-28", "2026-05-09", "2026-09-20", "2026-10-10"]
       }
     ]
   }

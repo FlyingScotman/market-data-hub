@@ -117,6 +117,7 @@ KNOWN_JOBS: Final = (
     "cbr_inflation",
     "estr_fixing",
     "sofr_fixing",
+    "saron_fixing",
     "fx_cross",
     "proxy_curves",
     "swaps_ratescalcs",
@@ -368,6 +369,10 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
     "sofr_fixing": (
         _r("30 16 * * *", days="all", note="NY Fed publishes D at ~08:00 New York on D+1"),
         _r("30 22 * * *", days="all", note="after revisions (by 14:30 New York)"),
+    ),
+    "saron_fixing": (
+        _r("20 19 * * *", days="all", note="SIX fixes SARON at ~18:00 Zurich (~19:00 MSK)"),
+        _r("20 9 * * *", days="all", note="next morning: late publication"),
     ),
     "fx_cross": (
         _r("15 9 * * *", days="all", note="after cbr_daily 09:00"),

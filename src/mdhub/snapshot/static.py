@@ -38,6 +38,7 @@ from typing import Any, Final, LiteralString
 
 from psycopg import sql
 
+from mdhub.core.bizday import CALENDARS
 from mdhub.db.pool import DictConnection
 from mdhub.snapshot.build import Build, Cut, Dataset, Excluded, Provenance, sorted_labels
 from mdhub.snapshot.canonical import canonical_bytes, sha256_hex, utc_str
@@ -886,10 +887,7 @@ def build_static(
     ]
     prov.add_rows("id_map", bonds)
 
-    missing_cals = sorted(
-        {"MOEX_STOCK", "MOEX_FX", "MOEX_FORTS", "RU_PRODUCTION", "TARGET"}
-        - {c["calendar"] for c in calendars}
-    )
+    missing_cals = sorted(set(CALENDARS) - {c["calendar"] for c in calendars})
     datasets = [
         Dataset(
             "instruments",

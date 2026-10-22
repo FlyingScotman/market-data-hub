@@ -264,6 +264,7 @@ def default_rate_limits(settings: Settings) -> dict[str, float]:
         "api.db.nomics.world": 1.0,
         "fred.stlouisfed.org": 1.0,
         "markets.newyorkfed.org": 2.0,
+        "data.snb.ch": 1.0,
         "home.treasury.gov": 1.0,
     }
 

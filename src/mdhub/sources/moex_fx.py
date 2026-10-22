@@ -78,6 +78,7 @@ __all__ = [
     "parse_fx_history",
     "parse_fx_instruments",
     "parse_fx_marketdata",
+    "parse_fx_settle_dates",
     "parse_indicative",
     "parse_security_description",
     "previous_session_day",
@@ -85,7 +86,9 @@ __all__ = [
     "snapshot_ts",
 ]
 
-PARSER_VERSION: Final = "moex_fx/1"
+PARSER_VERSION: Final = "moex_fx/2"
+"""2 (contract 1.5, H2): listings also yield the session's SETTLEDATE per instrument
+(:func:`parse_fx_settle_dates`)."""
 
 SELT_SECURITIES: Final = "/engines/currency/markets/selt/securities.json"
 CETS_SECURITIES: Final = "/engines/currency/markets/selt/boards/CETS/securities.json"
@@ -259,6 +262,39 @@ def parse_fx_instruments(payload: Mapping[str, Any]) -> list[dict[str, Any]]:
             }
         )
     return out
+
+
+def parse_fx_settle_dates(payload: Mapping[str, Any]) -> tuple[date | None, list[dict[str, Any]]]:
+    """``(session date, md.fx_settle_date rows)`` of a selt / CETS ``securities`` listing.
+
+    The session is ``dataversion.trade_date`` (``iss.only`` must include ``dataversion``); a
+    listing without it gives ``(None, [])``: SETTLEDATE is the value date of the *current*
+    session and is never dated by a guess. A SETTLEDATE before the session date contradicts the
+    listing (an instrument cannot settle before it trades) and raises.
+    """
+    dv = parse_block(payload, "dataversion", optional=True)
+    session = to_date(dv[0].get("trade_date"), field="trade_date") if dv else None
+    if session is None:
+        return None, []
+    out: list[dict[str, Any]] = []
+    for r in parse_block(payload, "securities", required=("SECID", "BOARDID", "SETTLEDATE")):
+        settle = to_date(r["SETTLEDATE"], field="SETTLEDATE")
+        if settle is None:
+            continue
+        if settle < session:
+            raise IssFormatError(
+                f"selt listing of session {session}: {r['SECID']}/{r['BOARDID']} SETTLEDATE "
+                f"{settle} before the session"
+            )
+        out.append(
+            {
+                "trade_date": session,
+                "secid": str(_req(r, "SECID")),
+                "board": str(_req(r, "BOARDID")),
+                "settle_date": settle,
+            }
+        )
+    return session, out
 
 
 _FX_MD_REQUIRED: Final = (

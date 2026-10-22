@@ -27,6 +27,7 @@ from mdhub.db.pool import Database
 from mdhub.jobs import run_job
 from mdhub.loaders import bond_terms, zcyc_floater_fit
 from mdhub.snapshot.runner import publish_static_snapshot
+from mdhub.snapshot.schema import SCHEMA_VERSION
 from mdhub.sources.moex_market import kbd_yield_pct
 from mdhub.verify.render import render_markdown
 from mdhub.verify.static import run_verification
@@ -328,8 +329,9 @@ def test_static_snapshot_1_4_fields(conn: Conn, settings: Settings, db: Database
         cut_ts=datetime(2026, 10, 15, 7, 45, tzinfo=MSK).astimezone(UTC),
         known_at=utc_now(),
     )
-    doc = _bundle(conn, out.id)  # validated against the 1.4 schema when published
-    assert doc["schema_version"] == "market_snapshot/1.4"
+    doc = _bundle(conn, out.id)  # validated against the current schema when published
+    assert doc["schema_version"] == SCHEMA_VERSION
+    assert int(SCHEMA_VERSION.rsplit(".", 1)[1]) >= 4  # the 1.4 KBD floater terms in later minors
     f = {r["secid"]: r for r in doc["data"]["floater_formulas"]}
     k = f[SECID]
     assert (k["benchmark_tenor_years"], k["fixing_offset"], k["fixing_basis"]) == (

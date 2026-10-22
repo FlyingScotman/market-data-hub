@@ -15,6 +15,22 @@ bonds and the business date 2026-10-15, stored as ``tests/fixtures/snapshot/sour
   hub database fed by public MOEX ISS on 2026-10-20 (``issuers_static``, ``bonds_static``);
   their version times are set to the seed's latest version time, so ``known_at`` is unchanged.
 
+* 2026-10-22 (contract 1.5, package P6; the version times of these rows are the seed's latest
+  version time, so ``known_at`` is unchanged): calendars ``CN_INTERBANK`` (the curated 2026
+  State Council year), ``US_FED`` and ``CH_ZURICH`` (rule rows) for the calendar window;
+  ``md.futures_eod`` / ``ref.futures_contract`` of 2026-10-15 for the five contracts of the
+  hub's recorded ISS fixtures ``tests/fixtures/moex_fx/forts_history_p*.json`` and
+  ``rfud_securities.json`` (parsed and normalized by the loader's functions); ``CPI_RU_MOM``
+  2015-01..2026-09 from the recorded Rosstat workbook
+  ``tests/fixtures/rosstat/ipc_mes_09-2026.xlsx`` (``published_on`` only on the newest month, as
+  the loader sets it) and ``CPI_RU_YOY`` 2024-01..2026-09 from the recorded CBR page
+  ``tests/fixtures/official/cbr_infl_2024-01_2026-09.html``;
+  ``md.fx_settle_date`` of 2026-10-15 for the CNY/RUB CETS instruments only - **constructed**,
+  not observed (the seed predates the SETTLEDATE history): TOD 2026-10-15, TOM 2026-10-16, SPT
+  2026-10-19 by the MOEX settlement codes on the joint Russian and Chinese business days (the
+  core library checks the same rule against the CETS listing of 2026-10-16); every other FX
+  row shows the ``*_not_observed`` labels.
+
 * rebuild the golden bundles (pytest provides the throw-away PostgreSQL)::
 
     MDHUB_REGEN_GOLDEN=1 uv run pytest tests/test_snapshot_golden.py
@@ -87,7 +103,13 @@ _TABLES: Final[list[tuple[str, str, str]]] = [
         "snapshot_id, position, tenor",
     ),
     ("md.zcyc_snapshot", "trade_date = %(day)s", "trade_time"),
-    ("md.fixing", "fixing_date BETWEEN %(lo)s AND %(hi)s", "index_code, source, fixing_date"),
+    (
+        "md.fixing",
+        "fixing_date BETWEEN %(lo)s AND %(hi)s "
+        "OR (index_code IN ('CPI_RU_MOM', 'CPI_RU_YOY') AND fixing_date BETWEEN %(cpi_lo)s "
+        "AND %(day)s)",
+        "index_code, source, fixing_date",
+    ),
     (
         "md.index_eod",
         "trade_date BETWEEN %(lo)s AND %(day)s AND secid LIKE 'RUSFAR%%'",
@@ -100,7 +122,14 @@ _TABLES: Final[list[tuple[str, str, str]]] = [
         "(secid, board) IN (SELECT secid, board FROM md.fx_eod WHERE trade_date = %(day)s)",
         "secid, board",
     ),
+    ("md.fx_settle_date", "trade_date = %(day)s", "secid, board"),
     ("md.fx_indicative", "trade_date = %(day)s", "clearing, ccy_pair"),
+    ("md.futures_eod", "trade_date = %(day)s", "secid"),
+    (
+        "ref.futures_contract",
+        "secid IN (SELECT secid FROM md.futures_eod WHERE trade_date = %(day)s)",
+        "secid",
+    ),
     ("md.ecb_fx", "rate_date BETWEEN %(fx_lo)s AND %(day)s", "rate_date, ccy"),
 ]
 
@@ -115,6 +144,7 @@ def _params() -> dict[str, Any]:
         "hi": DAY + timedelta(days=7),
         "fx_lo": DAY - timedelta(days=7),
         "hi_fx": DAY + timedelta(days=7),
+        "cpi_lo": date(2015, 1, 1),
         "cal_lo": date(2026, 1, 1),
         "cal_hi": date(2027, 12, 31),
     }

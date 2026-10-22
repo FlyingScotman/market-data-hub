@@ -87,7 +87,7 @@ def test_market_snapshot_1_3(conn: Conn, db: Database) -> None:
     )
     doc = _bundle(conn, out.market.id)
     validate_bundle(doc)
-    assert doc["schema_version"] == SCHEMA_VERSION
+    assert doc["schema_version"] == SCHEMA_VERSION  # 1.3 data (SOFR, ESTR...) in later minors
     assert int(SCHEMA_VERSION.rsplit(".", 1)[1]) >= 3  # the 1.3 rules hold in later minors
     data = doc["data"]
     fix = {(f["index_code"], f["source"]): f for f in data["fixings"]}
@@ -190,6 +190,7 @@ def _mock_all(router: respx.MockRouter) -> None:
         return_value=ok("nyfed_sofrai_2026-09-28_2026-10-20.json", "application/json")
     )
     router.route(host="www.ecb.europa.eu").mock(side_effect=httpx.ConnectError("geo-blocked"))
+    router.route(host="data.snb.ch").mock(return_value=ok("snb_saron_synthetic.csv", "text/csv"))
     official = Path(__file__).parent / "fixtures" / "official"
     router.get("https://www.cbr.ru/scripts/XML_daily.asp").respond(
         200, content=(official / "cbr_xml_daily_20261016.xml").read_bytes()
@@ -235,6 +236,7 @@ def test_probe_sources_reports_every_source() -> None:
     assert "released 2026-10-09" in by[("rosstat", "rosstat_cpi")].result
     assert by[("cbr", "cbr_cpi_yoy")].result == "latest 2026-09 y/y = 6.35 %"
     assert not by[("ecb", "ecb_fx")].ok and by[("ecb_data_portal", "ecb_fx")].ok
+    assert by[("snb", "saron")].ok and by[("snb", "saron")].result.endswith("= -0.05 %")
 
 
 def test_probe_sources_cli(monkeypatch: pytest.MonkeyPatch) -> None:

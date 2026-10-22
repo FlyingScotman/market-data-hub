@@ -91,7 +91,10 @@
         "MOEX_FX",
         "MOEX_FORTS",
         "RU_PRODUCTION",
-        "TARGET"
+        "TARGET",
+        "CN_INTERBANK",
+        "US_FED",
+        "CH_ZURICH"
       ]
     },
     "key_value": {
