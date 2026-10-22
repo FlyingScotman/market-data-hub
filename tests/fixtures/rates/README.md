@@ -30,6 +30,14 @@ live formats on the server with `mdhub probe-sources` before relying on these fa
 | `fred_estr_2026-09-28_2026-10-20.csv` | `fred.stlouisfed.org/graph/fredgraph.csv?id=ECBESTRVOLWGTTRMDMNRT&cosd=...&coed=...` |
 | `fred_sofr_2026-09-28_2026-10-20.csv` | `...?id=SOFR,SOFR30DAYAVG,SOFR90DAYAVG,SOFR180DAYAVG,SOFRINDEX&...` |
 
+`fred_h10_outside_range_synthetic.csv` is a **synthetic regression fixture**, not a recorded
+response or historical market values. It reproduces the oversized-response behavior confirmed
+in issue #23: a bounded H.10 request returned observations dating back to 1971. It includes
+dates before, on both bounds of, within, and after the requested 2026-10-16..2026-10-21 interval,
+with both empty and `.` missing values. The loader must keep the full raw response while
+writing only eligible observations. Tests for the other FRED callers use the existing ESTR
+and SOFR CSVs with a narrower requested interval to exercise the same provider behavior.
+
 CBR inflation (`../official/cbr_infl_2024-01_2026-09.html`, recorded:
 `www.cbr.ru/hd_base/infl/?UniDbQuery.Posted=True&UniDbQuery.From=01.01.2024&UniDbQuery.To=30.09.2026`)
 and the Rosstat price page excerpt (`../rosstat/price_page_excerpt.html`, three document items of
