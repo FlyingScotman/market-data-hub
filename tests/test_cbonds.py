@@ -29,7 +29,11 @@ LOGIN, PASSWORD = "probe-user", "s3cr3t-Pa55"
 
 def _http_factory(**kw: Any) -> HttpClient:
     return HttpClient(
-        limiter=RateLimiter(default_rps=None), sleep=lambda _s: None, max_retries=0, **kw
+        limiter=RateLimiter(default_rps=None),
+        sleep=lambda _s: None,
+        max_retries=0,
+        rate_limits={"ws2.cbonds.info": 1e9},
+        **kw,
     )
 
 
@@ -283,3 +287,124 @@ def test_enrichment_writes_and_conflicts(
         "SELECT count(*) AS n FROM ops.row_history WHERE table_name = 'ref.static_conflict'"
     ).fetchone()
     assert hist is not None and hist["n"] == 1
+
+
+@respx.mock
+def test_denied_ratings_preserves_previous_data_and_loads_other_batches_and_flows(
+    cb_settings: Settings, db: Database, conn: Conn, fixed_today: None
+) -> None:
+    seed(conn)
+    normal = cbonds_api()
+    route = respx.post(url__startswith=BASE).mock(side_effect=normal)
+    assert run(cb_settings, db).status == "succeeded"
+    rating = conn.execute("SELECT * FROM ref.bond_rating WHERE source = 'cbonds'").fetchone()
+    calls: list[str] = []
+
+    def denied(request: httpx.Request) -> httpx.Response:
+        operation = request.url.path.rstrip("/").rsplit("/", 1)[-1]
+        calls.append(operation)
+        if operation == "get_rating_emission_maxdate":
+            return httpx.Response(403, text="Forbidden")
+        return normal(request)
+
+    route.mock(side_effect=denied)
+    out = run_job(
+        "cbonds_enrich",
+        {"batch_size": 1},
+        settings=cb_settings,
+        db=db,
+        http_factory=_http_factory,
+    )
+    assert out.status == "partial"
+    assert calls.count("get_rating_emission_maxdate") == 1
+    assert calls.count("get_emissions") == 3  # probe plus both batches
+    assert calls.count("get_offert") == 2
+    assert calls.count("get_flow_new") == 1
+    assert (
+        conn.execute("SELECT * FROM ref.bond_rating WHERE source = 'cbonds'").fetchone() == rating
+    )
+    row = conn.execute("SELECT error FROM ops.job_run WHERE id = %s", (out.run_id,)).fetchone()
+    assert row is not None and "get_rating_emission_maxdate" in row["error"]
+    assert "access lost" not in row["error"]
+
+
+@respx.mock
+def test_service_error_after_static_keeps_partial_writes(
+    cb_settings: Settings, db: Database, conn: Conn, fixed_today: None
+) -> None:
+    seed(conn)
+    normal = cbonds_api()
+
+    def quota(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/get_flow_new/"):
+            return httpx.Response(
+                200,
+                json={
+                    "error": {
+                        "err_no": 900000,
+                        "err_str": "Max requests per minute limit exceeded",
+                    }
+                },
+            )
+        return normal(request)
+
+    route = respx.post(url__startswith=BASE).mock(side_effect=quota)
+    out = run(cb_settings, db)
+    assert out.status == "partial"
+    row = conn.execute("SELECT error FROM ops.job_run WHERE id = %s", (out.run_id,)).fetchone()
+    assert row is not None and "Max requests per minute limit exceeded" in row["error"]
+    bond = conn.execute("SELECT day_count FROM ref.bond WHERE secid = 'RU000A10A356'").fetchone()
+    assert bond is not None and bond["day_count"] == "ACT/365F"
+    assert len([c for c in route.calls if c.request.url.path.endswith("/get_flow_new/")]) == 1
+
+
+@respx.mock
+def test_complete_flow_batch_beyond_former_stop_point(
+    cb_settings: Settings, db: Database, conn: Conn, fixed_today: None
+) -> None:
+    isins = [f"RU{i:010d}" for i in range(35)]
+    with conn.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO ref.bond "
+            "(secid, isin, bond_class, coupon_type, coupon_type_basis, status) "
+            "VALUES (%s, %s, 'corporate', 'floating', 'moex_label', 'active')",
+            [(isin, isin) for isin in isins],
+        )
+    conn.commit()
+    flows: list[str] = []
+
+    def response(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/get_flow_new/"):
+            isin = json.loads(request.content)["filters"][0]["value"]
+            flows.append(isin)
+            return httpx.Response(
+                200,
+                json={
+                    "items": [
+                        {
+                            "emission_isin_code": isin,
+                            "date": "2026-12-21",
+                            "coupon_num": "1",
+                        }
+                    ],
+                    "total": 1,
+                },
+            )
+        return httpx.Response(200, json={"items": [], "total": 0})
+
+    respx.post(url__startswith=BASE).mock(side_effect=response)
+    out = run(cb_settings, db)
+    assert out.status == "succeeded"
+    assert flows == sorted(isins)
+    row = conn.execute(
+        "SELECT count(*) AS n FROM ops.raw_capture WHERE run_id = %s "
+        "AND endpoint = 'cbonds_get_flow_new'",
+        (out.run_id,),
+    ).fetchone()
+    assert row is not None and row["n"] == 35
+    row = conn.execute(
+        "SELECT count(*) AS n FROM ref.static_snapshot WHERE run_id = %s "
+        "AND endpoint = 'cbonds_flows'",
+        (out.run_id,),
+    ).fetchone()
+    assert row is not None and row["n"] == 35

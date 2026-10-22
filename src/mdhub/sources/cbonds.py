@@ -8,8 +8,8 @@ Read-only query methods are ``POST`` with the credentials in the JSON body::
 
 Only the operations in :data:`ALLOWED_OPERATIONS` are used. Credentials are passed in by the
 loader (from ``CBONDS_LOGIN`` / ``CBONDS_PASSWORD``); they are never logged, never part of a
-URL, and never stored (``record_capture`` stores the *response* only). HTTP 401/403 raises
-:class:`CbondsAuthError` (the account is currently rejected, likely an IP allow-list).
+URL, and never stored (``record_capture`` stores the *response* only). HTTP 401 raises
+:class:`CbondsAuthError`; HTTP 403 may mean a denied operation or an oversized result set.
 
 Parsers return typed dicts; units: Cbonds ``margin``/``floor``/``cup`` are percent,
 ``cupon_rate`` in flows is a decimal fraction (x100 -> percent).
@@ -30,6 +30,7 @@ from mdhub.core.decimalutil import to_decimal
 from mdhub.core.errors import FormatDriftError, MdhubError
 from mdhub.core.http import HttpClient
 from mdhub.core.iss import to_date, to_str
+from mdhub.core.redact import sanitize_text
 
 __all__ = [
     "ALLOWED_OPERATIONS",
@@ -38,7 +39,9 @@ __all__ = [
     "FLOW_FIELDS",
     "OFFER_FIELDS",
     "PARSER_VERSION",
+    "PROBE_ISIN",
     "RATING_FIELDS",
+    "CbondsAccessError",
     "CbondsAuthError",
     "CbondsCredentials",
     "CbondsError",
@@ -52,6 +55,7 @@ __all__ = [
     "parse_rating",
     "query",
     "valid_isin",
+    "validate_response",
 ]
 
 PARSER_VERSION: Final = "1"
@@ -60,6 +64,7 @@ ALLOWED_OPERATIONS: Final = frozenset(
     {"get_emissions", "get_flow_new", "get_offert", "get_rating_emission_maxdate"}
 )
 MAX_BATCH: Final = 50
+PROBE_ISIN: Final = "RU000A1038V6"  # OFZ 26238: bound the total match count, not just the page
 ISIN_RE: Final = re.compile(r"^[A-Z]{2}[A-Z0-9]{9}[0-9]$")
 
 EMISSION_FIELDS: Final = (
@@ -120,7 +125,11 @@ class CbondsError(MdhubError):
 
 
 class CbondsAuthError(CbondsError):
-    """Credentials rejected (HTTP 401/403 or provider auth error)."""
+    """Credentials rejected (HTTP 401)."""
+
+
+class CbondsAccessError(CbondsError):
+    """Operation/access denied (HTTP 403 without a documented query/service error)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,7 +164,8 @@ def query(
 ) -> CbondsResult:
     """POST one query. ``http`` must have ``base_url=CBONDS_BASE_URL``.
 
-    :raises CbondsAuthError: HTTP 401/403.
+    :raises CbondsAuthError: HTTP 401.
+    :raises CbondsAccessError: HTTP 403 access restriction.
     :raises CbondsError: other HTTP errors, provider ``error`` object, malformed body.
     """
     if operation not in ALLOWED_OPERATIONS:
@@ -170,20 +180,47 @@ def query(
         "fields": [{"field": f} for f in fields],
     }
     response = http.request("POST", f"/{operation}/", json=body, raise_for_status=False, retry=True)
-    if response.status_code in (401, 403):
+    return validate_response(response, operation, creds=creds)
+
+
+def validate_response(
+    response: httpx.Response, operation: str, *, creds: CbondsCredentials
+) -> CbondsResult:
+    """Validate both HTTP and provider errors; shared by data queries and the access probe."""
+    if response.status_code == 401:
         raise CbondsAuthError(f"Cbonds {operation}: HTTP {response.status_code} (auth rejected)")
-    if not response.is_success:
-        raise CbondsError(f"Cbonds {operation}: HTTP {response.status_code}")
     try:
         data = response.json()
     except ValueError:
+        if response.status_code == 403:
+            raise CbondsAccessError(f"Cbonds {operation}: HTTP 403 (access denied)") from None
+        if not response.is_success:
+            raise CbondsError(f"Cbonds {operation}: HTTP {response.status_code}") from None
         raise CbondsError(f"Cbonds {operation}: response is not JSON") from None
-    if not isinstance(data, dict):
-        raise FormatDriftError(f"Cbonds {operation}: response is not an object")
-    error = data.get("error")
+    error = data.get("error") if isinstance(data, dict) else None
     if error is not None:
         err_no = error.get("err_no") if isinstance(error, dict) else None
-        raise CbondsError(f"Cbonds {operation}: provider error {err_no}")
+        # Never interpolate arbitrary provider objects (which may echo request credentials).
+        code = (
+            str(err_no) if isinstance(err_no, (int, str)) and str(err_no).isdigit() else "unknown"
+        )
+        detail = error.get("err_str") if isinstance(error, dict) else None
+        text = (
+            sanitize_text(detail, (creds.login, creds.password)) if isinstance(detail, str) else ""
+        )
+        message = f"Cbonds {operation}: HTTP {response.status_code}; provider error {code}"
+        if text:
+            message += ": " + " ".join(text.split())[:500]
+        # 500100 is result size; 900000 is a generic service/query error, not bad credentials.
+        if response.status_code == 403 and code not in {"500100", "900000"}:
+            raise CbondsAccessError(message + " (access denied)")
+        raise CbondsError(message)
+    if response.status_code == 403:
+        raise CbondsAccessError(f"Cbonds {operation}: HTTP 403 (access denied)")
+    if not response.is_success:
+        raise CbondsError(f"Cbonds {operation}: HTTP {response.status_code}")
+    if not isinstance(data, dict):
+        raise FormatDriftError(f"Cbonds {operation}: response is not an object")
     items = data.get("items")
     if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
         raise FormatDriftError(f"Cbonds {operation}: 'items' is not a list of objects")
@@ -191,7 +228,7 @@ def query(
     try:
         total_int = int(total) if total is not None else None
     except (TypeError, ValueError):
-        raise FormatDriftError(f"Cbonds {operation}: bad total {total!r}") from None
+        raise FormatDriftError(f"Cbonds {operation}: invalid total") from None
     return CbondsResult(response=response, items=items, total=total_int)
 
 
