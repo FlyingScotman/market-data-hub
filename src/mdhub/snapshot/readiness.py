@@ -85,6 +85,7 @@ SNAPSHOT_INPUT_JOBS: Final = frozenset(
         "zcyc",
         "indices_eod",
         "fx_moex_eod",
+        "futures_eod",
         "fx_indicative",
         "cbr_daily",
         "ecb_fx",

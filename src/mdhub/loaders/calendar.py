@@ -23,7 +23,22 @@ TARGET          (none - rule only)            ``rule_target`` for past *and* fut
                                               from :data:`TARGET_RULE_START` (2002) through
                                               :data:`TARGET_RULE_END` (2037-12-31) or the end
                                               of next year, whichever is later
+US_FED          (none - rule only)            ``rule_us_fed``: :func:`us_fed_closing_days`
+                                              (Federal Reserve Banks holidays; USD settlement),
+                                              same range as TARGET
+CH_ZURICH       (none - rule only)            ``rule_ch_zurich``: :func:`ch_zurich_closing_days`
+                                              (Zurich bank holidays; CHF settlement, SARON),
+                                              same range as TARGET
+CN_INTERBANK    ``curated`` (State Council    ``curated`` for the decreed years only; after the
+                holiday notices, with the     last one the calendar is unknown (``valid_to``):
+                adjusted working weekends)    the lunar holidays and the transfers are decreed
+                                              every year, never guessed
 =============== ============================ ===============================================
+
+The foreign calendars (contract 1.4, TDM brief H13 / package H4) give the FX value dates of
+non-RUB legs: a consumer builds the settlement calendar of a pair as the joint calendar of the
+MOEX / Russian one and the currency's (e.g. ``MOEX_FX`` + ``CN_INTERBANK`` for CNY/RUB). Rule
+calendars cover regular closures only; an extraordinary closure is a ``curated`` override.
 
 Observed rows cover every calendar day from the start date (:data:`OBSERVED_START`, 2019) to the
 last observed day (days without trading -> ``false``). Curated and ISS-calendar rows are written
@@ -95,23 +110,28 @@ from mdhub.jobs import JobContext
 __all__ = [
     "CURATED_RESOURCE",
     "OBSERVED_START",
+    "RULE_CALENDARS",
     "SOURCE_PRIORITY",
     "TARGET_RULE_END",
     "TARGET_RULE_SOURCE",
     "TARGET_RULE_START",
     "CuratedCalendar",
     "CuratedYear",
+    "RuleCalendar",
+    "ch_zurich_closing_days",
     "easter_sunday",
     "iss_calendar_days",
     "iss_weekend_sessions",
     "load_curated",
     "refresh_calendar",
     "retire_source",
+    "rule_days",
     "ruonia_crosscheck",
     "seed_calendar",
     "target_closing_days",
     "target_crosscheck",
     "target_rule_days",
+    "us_fed_closing_days",
     "write_calendar_days",
 ]
 
@@ -262,15 +282,127 @@ def target_closing_days(year: int) -> frozenset[date]:
     )
 
 
-def target_rule_days(start: date, end: date) -> dict[date, bool]:
-    """Every day of ``[start, end]`` -> TARGET business day (weekday, not a closing day)."""
+def rule_days(
+    closing_days: Callable[[int], frozenset[date]], start: date, end: date
+) -> dict[date, bool]:
+    """Every day of ``[start, end]`` -> business day (weekday, not a closing day of the rule)."""
     closed: dict[int, frozenset[date]] = {}
     out: dict[date, bool] = {}
     for d in date_range(start, end):
         if d.year not in closed:
-            closed[d.year] = target_closing_days(d.year)
+            closed[d.year] = closing_days(d.year)
         out[d] = d.weekday() < 5 and d not in closed[d.year]
     return out
+
+
+def target_rule_days(start: date, end: date) -> dict[date, bool]:
+    """Every day of ``[start, end]`` -> TARGET business day (weekday, not a closing day)."""
+    return rule_days(target_closing_days, start, end)
+
+
+# ------------------------------------------------- foreign settlement calendars (1.4, H4)
+
+
+def _nth_weekday(year: int, month: int, weekday: int, n: int) -> date:
+    """The ``n``-th ``weekday`` (Monday = 0) of the month; ``n = -1``: the last one."""
+    if n > 0:
+        first = date(year, month, 1)
+        return first + timedelta(days=(weekday - first.weekday()) % 7 + 7 * (n - 1))
+    nxt = date(year + month // 12, month % 12 + 1, 1)
+    last = nxt - timedelta(days=1)
+    return last - timedelta(days=(last.weekday() - weekday) % 7)
+
+
+def us_fed_closing_days(year: int) -> frozenset[date]:
+    """Federal Reserve Banks holidays of ``year`` (Fedwire closed; USD settlement): New Year's
+    Day, Martin Luther King Jr. Day (3rd Monday of January), Washington's Birthday (3rd Monday of
+    February), Memorial Day (last Monday of May), Juneteenth (June 19, from 2021), Independence
+    Day, Labor Day (1st Monday of September), Columbus Day (2nd Monday of October), Veterans Day
+    (November 11), Thanksgiving (4th Thursday of November), Christmas Day. A fixed-date holiday
+    on a Sunday is observed on the Monday; on a Saturday the Reserve Banks are open on the
+    Friday before (no substitute day). Only weekdays are returned."""
+    fixed = [date(year, 1, 1), date(year, 7, 4), date(year, 11, 11), date(year, 12, 25)]
+    if year >= 2021:
+        fixed.append(date(year, 6, 19))
+    days = {d + timedelta(days=1) if d.weekday() == 6 else d for d in fixed}
+    days |= {
+        _nth_weekday(year, 1, 0, 3),
+        _nth_weekday(year, 2, 0, 3),
+        _nth_weekday(year, 5, 0, -1),
+        _nth_weekday(year, 9, 0, 1),
+        _nth_weekday(year, 10, 0, 2),
+        _nth_weekday(year, 11, 3, 4),
+    }
+    return frozenset(d for d in days if d.weekday() < 5)
+
+
+def ch_zurich_closing_days(year: int) -> frozenset[date]:
+    """Zurich bank holidays of ``year`` (Swiss Interbank Clearing closed; CHF settlement, no
+    SARON): New Year's Day, Berchtold's Day (January 2), Good Friday, Easter Monday, Labour Day
+    (May 1), Ascension Day (Easter + 39), Whit Monday (Easter + 50), Swiss National Day
+    (August 1), Christmas Day, St. Stephen's Day (December 26). No substitute days."""
+    easter = easter_sunday(year)
+    return frozenset(
+        {
+            date(year, 1, 1),
+            date(year, 1, 2),
+            easter - timedelta(days=2),
+            easter + timedelta(days=1),
+            date(year, 5, 1),
+            easter + timedelta(days=39),
+            easter + timedelta(days=50),
+            date(year, 8, 1),
+            date(year, 12, 25),
+            date(year, 12, 26),
+        }
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class RuleCalendar:
+    """A calendar computed by an exact holiday rule for past and future days (``rule_*``)."""
+
+    calendar: str
+    source: str
+    version: str
+    closing_days: Callable[[int], frozenset[date]]
+    note: str
+
+
+RULE_START: Final = TARGET_RULE_START
+"""Rule calendars start in 2002 (the TARGET closing days apply since then) and run through
+:data:`RULE_END` or the end of next year, whichever is later."""
+RULE_END: Final = TARGET_RULE_END
+RULE_CALENDARS: Final = (
+    RuleCalendar(
+        TARGET_CALENDAR,
+        TARGET_RULE_SOURCE,
+        TARGET_RULE_VERSION,
+        target_closing_days,
+        "TARGET closing days rule: Jan 1, Good Friday, Easter Monday, May 1, Dec 25, Dec 26 "
+        "(+ weekends)",
+    ),
+    RuleCalendar(
+        "US_FED",
+        "rule_us_fed",
+        "us-fed-holidays-1",
+        us_fed_closing_days,
+        "Federal Reserve Banks holidays rule: Jan 1, MLK Day, Washington's Birthday, Memorial "
+        "Day, Juneteenth (2021-), Jul 4, Labor Day, Columbus Day, Nov 11, Thanksgiving, Dec 25; "
+        "Sunday -> Monday, Saturday not moved (+ weekends)",
+    ),
+    RuleCalendar(
+        "CH_ZURICH",
+        "rule_ch_zurich",
+        "ch-zurich-holidays-1",
+        ch_zurich_closing_days,
+        "Zurich bank holidays rule: Jan 1, Jan 2, Good Friday, Easter Monday, May 1, Ascension, "
+        "Whit Monday, Aug 1, Dec 25, Dec 26 (+ weekends)",
+    ),
+)
+"""Computed calendars and their sources. ``CN_INTERBANK`` is not computable (the State Council
+decrees the holidays and the adjusted working weekends every year): it comes from the curated
+file only, for the decreed years."""
 
 
 def target_crosscheck(
@@ -730,8 +862,8 @@ def refresh_calendar(
     ctx: JobContext, *, full: bool = False, since: date | None = None
 ) -> dict[str, Any]:
     """Refresh ``ref.calendar_day`` (observed MOEX history, MOEX ISS calendar, curated file,
-    TARGET rule) and cross-check RU_PRODUCTION against the RUONIA dates and TARGET against the
-    ECB rate dates.
+    the rule calendars :data:`RULE_CALENDARS`: TARGET, US_FED, CH_ZURICH) and cross-check
+    RU_PRODUCTION against the RUONIA dates and TARGET against the ECB rate dates.
 
     ``full`` re-reads observed history from ``since``; otherwise from the last observed day
     minus :data:`INCREMENTAL_OVERLAP_DAYS`. ``since`` defaults to :data:`OBSERVED_START`
@@ -851,21 +983,22 @@ def refresh_calendar(
 
     step("curated", curated)
 
-    def target_rule(conn: psycopg.Connection[Any]) -> UpsertResult:
-        start = TARGET_RULE_START if since is None else max(since, TARGET_RULE_START)
-        return write_calendar_days(
-            conn,
-            TARGET_CALENDAR,
-            TARGET_RULE_SOURCE,
-            target_rule_days(start, max(date(today.year + 1, 12, 31), TARGET_RULE_END)),
-            known_at=utc_now(),
-            run_id=ctx.run.id,
-            version=TARGET_RULE_VERSION,
-            note="TARGET closing days rule: Jan 1, Good Friday, Easter Monday, May 1, Dec 25, "
-            "Dec 26 (+ weekends)",
-        )
+    for rc in RULE_CALENDARS:
 
-    step(TARGET_RULE_SOURCE, target_rule)
+        def rule(conn: psycopg.Connection[Any], rc: RuleCalendar = rc) -> UpsertResult:
+            start = RULE_START if since is None else max(since, RULE_START)
+            return write_calendar_days(
+                conn,
+                rc.calendar,
+                rc.source,
+                rule_days(rc.closing_days, start, max(date(today.year + 1, 12, 31), RULE_END)),
+                known_at=utc_now(),
+                run_id=ctx.run.id,
+                version=rc.version,
+                note=rc.note,
+            )
+
+        step(rc.source, rule)
 
     def target_check(conn: psycopg.Connection[Any]) -> None:
         """ECB rate dates vs the effective TARGET calendar (rule, or a curated override; rule

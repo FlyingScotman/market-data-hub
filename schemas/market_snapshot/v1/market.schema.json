@@ -701,7 +701,7 @@
       }
     },
     "fx_rate": {
-      "description": "FxRate: RUB rates only (RUB per 1 unit of ccy); the desk FX mark is a consumer override",
+      "description": "FxRate: RUB rates only (RUB per 1 unit of ccy); the desk FX mark is a consumer override. 1.4: settle_date and settlement_calendars of moex_eod rows",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -722,6 +722,8 @@
         "close_rub_per_unit",
         "waprice_rub_per_unit",
         "num_trades",
+        "settle_date",
+        "settlement_calendars",
         "labels"
       ],
       "properties": {
@@ -846,6 +848,25 @@
             "null"
           ]
         },
+        "settle_date": {
+          "description": "moex_eod: value date of the instrument for trades of trade_date (MOEX SETTLEDATE of that session, md.fx_settle_date); null when the hub did not observe it (label settle_date_not_observed) and for other kinds. 1.4",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date_or_null"
+            }
+          ]
+        },
+        "settlement_calendars": {
+          "description": "moex_eod: Hub calendars whose joint business days the pair settles on: MOEX_FX plus the currency's settlement calendar (CNY CN_INTERBANK, USD US_FED, EUR TARGET, CHF CH_ZURICH); a hub mapping, not a MOEX publication (1.4); null for other kinds",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "common.schema.json#/$defs/calendar_code"
+          },
+          "uniqueItems": true
+        },
         "labels": {
           "$ref": "common.schema.json#/$defs/labels"
         }
@@ -938,6 +959,634 @@
           "$ref": "common.schema.json#/$defs/decimal_or_null"
         }
       }
+    },
+    "fx_swap": {
+      "description": "FxSwap: MOEX currency-market (CETS and other selt boards) X/RUB swap of the business date (md.fx_eod + ref.fx_instrument kind swap). The price is the swap difference as MOEX publishes it: far-leg rate minus near-leg rate, RUB per quote_units (1.4, H13)",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trade_date": {
+          "$ref": "common.schema.json#/$defs/date"
+        },
+        "secid": {
+          "type": "string"
+        },
+        "board": {
+          "type": "string"
+        },
+        "base_ccy": {
+          "$ref": "common.schema.json#/$defs/ccy"
+        },
+        "quote_ccy": {
+          "const": "RUB"
+        },
+        "tenor": {
+          "description": "near/far codes, e.g. TOD/TOM, TOM/1W",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "near_leg": {
+          "description": "TOD, TOM, TDS, TMS...",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "far_leg": {
+          "description": "TOM, SPT (MOEX *_TOM1D), 1W, 1M... (tenor from the near leg)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "near_settle_date": {
+          "description": "Near-leg value date: MOEX SETTLEDATE of the swap for that session (md.fx_settle_date); null when not observed (label near_settle_date_not_observed)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date_or_null"
+            }
+          ]
+        },
+        "far_settle_date": {
+          "description": "Far-leg value date when the far leg is a named value date (TOD/TOM/SPT...): the SETTLEDATE of the outright of the same pair, board and code that session; null for tenor legs (label far_settle_date_not_published: resolve the tenor from the near date on settlement_calendars) or when not observed",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date_or_null"
+            }
+          ]
+        },
+        "quote_units": {
+          "description": "Units of base_ccy the price refers to (FACEVALUE)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "open": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "low": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "high": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "close": {
+          "description": "CLOSE as published (RUB per quote_units); MOEX keeps a 0 of a day with trades",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "waprice": {
+          "description": "WAPRICE as published (RUB per quote_units)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "close_rub_per_unit": {
+          "description": "close / quote_units (exact): swap points in RUB per 1 unit of base_ccy",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "waprice_rub_per_unit": {
+          "description": "waprice / quote_units (exact)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "num_trades": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "settlement_calendars": {
+          "description": "Hub calendars whose joint business days the pair settles on: MOEX_FX plus the currency's settlement calendar (CNY CN_INTERBANK, USD US_FED, EUR TARGET, CHF CH_ZURICH); a hub mapping, not a MOEX publication (1.4)",
+          "type": "array",
+          "items": {
+            "$ref": "common.schema.json#/$defs/calendar_code"
+          },
+          "uniqueItems": true
+        },
+        "labels": {
+          "$ref": "common.schema.json#/$defs/labels"
+        }
+      },
+      "required": [
+        "trade_date",
+        "secid",
+        "board",
+        "base_ccy",
+        "quote_ccy",
+        "tenor",
+        "near_leg",
+        "far_leg",
+        "near_settle_date",
+        "far_settle_date",
+        "quote_units",
+        "open",
+        "low",
+        "high",
+        "close",
+        "waprice",
+        "close_rub_per_unit",
+        "waprice_rub_per_unit",
+        "num_trades",
+        "settlement_calendars",
+        "labels"
+      ]
+    },
+    "futures_price": {
+      "description": "FuturesPrice: FORTS future of the business date (md.futures_eod, every outright FORTS future; calendar spreads are not stored) with its contract static (ref.futures_contract). Prices in the contract's quotation as MOEX publishes them (1.4, H11)",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "trade_date": {
+          "$ref": "common.schema.json#/$defs/date"
+        },
+        "secid": {
+          "type": "string"
+        },
+        "board": {
+          "type": "string"
+        },
+        "asset_code": {
+          "description": "FORTS ASSETCODE (Si, CNY, RGBI, RUON...)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sec_type": {
+          "description": "SECTYPE (Si, CR, RB...)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "short_name": {
+          "description": "Contract short name (ref.futures_contract)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "contract_type": {
+          "description": "dated or perpetual; null when the hub has no contract static (label contract_static_unknown)",
+          "enum": [
+            "dated",
+            "perpetual",
+            null
+          ]
+        },
+        "is_fx": {
+          "description": "Currency future (hub classification by ASSETCODE)",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "base_ccy": {
+          "description": "FX futures: base currency",
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ccy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "quote_ccy": {
+          "description": "FX futures: quote currency (RUB for Si/Eu/CNY and the perpetuals)",
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ccy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "first_trade_date": {
+          "$ref": "common.schema.json#/$defs/date_or_null"
+        },
+        "last_trade_date": {
+          "description": "Last trading day; null for perpetual futures",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date_or_null"
+            }
+          ]
+        },
+        "last_del_date": {
+          "description": "Delivery / final settlement day; null for perpetual futures",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date_or_null"
+            }
+          ]
+        },
+        "lot_volume": {
+          "description": "Units of the underlying per contract (LOTVOLUME)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "min_step": {
+          "description": "Price step (MINSTEP)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "step_price": {
+          "description": "RUB value of one min_step for one contract (STEPPRICE) as known at the cut; re-set daily for crosses",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "settle_price": {
+          "description": "SETTLEPRICE: the settlement price variation margin is computed on; null when MOEX reports 0 (label no_settle_price)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "open": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "low": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "high": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "close": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "waprice": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "swap_rate": {
+          "description": "Perpetual futures: SWAPRATE as published",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "volume": {
+          "description": "Contracts traded",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "value_rub": {
+          "description": "Traded value, RUB",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "open_position": {
+          "description": "Open interest, contracts",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "open_position_value_rub": {
+          "description": "Open interest, RUB",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "num_trades": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "settle_rub_per_unit": {
+          "description": "RUB-quoted FX futures: settle_price x STEPPRICE / MINSTEP / LOTVOLUME (RUB per 1 unit of base_ccy); else null",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "close_rub_per_unit": {
+          "description": "RUB-quoted FX futures: close normalized the same way; else null",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "labels": {
+          "$ref": "common.schema.json#/$defs/labels"
+        }
+      },
+      "required": [
+        "trade_date",
+        "secid",
+        "board",
+        "asset_code",
+        "sec_type",
+        "short_name",
+        "contract_type",
+        "is_fx",
+        "base_ccy",
+        "quote_ccy",
+        "first_trade_date",
+        "last_trade_date",
+        "last_del_date",
+        "lot_volume",
+        "min_step",
+        "step_price",
+        "settle_price",
+        "open",
+        "low",
+        "high",
+        "close",
+        "waprice",
+        "swap_rate",
+        "volume",
+        "value_rub",
+        "open_position",
+        "open_position_value_rub",
+        "num_trades",
+        "settle_rub_per_unit",
+        "close_rub_per_unit",
+        "labels"
+      ]
+    },
+    "futures_price_intraday": {
+      "description": "FuturesPriceIntraday: latest stored FORTS FX futures quote per contract on the business date (md.futures_intraday: APIM realtime, else public ISS delayed) with its contract static (1.4, H11)",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "secid": {
+          "type": "string"
+        },
+        "ts": {
+          "description": "Quote time (MOEX UPDATETIME)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/utc_instant"
+            }
+          ]
+        },
+        "trade_date": {
+          "description": "FORTS session date (TRADEDATE)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date_or_null"
+            }
+          ]
+        },
+        "source": {
+          "type": "string"
+        },
+        "source_variant": {
+          "type": "string"
+        },
+        "source_ts": {
+          "description": "SYSTIME",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/utc_instant_or_null"
+            }
+          ]
+        },
+        "latency": {
+          "enum": [
+            "realtime",
+            "delayed",
+            "derived"
+          ]
+        },
+        "asset_code": {
+          "description": "FORTS ASSETCODE (Si, CNY, RGBI, RUON...)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sec_type": {
+          "description": "SECTYPE (Si, CR, RB...)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "short_name": {
+          "description": "Contract short name (ref.futures_contract)",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "contract_type": {
+          "description": "dated or perpetual; null when the hub has no contract static (label contract_static_unknown)",
+          "enum": [
+            "dated",
+            "perpetual",
+            null
+          ]
+        },
+        "is_fx": {
+          "description": "Currency future (hub classification by ASSETCODE)",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "base_ccy": {
+          "description": "FX futures: base currency",
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ccy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "quote_ccy": {
+          "description": "FX futures: quote currency (RUB for Si/Eu/CNY and the perpetuals)",
+          "anyOf": [
+            {
+              "$ref": "common.schema.json#/$defs/ccy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "first_trade_date": {
+          "$ref": "common.schema.json#/$defs/date_or_null"
+        },
+        "last_trade_date": {
+          "description": "Last trading day; null for perpetual futures",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date_or_null"
+            }
+          ]
+        },
+        "last_del_date": {
+          "description": "Delivery / final settlement day; null for perpetual futures",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date_or_null"
+            }
+          ]
+        },
+        "lot_volume": {
+          "description": "Units of the underlying per contract (LOTVOLUME)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "min_step": {
+          "description": "Price step (MINSTEP)",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "step_price": {
+          "description": "RUB value of one min_step for one contract (STEPPRICE) as known at the cut; re-set daily for crosses",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "bid": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "offer": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "last": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "open": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "high": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "low": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "settle_price": {
+          "description": "MOEX's current estimate of the day's settlement price",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/decimal_or_null"
+            }
+          ]
+        },
+        "swap_rate": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "open_position": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "num_trades": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "vol_today": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "val_today": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "bid_rub_per_unit": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "offer_rub_per_unit": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "last_rub_per_unit": {
+          "$ref": "common.schema.json#/$defs/decimal_or_null"
+        },
+        "labels": {
+          "$ref": "common.schema.json#/$defs/labels"
+        }
+      },
+      "required": [
+        "secid",
+        "ts",
+        "trade_date",
+        "source",
+        "source_variant",
+        "source_ts",
+        "latency",
+        "asset_code",
+        "sec_type",
+        "short_name",
+        "contract_type",
+        "is_fx",
+        "base_ccy",
+        "quote_ccy",
+        "first_trade_date",
+        "last_trade_date",
+        "last_del_date",
+        "lot_volume",
+        "min_step",
+        "step_price",
+        "bid",
+        "offer",
+        "last",
+        "open",
+        "high",
+        "low",
+        "settle_price",
+        "swap_rate",
+        "open_position",
+        "num_trades",
+        "vol_today",
+        "val_today",
+        "bid_rub_per_unit",
+        "offer_rub_per_unit",
+        "last_rub_per_unit",
+        "labels"
+      ]
     }
   },
   "type": "object",
@@ -1000,7 +1649,11 @@
         "fixings",
         "fx_rates",
         "cross_rates",
-        "cbr_meetings"
+        "cbr_meetings",
+        "fx_swaps",
+        "futures_prices",
+        "futures_prices_intraday",
+        "cpi"
       ],
       "properties": {
         "bond_quotes": {
@@ -1049,6 +1702,31 @@
           "type": "array",
           "items": {
             "$ref": "#/$defs/cbr_meeting"
+          }
+        },
+        "fx_swaps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fx_swap"
+          }
+        },
+        "futures_prices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/futures_price"
+          }
+        },
+        "futures_prices_intraday": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/futures_price_intraday"
+          }
+        },
+        "cpi": {
+          "description": "Monthly CPI history from parameters.cpi_from (CPI_RU_MOM rosstat, CPI_RU_YOY cbr) as Fixing objects; label published_on_unknown (1.4, H10)",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/fixing"
           }
         }
       }

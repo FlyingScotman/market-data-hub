@@ -87,7 +87,7 @@ def test_market_snapshot_1_3(conn: Conn, db: Database) -> None:
     )
     doc = _bundle(conn, out.market.id)
     validate_bundle(doc)
-    assert doc["schema_version"] == SCHEMA_VERSION == "market_snapshot/1.3"
+    assert doc["schema_version"] == SCHEMA_VERSION  # 1.3 data (SOFR, ESTR...) in later minors
     data = doc["data"]
     fix = {(f["index_code"], f["source"]): f for f in data["fixings"]}
     assert fix[("ESTR", "ecb_data_portal")]["value"] == "2.44"

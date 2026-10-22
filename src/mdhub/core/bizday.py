@@ -35,9 +35,22 @@ __all__ = ["CALENDARS", "DEFAULT_CALENDAR", "CalendarPredicate", "DbCalendar", "
 
 log = logging.getLogger(__name__)
 
-CALENDARS: Final = ("MOEX_STOCK", "MOEX_FX", "MOEX_FORTS", "RU_PRODUCTION", "TARGET")
-"""Known business-day calendars (``ref.calendar_day.calendar`` CHECK, migration 0422): the MOEX
-engines, the Russian production calendar and TARGET (euro area; ECB reference-rate days)."""
+CALENDARS: Final = (
+    "MOEX_STOCK",
+    "MOEX_FX",
+    "MOEX_FORTS",
+    "RU_PRODUCTION",
+    "TARGET",
+    "CN_INTERBANK",
+    "US_FED",
+    "CH_ZURICH",
+)
+"""Known business-day calendars (``ref.calendar_day.calendar`` CHECK, migrations 0422, 0428): the
+MOEX engines, the Russian production calendar, TARGET (euro area; ECB reference-rate days) and
+the foreign settlement calendars of FX value dates (contract 1.4): ``CN_INTERBANK`` (China
+interbank market: State Council public holidays and adjusted working weekends), ``US_FED``
+(Federal Reserve Banks holidays: USD settlement), ``CH_ZURICH`` (Zurich bank holidays: CHF
+settlement, SARON days)."""
 DEFAULT_CALENDAR: Final = "MOEX_STOCK"
 
 

@@ -38,8 +38,7 @@ documented CSV export; check it with ``mdhub probe-sources`` on the server.
 Datasets (any source counts): ``estr`` (calendar TARGET, from 2019-10-01), ``sofr`` (Monday to
 Friday - U.S. holidays become ``unfillable`` once the source confirms no data - from
 2018-04-02), ``sofr_averages`` (from 2020-03-02, the first NY Fed publication), ``saron``
-(Monday to Friday - Zurich holidays become ``unfillable`` once the source confirms no data -
-from :data:`SARON_HISTORY_START`).
+(calendar CH_ZURICH, from :data:`SARON_HISTORY_START`).
 """
 
 from __future__ import annotations
@@ -65,6 +64,7 @@ __all__ = [
     "ESTR_HISTORY_START",
     "LOOKBACK_DAYS",
     "SARON_ATTEMPTS",
+    "SARON_CALENDAR",
     "SARON_HISTORY_START",
     "SOFR_ATTEMPTS",
     "SOFR_AVERAGES_START",
@@ -81,6 +81,7 @@ SOFR_AVERAGES_START: Final = date(2020, 3, 2)
 SOFR_AVERAGE_CODES: Final = ("SOFR30DAVG", "SOFR90DAVG", "SOFR180DAVG", "SOFRINDEX")
 SARON_HISTORY_START: Final = date(2019, 1, 3)
 """First SARON day the hub seeds (the desk's history starts 2019; SARON itself since 2009)."""
+SARON_CALENDAR: Final = "CH_ZURICH"
 
 register_dataset(
     DatasetSpec(
@@ -134,14 +135,13 @@ register_dataset(
         name="saron",
         table="md.fixing",
         date_column="fixing_date",
-        calendar=None,
+        calendar=SARON_CALENDAR,
         frequency="business_daily",
         max_lag_days=2,
         backfill_job="saron_fixing",
         history_start=SARON_HISTORY_START,
         where="index_code = 'SARON'",
-        description="SARON (% p.a.), Monday-Friday (Zurich holidays confirmed empty -> "
-        "unfillable); SNB data portal (republishes SIX)",
+        description="SARON (% p.a.), Zurich business days; SNB data portal (republishes SIX)",
     )
 )
 
@@ -463,7 +463,7 @@ def saron_fixing(
         ctx,
         served,
         datasets={"saron": (("SARON",), SARON_HISTORY_START)},
-        is_expected=lambda d: d.weekday() < 5,
+        is_expected=lambda d: ctx.is_business_day(d, SARON_CALENDAR),
         d1=d1,
         d2=d2,
     )

@@ -4,7 +4,10 @@ Jobs (names fixed by :data:`mdhub.schedule.KNOWN_JOBS`):
 
 * ``fx_moex_eod`` - ``md.fx_eod`` from ISS selt history (all boards: CETS, CNGD, LICU,
   FIXN/FIXS fixing auctions, WAPN/WAPS, SDBP), one transaction per date; refreshes
-  ``ref.fx_instrument`` from the full selt listing first.
+  ``ref.fx_instrument`` from the full selt listing first. Both listings (this one and the
+  intraday CETS board) also store the session's SETTLEDATE per instrument in
+  ``md.fx_settle_date`` (contract 1.4, H2; session = ``dataversion.trade_date``): the history
+  carries no value date, the listing only the current session's.
 * ``fx_moex_intraday`` - ``md.fx_intraday`` from the CETS board snapshot (public ISS =
   15-min delayed); only rows whose values changed since the last stored row are written.
 * ``fx_indicative`` - ``md.fx_indicative`` (MOEX indicative rates tc 14:00 / mc 19:00, by
@@ -47,6 +50,7 @@ from mdhub.sources.moex_fx import (
     parse_fx_history,
     parse_fx_instruments,
     parse_fx_marketdata,
+    parse_fx_settle_dates,
     parse_indicative,
 )
 
@@ -78,6 +82,7 @@ FX_INTRADAY_VARIANT: Final = "iss_public"
 INTRADAY_ENDPOINT: Final = "intraday:fx_cets_marketdata"
 """Endpoints prefixed ``intraday:`` are removed by raw-capture retention (maintenance)."""
 FX_INSTRUMENT_KEY: Final = ["secid", "board"]
+FX_SETTLE_KEY: Final = ["trade_date", "secid", "board"]
 FX_INSTRUMENT_OBSERVED: Final = ("settle_date",)
 """Observation columns of ``ref.fx_instrument`` (history meta): refreshed separately, never a
 data change (the settlement date of a TOM instrument moves every day)."""
@@ -180,7 +185,9 @@ def refresh_fx_instruments(
     today: date,
 ) -> UpsertResult:
     """Upsert ``ref.fx_instrument`` from a selt ``securities`` block; ``first_seen`` is only
-    written on insert, ``last_seen`` is set to ``today``."""
+    written on insert, ``last_seen`` is set to ``today``. With a ``dataversion`` block the
+    session's SETTLEDATE of every instrument goes to ``md.fx_settle_date`` (contract 1.4, H2:
+    the value date of an outright, the near-leg date of a swap, keyed by the session date)."""
     rows = _with_provenance(parse_fx_instruments(payload), capture_id, run_id)
     if not rows:
         return UpsertResult()
@@ -194,6 +201,15 @@ def refresh_fx_instruments(
     )
     _observe_fx_settlement(conn, rows)
     touch_last_seen(conn, "ref.fx_instrument", FX_INSTRUMENT_KEY, rows, run_id)
+    _, settle = parse_fx_settle_dates(payload)
+    if settle:
+        result += upsert_rows(
+            conn,
+            "md.fx_settle_date",
+            _with_provenance(settle, capture_id, run_id),
+            FX_SETTLE_KEY,
+            run_id=run_id,
+        )
     return result
 
 
@@ -311,7 +327,9 @@ def fx_moex_eod(
     )
     run_id = ctx.run.id
     with ctx.http(base_url=ISS_BASE_URL) as http:
-        res = http.get_json(SELT_SECURITIES, params={"iss.meta": "off", "iss.only": "securities"})
+        res = http.get_json(
+            SELT_SECURITIES, params={"iss.meta": "off", "iss.only": "securities,dataversion"}
+        )
         with ctx.connection() as conn:
             cap = record_capture(
                 conn, run_id, SOURCE, "selt_securities", None, res.response, PARSER_VERSION

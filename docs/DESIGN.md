@@ -431,13 +431,18 @@ The hub's dispatch layer (system ADR-002, doc 02 §3/§6; milestone M1). The des
 only immutable snapshots; the TDM CSV export stays until it does.
 
 **Contract.** JSON Schema and golden fixtures in `schemas/market_snapshot/v1/` (see its
-README; `schema_version` `market_snapshot/1.3` since WEB-16: cross-rate kinds `cbr_cross`,
+README; `schema_version` `market_snapshot/1.4` since package P6 (TDM brief H10-H13): FX value
+dates (`fx_rates.settle_date`, `settlement_calendars`; `md.fx_settle_date` from the selt / CETS
+listings), MOEX FX swaps (`fx_swaps`), FORTS futures (`futures_prices`,
+`futures_prices_intraday`), monthly CPI history (`cpi`), `ruonia_unpublished_days`, the
+settlement calendars `CN_INTERBANK` / `US_FED` / `CH_ZURICH`; 1.3 since WEB-16: cross-rate kinds `cbr_cross`,
 `moex_indicative_cross`, `moex_cets`, `fred_h10` with `source` / `labels`, and the static part since
 WEB-18: agency ratings with issuer scope and `grade`, replacement bonds, `issue_size_moex`, document
 evidence of curated terms; 1.2 since WEB-15: linker
 / WAP analytics in `source_analytics`, `Fixing.hub_ingested_at`, explicit RUSFAR units): envelope/manifest, static objects (Instrument, CouponPeriod, Redemption, Offer,
 FloaterFormula, Issuer, Calendar, IdMap) and market objects (BondQuote EOD/intraday,
-CurveQuoteSet, ZcycParams, Fixing, FxRate, CrossRate, CbrMeeting). Decimals are strings with
+CurveQuoteSet, ZcycParams, Fixing, FxRate, CrossRate, CbrMeeting; 1.4 FxSwap, FuturesPrice,
+FuturesPriceIntraday). Decimals are strings with
 the stored digits, units in field names, instants UTC. The wheel carries the schemas as
 `mdhub/schemas`; every bundle is validated before it is stored (fail closed).
 
@@ -480,10 +485,13 @@ cut's) or publishes it (`cut_type = change`). The market snapshot names it in
 EOD cuts: bond EOD + yields of D, curve sets fetched on D (latest per source/dataset, labels
 `mid_only`, `source_clock_not_on_business_date`), the EOD ZCYC publication, fixings of
 [D-400, D+7] (RUSFAR family from `md.index_eod`), CBR official FX in force on [D, D+7], MOEX FX
-EOD (RUB outrights; swaps, non-RUB pairs, metals excluded with reasons), indicative 14:00/19:00,
-ECB of [D-7, D] plus the `md.fx_cross` kinds of [D-7, D] (1.3), CBR meetings. Proxy curve sets
+EOD (RUB outrights with their value date; non-RUB pairs, metals excluded with reasons; 1.4: RUB
+swaps in `fx_swaps`, before excluded), indicative 14:00/19:00, ECB of [D-7, D] plus the
+`md.fx_cross` kinds of [D-7, D] (1.3), CBR meetings, FORTS futures EOD of D with contract static
+(1.4), CPI months from `cpi_from` (1.4). Proxy curve sets
 (`meta.proxy`) carry the label `proxy_<proxy>`; €STR / SOFR / `CPI_RU_YOY` are ordinary fixings. Intraday cuts: latest intraday bond quotes of D, curves, latest
-ZCYC, fixings of [D-200, D+7] (floater coupon-period history, TDM HR3; was D-7), FX. Coverage (expected/missing curve series, `required_without_any_source` for
+ZCYC, fixings of [D-200, D+7] (floater coupon-period history, TDM HR3; was D-7), FX, the latest
+FX futures quotes of D (1.4), CPI. Coverage (expected/missing curve series, `required_without_any_source` for
 `ruonia_ois`/`key_rate_swap` — stale when a cut has neither source —, latest
 fixing dates, universe without quote) and stale reasons are per dataset in the manifest; no
 forward fill.

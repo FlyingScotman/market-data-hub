@@ -34,7 +34,8 @@ FIX = Path(__file__).parent / "fixtures" / "moex_names"
 
 
 def test_version() -> None:
-    assert SCHEMA_VERSION == "market_snapshot/1.3"
+    assert SCHEMA_VERSION.startswith("market_snapshot/1.")  # the 1.3 rules hold in later minors
+    assert int(SCHEMA_VERSION.rsplit(".", 1)[1]) >= 3
 
 
 def _names() -> dict[str, str]:
@@ -144,8 +145,8 @@ def test_static_snapshot_1_3_fields(conn: Conn, db: Database) -> None:
         cut_ts=datetime(2026, 10, 15, 7, 45, tzinfo=MSK).astimezone(UTC),
         known_at=utc_now(),
     )
-    doc = _bundle(conn, out.id)  # validated against the 1.3 schema when published
-    assert doc["schema_version"] == "market_snapshot/1.3"
+    doc = _bundle(conn, out.id)  # validated against the current schema when published
+    assert doc["schema_version"] == SCHEMA_VERSION
     inst = {i["secid"]: i for i in doc["data"]["instruments"]}
 
     def pick(secid: str, *fields: str) -> tuple[Any, ...]:

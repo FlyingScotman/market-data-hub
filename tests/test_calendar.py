@@ -762,3 +762,74 @@ def test_ru_production_is_the_official_calendar_and_missing_ruonia_is_a_gap(
 
     scan = scan_dataset(conn, get_dataset("cbr_ruonia"), today=date(2026, 1, 20), calendar=dbcal)
     assert date(2025, 12, 30) in {g.day for g in scan.gaps}
+
+
+# ------------------------------------------- foreign settlement calendars (contract 1.4, H4)
+
+
+def test_us_fed_and_zurich_rules() -> None:
+    fed = {
+        2026: [(1, 1), (1, 19), (2, 16), (5, 25), (6, 19), (9, 7), (10, 12), (11, 11), (11, 26),
+               (12, 25)],  # Jul 4 is a Saturday: the Reserve Banks open on Friday Jul 3
+        2022: [(1, 17), (2, 21), (5, 30), (6, 20), (7, 4), (9, 5), (10, 10), (11, 11), (11, 24),
+               (12, 26)],  # Jan 1 Saturday: no holiday; Juneteenth / Christmas Sunday -> Monday
+    }  # fmt: skip
+    for year in (2026, 2022):
+        assert cal.us_fed_closing_days(year) == {date(year, m, d) for m, d in fed[year]}
+    assert date(2020, 7, 3) not in cal.us_fed_closing_days(2020)  # Saturday rule, not Friday
+    assert date(2020, 6, 19) not in cal.us_fed_closing_days(2020)  # Juneteenth from 2021
+    zurich = cal.ch_zurich_closing_days(2026)
+    assert {date(2026, 4, 3), date(2026, 4, 6), date(2026, 5, 14), date(2026, 5, 25)} <= zurich
+    assert {date(2026, 1, 2), date(2026, 5, 1), date(2026, 8, 1), date(2026, 12, 26)} <= zurich
+    days = cal.rule_days(cal.ch_zurich_closing_days, date(2026, 7, 31), date(2026, 8, 3))
+    assert days == {
+        date(2026, 7, 31): True,
+        date(2026, 8, 1): False,  # Saturday anyway: no substitute day
+        date(2026, 8, 2): False,
+        date(2026, 8, 3): True,
+    }
+
+
+def test_cn_interbank_curated_years() -> None:
+    years = {y.year: y for y in cal.load_curated().years if y.calendar == "CN_INTERBANK"}
+    assert set(years) == {2024, 2025, 2026}
+    assert {y: sum(c.days().values()) for y, c in years.items()} == {
+        2024: 251,
+        2025: 248,
+        2026: 248,
+    }  # the official numbers of working days
+    cn26 = years[2026].days()
+    # the holidays the MOEX CETS CNY/RUB TOD data shows (core golden 2026-06..10)
+    for d in (date(2026, 6, 19), date(2026, 9, 25), *(date(2026, 10, n) for n in (1, 2, 5, 6, 7))):
+        assert cn26[d] is False
+    assert cn26[date(2026, 10, 10)] is True and cn26[date(2026, 9, 20)] is True  # adjusted
+    assert cn26[date(2026, 10, 8)] is True
+
+
+def test_refresh_writes_foreign_settlement_calendars(
+    iss: respx.MockRouter,
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("mdhub.jobs.msk_today", lambda: date(2026, 4, 15))
+    summary = cal.seed_calendar(settings, db, http_factory=_http_factory)
+    assert summary["rule_us_fed"]["written"] > 0 and summary["rule_ch_zurich"]["written"] > 0
+    rows = conn.execute(
+        "SELECT calendar, source, min(day) AS lo, max(day) AS hi FROM ref.calendar_day "
+        "WHERE calendar IN ('US_FED', 'CH_ZURICH', 'CN_INTERBANK') GROUP BY 1, 2 ORDER BY 1"
+    ).fetchall()
+    assert rows == [
+        {"calendar": "CH_ZURICH", "source": "rule_ch_zurich", "lo": date(2002, 1, 1),
+         "hi": cal.RULE_END},
+        {"calendar": "CN_INTERBANK", "source": "curated", "lo": date(2024, 1, 1),
+         "hi": date(2026, 12, 31)},
+        {"calendar": "US_FED", "source": "rule_us_fed", "lo": date(2002, 1, 1),
+         "hi": cal.RULE_END},
+    ]  # fmt: skip
+    bc = DbCalendar(db, ttl=0)
+    assert bc(date(2026, 11, 26), "US_FED") is False  # Thanksgiving
+    assert bc(date(2026, 5, 14), "CH_ZURICH") is False  # Ascension
+    assert bc(date(2026, 10, 1), "CN_INTERBANK") is False
+    assert bc(date(2026, 10, 10), "CN_INTERBANK") is True  # adjusted working Saturday
