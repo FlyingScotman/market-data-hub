@@ -265,17 +265,39 @@ def _bond_filter(
 
 
 def _bond_cte(
-    known: bool, *, secids: bool, boards: bool, primary: bool, cursor: bool
+    known: bool,
+    *,
+    secids: bool,
+    boards: bool,
+    primary: bool,
+    cursor: bool,
+    limit: int | None = None,
 ) -> sql.Composed:
     eod, yld, ref = _bond_sources(known)
     join = sql.SQL(" JOIN {ref} b ON b.secid = t.secid").format(ref=ref) if primary else sql.SQL("")
     flt = _bond_filter("t", secids=secids, boards=boards, primary=primary, cursor=cursor)
+    # The first N union keys can only come from the first N keys of either source.
+    # Limit both ordered inputs before materializing/joining their wide data rows;
+    # keep the version query unbounded so changes on later pages still invalidate it.
+    page = (
+        sql.SQL(" ORDER BY t.secid, t.trade_date, t.board LIMIT {}").format(sql.Literal(limit))
+        if limit is not None
+        else sql.SQL("")
+    )
+    # An unused key CTE still counts as another reference to e/y for the planner,
+    # preventing inlining in the version query. Only a page needs the union.
+    keys = (
+        sql.SQL(
+            ", k AS (SELECT trade_date, secid, board FROM e "
+            "UNION SELECT trade_date, secid, board FROM y)"
+        )
+        if limit is not None
+        else sql.SQL("")
+    )
     return sql.SQL(
-        "WITH e AS (SELECT t.* FROM {eod} t{join} WHERE {flt}), "
-        "y AS (SELECT t.* FROM {yld} t{join} WHERE {flt}), "
-        "k AS (SELECT trade_date, secid, board FROM e "
-        "UNION SELECT trade_date, secid, board FROM y) "
-    ).format(eod=eod, yld=yld, join=join, flt=flt)
+        "WITH e AS (SELECT t.* FROM {eod} t{join} WHERE {flt}{page}), "
+        "y AS (SELECT t.* FROM {yld} t{join} WHERE {flt}{page}){keys} "
+    ).format(eod=eod, yld=yld, join=join, flt=flt, page=page, keys=keys)
 
 
 @router.get("/bonds", summary="Bond EOD history, columnar (many bonds per call)")
@@ -334,11 +356,7 @@ def history_bonds(
     version_q = None
     if known is None:
         cte = _bond_cte(False, cursor=False, **flags)
-        version_q = cte + sql.SQL(
-            "SELECT (SELECT count(*) FROM e), (SELECT max(COALESCE(updated_at, ingested_at)) "
-            "FROM e), (SELECT count(*) FROM y), "
-            "(SELECT max(COALESCE(updated_at, ingested_at)) FROM y)"
-        )
+        version_q = cte + sql.SQL("SELECT ev.n, ev.ts, yv.n, yv.ts")
         if primary:
             # the main board comes from ref.bond: its changes invalidate the ETag but are not
             # a write of the selection's rows (text, so not part of data_version)
@@ -349,8 +367,15 @@ def history_bonds(
                 if secids is not None
                 else sql.SQL(", (SELECT max(updated_at)::text FROM ref.bond)")
             )
+        # A single aggregate per input lets PostgreSQL inline the CTE and read only
+        # the version columns, instead of writing all selected rows to a temp file.
+        version_q += sql.SQL(
+            " FROM (SELECT count(*) AS n, max(COALESCE(updated_at, ingested_at)) AS ts "
+            "FROM e) ev CROSS JOIN "
+            "(SELECT count(*) AS n, max(COALESCE(updated_at, ingested_at)) AS ts FROM y) yv"
+        )
     page_q = (
-        _bond_cte(known is not None, cursor=key is not None, **flags)
+        _bond_cte(known is not None, cursor=key is not None, limit=limit + 1, **flags)
         + sql.SQL("SELECT ")
         + _json_array(cols)
         + sql.SQL(
