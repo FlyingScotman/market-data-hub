@@ -1,0 +1,8 @@
+{% macro credentials(p) -%}
+  {% if p.auth == 'rejected' %}<span class="pill bad">rejected</span>
+  {% elif p.auth == 'not_configured' %}<span class="pill warn">not configured</span>
+  {% elif p.auth == 'ok' and p.ok and p.http_status and 200 <= p.http_status < 400 %}<span class="pill ok">probe accepted</span>
+  {% elif p.auth == 'ok' %}<span class="pill warn">configured; unverified</span>
+  {% elif p.auth == 'n/a' %}public source
+  {% else %}<span class="pill warn">not checked</span>{% endif %}
+{%- endmacro %}

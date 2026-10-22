@@ -58,13 +58,14 @@ def _page(ctx: Ctx, status_code: int = 200, **values: Any) -> Response:
         stored = {
             r["name"]: r
             for r in conn.execute(
-                "SELECT name, key_id, set_by, set_at, verified_at, verify_result "
-                "FROM admin.source_credential"
+                "SELECT name, key_id, set_by, set_at FROM admin.source_credential"
             ).fetchall()
         }
         probes = {
             r["source"]: r
-            for r in conn.execute("SELECT source, auth, probed_at FROM ops.v_source_status")
+            for r in conn.execute(
+                "SELECT source, auth, ok, http_status, probed_at, error FROM ops.v_source_status"
+            )
         }
     in_env = set(key["env_names"]) if key else set()
     rows = []

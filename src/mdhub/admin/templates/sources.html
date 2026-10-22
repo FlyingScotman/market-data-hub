@@ -1,20 +1,23 @@
 {% extends "base.html" %}
+{% from "_probe.html" import credentials %}
 {% block title %}Sources{% endblock %}
 {% block content %}
 <h1>Sources</h1>
+<p class="small">A probe checks one endpoint, not every dataset or entitlement. HTTP response received means reachable, not a successful check. Times are UTC.</p>
+<p class="small">Last related load includes succeeded and partial runs of jobs associated with the source; it does not prove this provider supplied data. Fetch time is not the observation time or proof of two-sided quotes.</p>
 <section class="card">
   <table>
-    <thead><tr><th>Source</th><th>Reachable</th><th>Credentials</th><th>HTTP</th><th>Latency</th><th>Probed</th><th>Last ok probe</th><th>TLS expiry</th><th>Last load</th><th>Error</th></tr></thead>
+    <thead><tr><th>Source</th><th>Response / check</th><th>Credentials</th><th>HTTP</th><th>Latency</th><th>Probed (UTC)</th><th>Last ok probe (UTC)</th><th>TLS expiry</th><th>Last related load (UTC)</th><th>Error</th></tr></thead>
     <tbody>
     {% for s in sources %}
     <tr>
       <td title="{{ s.name }}">{{ s.source }}</td>
-      <td>{% if s.ok is none %}-{% elif s.ok %}<span class="pill ok">yes</span>{% else %}<span class="pill bad">no</span>{% endif %}</td>
-      <td><span class="pill {{ 'bad' if s.auth == 'rejected' else ('warn' if s.auth == 'not_configured' else 'ok') }}">{{ s.auth or '-' }}</span></td>
+      <td>{% if s.ok is none %}not checked{% else %}{{ 'HTTP response received' if s.http_status else 'no HTTP response' }}<br><span class="pill {{ 'warn' if s.auth == 'not_configured' else ('ok' if s.ok else 'bad') }}">{{ 'not configured' if s.auth == 'not_configured' else ('passed' if s.ok else 'failed') }}</span>{% endif %}</td>
+      <td>{{ credentials(s) }}</td>
       <td>{{ s.http_status or '-' }}</td><td class="num">{{ s.latency_ms|num }} ms</td>
-      <td>{{ s.probed_at|ago(now) if s.probed_at else 'never' }}</td><td>{{ s.last_ok_probe_at|ago(now) if s.last_ok_probe_at else 'never' }}</td>
+      <td>{{ s.probed_at|dt }}<br><span class="small">{{ s.probed_at|ago(now) if s.probed_at else 'never' }}</span></td><td>{{ s.last_ok_probe_at|dt }}</td>
       <td>{{ s.tls_expires_at|dt if s.tls_expires_at else '-' }}</td>
-      <td>{% if s.last_load_at %}{{ s.last_load_at|ago(now) }} ({{ s.last_load_job }}){% else %}-{% endif %}</td>
+      <td>{% if s.last_load_at %}{{ s.last_load_at|dt }} ({{ s.last_load_job }})<br><span class="pill {{ 'warn' if s.last_load_status == 'partial' else 'ok' }}">{{ s.last_load_status }}</span> {{ s.rows_inserted|num }} / {{ s.rows_updated|num }} inserted / updated{% if s.rows_inserted == 0 and s.rows_updated == 0 %}<br><span class="small">no changed rows</span>{% endif %}{% else %}-{% endif %}</td>
       <td class="small">{{ s.error or '' }}</td>
     </tr>
     {% else %}
