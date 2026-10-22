@@ -92,6 +92,7 @@ SNAPSHOT_INPUT_JOBS: Final = frozenset(
         "cbr_inflation",
         "estr_fixing",
         "sofr_fixing",
+        "saron_fixing",
         "fx_cross",
         "proxy_curves",
     }

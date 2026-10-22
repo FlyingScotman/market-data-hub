@@ -28,9 +28,18 @@ revisions); an empty series is seeded from its history start. A business day bef
 for which the answering source has no value and no source has a row is recorded with
 :func:`mdhub.core.gaps.record_no_data` (backfill contract). All sources failing fails the run.
 
+``saron_fixing(...)`` (19:20 and 09:20 MSK, all days): **SARON** (Swiss Average Rate
+Overnight, % p.a.; SIX administers it and fixes it at the close of each Zurich business day, the
+SNB republishes it) from the SNB data portal cube ``snbgwdzid`` (``snb``,
+:mod:`mdhub.sources.snb`). One source: SIX publishes its own figures only to licensees. The SNB
+host does not answer from the development environment - the parser follows the portal's
+documented CSV export; check it with ``mdhub probe-sources`` on the server.
+
 Datasets (any source counts): ``estr`` (calendar TARGET, from 2019-10-01), ``sofr`` (Monday to
 Friday - U.S. holidays become ``unfillable`` once the source confirms no data - from
-2018-04-02), ``sofr_averages`` (from 2020-03-02, the first NY Fed publication).
+2018-04-02), ``sofr_averages`` (from 2020-03-02, the first NY Fed publication), ``saron``
+(Monday to Friday - Zurich holidays become ``unfillable`` once the source confirms no data -
+from :data:`SARON_HISTORY_START`).
 """
 
 from __future__ import annotations
@@ -49,16 +58,19 @@ from mdhub.datasets import DatasetSpec, register_dataset
 from mdhub.jobs import JobContext, job
 from mdhub.loaders._fallback import Attempt, Fetched, Served, first_answer
 from mdhub.loaders.cbr import FIXING_KEY, fixing_row
-from mdhub.sources import bundesbank, dbnomics, ecb_data, fred, nyfed
+from mdhub.sources import bundesbank, dbnomics, ecb_data, fred, nyfed, snb
 
 __all__ = [
     "ESTR_ATTEMPTS",
     "ESTR_HISTORY_START",
     "LOOKBACK_DAYS",
+    "SARON_ATTEMPTS",
+    "SARON_HISTORY_START",
     "SOFR_ATTEMPTS",
     "SOFR_AVERAGES_START",
     "SOFR_HISTORY_START",
     "estr_fixing",
+    "saron_fixing",
     "sofr_fixing",
 ]
 
@@ -67,6 +79,8 @@ ESTR_HISTORY_START: Final = date(2019, 10, 1)
 SOFR_HISTORY_START: Final = date(2018, 4, 2)
 SOFR_AVERAGES_START: Final = date(2020, 3, 2)
 SOFR_AVERAGE_CODES: Final = ("SOFR30DAVG", "SOFR90DAVG", "SOFR180DAVG", "SOFRINDEX")
+SARON_HISTORY_START: Final = date(2019, 1, 3)
+"""First SARON day the hub seeds (the desk's history starts 2019; SARON itself since 2009)."""
 
 register_dataset(
     DatasetSpec(
@@ -111,6 +125,23 @@ register_dataset(
         min_rows_per_day=4,
         where="index_code IN ('SOFR30DAVG', 'SOFR90DAVG', 'SOFR180DAVG', 'SOFRINDEX')",
         description="SOFR 30/90/180-day averages (% p.a.) and SOFR index; NY Fed, fallback FRED",
+    )
+)
+
+
+register_dataset(
+    DatasetSpec(
+        name="saron",
+        table="md.fixing",
+        date_column="fixing_date",
+        calendar=None,
+        frequency="business_daily",
+        max_lag_days=2,
+        backfill_job="saron_fixing",
+        history_start=SARON_HISTORY_START,
+        where="index_code = 'SARON'",
+        description="SARON (% p.a.), Monday-Friday (Zurich holidays confirmed empty -> "
+        "unfillable); SNB data portal (republishes SIX)",
     )
 )
 
@@ -242,6 +273,36 @@ def _sofr_attempts(d1: date, d2: date) -> list[Attempt[list[Rate]]]:
 
 
 SOFR_ATTEMPTS: Final = ("nyfed", "fred")
+
+
+# ---------------------------------------------------------------------------- SARON
+
+
+def _saron_attempts(d1: date, d2: date) -> list[Attempt[list[Rate]]]:
+    def parse(fetched: list[Fetched]) -> list[Rate]:
+        return [
+            Rate(
+                "SARON",
+                o.day,
+                o.value,
+                details={"series": f"{snb.CUBE}/{snb.SARON_SERIES}", "administrator": "six"},
+            )
+            for o in snb.parse_csv(fetched[0].response.content)
+            if d1 <= o.day <= d2
+        ]
+
+    return [
+        Attempt(
+            "snb",
+            lambda h: [Fetched("snbgwdzid_saron", snb.fetch(h, d1, d2))],
+            parse,
+            snb.PARSER_VERSION,
+            "SNB data portal, republishes the SIX fixing",
+        )
+    ]
+
+
+SARON_ATTEMPTS: Final = ("snb",)
 
 
 # ----------------------------------------------------------------------------- job
@@ -382,6 +443,26 @@ def sofr_fixing(
             "sofr": (("SOFR",), SOFR_HISTORY_START),
             "sofr_averages": (SOFR_AVERAGE_CODES, SOFR_AVERAGES_START),
         },
+        is_expected=lambda d: d.weekday() < 5,
+        d1=d1,
+        d2=d2,
+    )
+
+
+@job("saron_fixing", "SARON (SNB data portal, republishes the SIX fixing) -> md.fixing")
+def saron_fixing(
+    ctx: JobContext,
+    *,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    sources: list[str] | None = None,
+) -> dict[str, Any]:
+    d1, d2, _ = _range(ctx, ("SARON",), SARON_HISTORY_START, date_from, date_to)
+    served = first_answer(ctx, "saron_fixing", _saron_attempts(d1, d2), sources=sources)
+    return _store(
+        ctx,
+        served,
+        datasets={"saron": (("SARON",), SARON_HISTORY_START)},
         is_expected=lambda d: d.weekday() < 5,
         d1=d1,
         d2=d2,

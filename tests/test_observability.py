@@ -134,6 +134,7 @@ def _mock_sources(router: respx.MockRouter) -> dict[str, respx.Route]:
             side_effect=httpx.ConnectError("blocked")
         ),
         "nyfed": router.route(host="markets.newyorkfed.org").respond(200, json={}),
+        "snb": router.route(host="data.snb.ch").respond(403),
         "us_treasury": router.route(host="home.treasury.gov").respond(200, text="<feed/>"),
     }
 
@@ -177,6 +178,7 @@ def test_source_probe_job_records_every_source(
         "dbnomics": (True, "n/a", 200),
         "fred": (False, "n/a", None),
         "nyfed": (True, "n/a", 200),
+        "snb": (False, "n/a", 403),
         "us_treasury": (True, "n/a", 200),
     }
     assert rows["ecb"]["error"].startswith("TransportFailure: ConnectTimeout")

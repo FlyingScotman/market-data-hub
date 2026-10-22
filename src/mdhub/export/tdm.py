@@ -163,8 +163,14 @@ ABSENT: Final[dict[str, str]] = {
         "/v1/curves/cny_rusfar_ois (OIS vs RUSFAR CNY, otc_monitor, from 2026-10-16) and "
         "/v1/curves/cny_ruonia_xccy"
     ),
-    "md_curves:USD SOFR,EUR ESTR,CHF SARON": "no source in the hub",
-    "md_fixings:SOFR,€STR,SARON": "no source in the hub",
+    "md_curves:USD SOFR,EUR ESTR,CHF SARON": (
+        "no OIS source in the hub (licence); government par-yield proxies usd_ust_par / "
+        "eur_aaa_par / eur_bund_par at /v1/curves/{dataset}"
+    ),
+    "md_fixings:SOFR,€STR,SARON": (
+        "not in this CSV: SOFR (nyfed), ESTR (ecb_data_portal) and SARON (snb) fixings are in "
+        "the market snapshot fixings and /v1/history/fixings"
+    ),
     "md_bond_quotes:z_spread_bp,g_spread_bp": (
         "left empty: the hub does not compute spread analytics (MOEX-published Z/G spreads "
         "are in /v1/bonds/eod)"

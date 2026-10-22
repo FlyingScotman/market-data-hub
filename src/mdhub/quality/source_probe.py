@@ -20,7 +20,8 @@ Sources and requests (:data:`PROBES`): ``moex_iss`` ``/iss/engines.json``, ``moe
 ``/iss/engines.json`` with ``MOEX_API_KEY``, ``cbr`` ``XML_daily.asp``, ``ecb``
 ``eurofxref-daily.xml``, ``rosstat`` ``/statistics/price``, the reference-rate sources (WEB-16:
 ``ecb_data_portal`` / ``bundesbank`` / ``dbnomics`` the latest €STR, ``fred`` SOFR of the last 10
-days, ``nyfed`` the latest SOFR, ``us_treasury`` the par-curve feed of the month - at most hourly,
+days, ``nyfed`` the latest SOFR, ``snb`` the dimensions of the SARON cube, ``us_treasury`` the
+par-curve feed of the month - at most hourly,
 the feed is slow), ``ratescalcs`` the JSON snapshot
 (Basic auth; only Mon-Fri 08:50-23:00 MSK, when the service answers), ``otc_monitor``
 ``/api/bond/`` (bearer), ``cbonds`` one ``get_emissions`` query with ``limit=1`` - at most
@@ -64,6 +65,7 @@ from mdhub.sources import (
     raexpert,
     ratescalcs,
     rosstat,
+    snb,
     us_treasury,
 )
 from mdhub.sources.moex_apim import apim_headers
@@ -204,6 +206,7 @@ PROBES: Final = (
     ProbeSpec("dbnomics", _public(f"{dbnomics.BASE_URL}{dbnomics.ESTR_PATH}")),
     ProbeSpec("fred", _fred),
     ProbeSpec("nyfed", _public(f"{nyfed.BASE_URL}/sofr/last/1.json")),
+    ProbeSpec("snb", _public(f"{snb.BASE_URL}/{snb.CUBE}/dimensions/en")),
     ProbeSpec("us_treasury", _us_treasury, min_interval_s=3600.0),
     ProbeSpec("ratescalcs", _ratescalcs, active=ratescalcs_hours),
     ProbeSpec("otc_monitor", _otc_monitor),

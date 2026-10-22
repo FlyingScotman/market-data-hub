@@ -29,6 +29,14 @@ live formats on the server with `mdhub probe-sources` before relying on these fa
 | `dbnomics_ecb_est.json` | `api.db.nomics.world/v22/series/ECB/EST/B.EU000A2X2A25.WT?observations=1` |
 | `fred_estr_2026-09-28_2026-10-20.csv` | `fred.stlouisfed.org/graph/fredgraph.csv?id=ECBESTRVOLWGTTRMDMNRT&cosd=...&coed=...` |
 | `fred_sofr_2026-09-28_2026-10-20.csv` | `...?id=SOFR,SOFR30DAYAVG,SOFR90DAYAVG,SOFR180DAYAVG,SOFRINDEX&...` |
+| `snb_saron_synthetic.csv` | `data.snb.ch/api/cube/snbgwdzid/data/csv/en?fromDate=...&toDate=...&dimSel=D0(SARON)` |
+
+`snb_saron_synthetic.csv` (contract 1.4 package P6): `data.snb.ch` does not answer from the
+development environment either, and no recorded SARON value is available here, so the file has
+**synthetic round test values** (not SARON fixings) in the SNB data portal's documented CSV
+layout (preamble `CubeId` / `PublishingDate`, empty line, `"Date";"D0";"Value"`, quoted,
+semicolon-separated, CRLF, an empty `Value` on 2026-10-16). Check the cube id, the `SARON` series
+code and the layout with `mdhub probe-sources -s snb` on the server before relying on it.
 
 CBR inflation (`../official/cbr_infl_2024-01_2026-09.html`, recorded:
 `www.cbr.ru/hd_base/infl/?UniDbQuery.Posted=True&UniDbQuery.From=01.01.2024&UniDbQuery.To=30.09.2026`)

@@ -129,7 +129,7 @@ src/mdhub/
    `INSERT INTO ops.source (code, name, base_url, licence_note) VALUES (...) ON CONFLICT DO NOTHING;`
    Seeded already: `moex_iss`, `moex_apim`, `moex_passport`, `moex_sdfi`, `ratescalcs`,
    `cbr`, `ecb`, `cbonds`, `otc_monitor`, `andromeda`, `rosstat`, `ecb_data_portal`,
-   `bundesbank`, `dbnomics`, `fred`, `nyfed`, `us_treasury` (one code per host), `nkr`, `nra`, `raexpert`, `acra`.
+   `bundesbank`, `dbnomics`, `fred`, `nyfed`, `us_treasury`, `snb` (one code per host), `nkr`, `nra`, `raexpert`, `acra`.
 2. Add `src/mdhub/sources/<name>.py`: functions that take an `HttpClient` (and explicit
    arguments) and return the raw `httpx.Response` plus parsed, typed records. No DB access,
    no `Settings()` reads inside parsers. Credentials come in as arguments (built from
