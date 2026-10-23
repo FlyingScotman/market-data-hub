@@ -33,7 +33,34 @@ CN_INTERBANK    ``curated`` (State Council    ``curated`` for the decreed years 
                 holiday notices, with the     last one the calendar is unknown (``valid_to``):
                 adjusted working weekends)    the lunar holidays and the transfers are decreed
                                               every year, never guessed
+MOEX_SPFI       ``rule_moex_spfi``: derived   same rule; ``rule_moex_spfi_unverified`` where
+                from the effective MOEX_FORTS the MOEX_FORTS day is provisional
+                days (:func:`spfi_days`)
+CBR_RUONIA      ``rule_cbr_ruonia``: derived  same rule; the year-end day of a year after
+                from RU_PRODUCTION minus the  ``year_end_decided_through`` (and days of
+                last business day of the year unverified RU_PRODUCTION years) as
+                (:func:`ruonia_publication_  ``rule_cbr_ruonia_unverified``
+                days`); ``curated``: 2020
+                non-publication days
+MOEX_RUSFAR     ``rule_moex_rusfar``: RU and  same rule; ``rule_moex_rusfar_unverified``
+                MOEX_STOCK business weekdays  where an input day is provisional
+                minus the last MOEX trading
+                day of the year (2021-)
+                (:func:`rusfar_calculation_
+                days`); ``curated``: 2019 and
+                2022 exceptions
 =============== ============================ ===============================================
+
+The derived calendars (contract 1.6, TDM brief H17) are the calendars the MOEX RUB swap
+specifications name besides ``MOSCOW`` (= ``RU_PRODUCTION``): ``SPFI``, ``RUONIA`` and ``RUSFAR``
+(MOEX OIS RUONIA: joint SPFI + MOSCOW + RUONIA). They are computed after the curated and rule steps
+from the effective days of their base calendars (``ref.calendar_effective``) by the documented rule
+of each, with the rule parameters and the curated exceptions (source ``curated``, outranking the
+rule) in the versioned file ``mdhub/data/calendar_derived.json`` (every entry cites its primary
+source). A day whose flag rests on a provisional input is written by ``rule_*_unverified`` (rank of
+``curated_unverified``; the static snapshot reports it through ``provisional_from``). The fixings
+only cross-check them (:func:`fixing_crosscheck`: a RUONIA / RUSFAR value on a non-calculation day
+-> warning, run ``partial``; a calculation day without a value is a data gap of the dataset).
 
 The foreign calendars (contract 1.5, TDM brief H13 / package H4) give the FX value dates of
 non-RUB legs: a consumer builds the settlement calendar of a pair as the joint calendar of the
@@ -109,30 +136,47 @@ from mdhub.jobs import JobContext
 
 __all__ = [
     "CURATED_RESOURCE",
+    "DERIVED_CALENDARS",
+    "DERIVED_RESOURCE",
+    "DERIVED_RULES",
+    "DERIVED_START",
     "OBSERVED_START",
     "RULE_CALENDARS",
+    "RUONIA_CALENDAR",
+    "RUSFAR_CALENDAR",
     "SOURCE_PRIORITY",
+    "SPFI_CALENDAR",
     "TARGET_RULE_END",
     "TARGET_RULE_SOURCE",
     "TARGET_RULE_START",
     "CuratedCalendar",
     "CuratedYear",
+    "DerivedCalendar",
+    "DerivedOverride",
+    "DerivedRules",
     "RuleCalendar",
     "ch_zurich_closing_days",
     "easter_sunday",
+    "effective_flags",
+    "fixing_crosscheck",
     "iss_calendar_days",
     "iss_weekend_sessions",
     "load_curated",
+    "load_derived",
     "refresh_calendar",
     "retire_source",
     "rule_days",
     "ruonia_crosscheck",
+    "ruonia_publication_days",
+    "rusfar_calculation_days",
     "seed_calendar",
+    "spfi_days",
     "target_closing_days",
     "target_crosscheck",
     "target_rule_days",
     "us_fed_closing_days",
     "write_calendar_days",
+    "write_derived_calendar",
 ]
 
 log = logging.getLogger(__name__)
@@ -150,11 +194,12 @@ SOURCE_PRIORITY: Final = {
     "curated_unverified": 5,
 }
 """Source precedence per (calendar, day), lower wins (``observed`` = any ``observed_*``,
-``rule`` = any ``rule_*``): observed trading/fixings/rates > days the official MOEX ISS
-calendar lists > curated file > computed holiday rule (e.g. ``rule_target``) > unverified
-curated file > anything else; the weekday rule applies only when no row exists. Recency
-(``known_at``) only breaks ties within a rank. Mirrored by ``ref.calendar_source_rank``
-(migrations 0420, 0422) used by ``ref.calendar_effective`` and
+``rule`` = any ``rule_*``, ``curated_unverified`` = any ``*_unverified``, e.g. the provisional
+``rule_cbr_ruonia_unverified``): observed trading/fixings/rates > days the official MOEX ISS
+calendar lists > curated file > computed or derived rule (e.g. ``rule_target``) > provisional
+(unverified curated file or derived rule on a provisional input) > anything else; the weekday rule
+applies only when no row exists. Recency (``known_at``) only breaks ties within a rank. Mirrored by
+``ref.calendar_source_rank`` (migrations 0420, 0422, 0429) used by ``ref.calendar_effective`` and
 :class:`mdhub.core.bizday.DbCalendar`."""
 OFFICIAL_CURATED_CALENDARS: Final = frozenset({"RU_PRODUCTION"})
 """Calendars whose curated years are the authority for past days too (module doc)."""
@@ -403,6 +448,285 @@ RULE_CALENDARS: Final = (
 """Computed calendars and their sources. ``CN_INTERBANK`` is not computable (the State Council
 decrees the holidays and the adjusted working weekends every year): it comes from the curated
 file only, for the decreed years."""
+
+
+# ------------------------------------- calendars of RUB swaps and fixings (1.6, H17)
+
+DERIVED_RESOURCE: Final = "calendar_derived.json"
+DERIVED_START: Final = OBSERVED_START
+"""The derived calendars start with their base calendars (the official RU_PRODUCTION years and the
+observed MOEX calendars run from 2019)."""
+UNVERIFIED_SUFFIX: Final = "_unverified"
+SPFI_CALENDAR: Final = "MOEX_SPFI"
+RUONIA_CALENDAR: Final = "CBR_RUONIA"
+RUSFAR_CALENDAR: Final = "MOEX_RUSFAR"
+
+Flags = dict[date, tuple[bool, bool]]
+"""``day -> (is_business_day, verified)``: ``verified`` is false when the flag rests on a
+provisional input (an ``*_unverified`` row of a base calendar, an undecided year-end)."""
+
+
+@dataclass(frozen=True, slots=True)
+class DerivedOverride:
+    day: date
+    is_business_day: bool
+    reference: str
+
+
+@dataclass(frozen=True, slots=True)
+class DerivedRules:
+    """The versioned rule parameters and curated exceptions of :data:`DERIVED_RESOURCE`."""
+
+    version: str
+    known_at: datetime
+    references: Mapping[str, str]
+    overrides: Mapping[str, tuple[DerivedOverride, ...]]
+    ruonia_year_end_decided_through: int
+    rusfar_year_end_from: int
+
+
+def load_derived(text: str | None = None) -> DerivedRules:
+    """Parse and validate the derived-calendar file (package data by default)."""
+    if text is None:
+        text = resources.files("mdhub.data").joinpath(DERIVED_RESOURCE).read_text("utf-8")
+    try:
+        data = json.loads(text)
+        version = str(data["version"])
+        known_at = datetime.fromisoformat(data["known_at"])
+        cals = data["calendars"]
+        refs = {c: str(cals[c]["reference"]) for c in DERIVED_CALENDARS}
+        overrides: dict[str, tuple[DerivedOverride, ...]] = {}
+        for c in DERIVED_CALENDARS:
+            rows = [
+                DerivedOverride(
+                    date.fromisoformat(o["day"]), o["is_business_day"], str(o["reference"])
+                )
+                for o in cals[c]["overrides"]
+            ]
+            overrides[c] = tuple(sorted(rows, key=lambda o: o.day))
+        decided = int(cals[RUONIA_CALENDAR]["year_end_decided_through"])
+        year_end_from = int(cals[RUSFAR_CALENDAR]["year_end_from"])
+    except (ValueError, KeyError, TypeError) as exc:
+        raise FormatDriftError(f"derived calendar: bad file: {exc}") from None
+    if data.get("format") != 1 or known_at.tzinfo is None:
+        raise FormatDriftError("derived calendar: unsupported format or naive known_at")
+    if set(cals) != set(DERIVED_CALENDARS):
+        raise FormatDriftError(f"derived calendar: calendars {sorted(cals)}")
+    for c, listed in overrides.items():
+        days = [o.day for o in listed]
+        if len(set(days)) != len(days):
+            raise FormatDriftError(f"derived calendar: {c}: a day listed twice")
+        for o in listed:
+            if not isinstance(o.is_business_day, bool) or not o.reference:
+                raise FormatDriftError(f"derived calendar: {c} {o.day}: flag or reference")
+    return DerivedRules(version, known_at, refs, overrides, decided, year_end_from)
+
+
+def _full_years(days: Iterable[date]) -> set[int]:
+    """Years of which ``days`` holds every calendar day."""
+    count: dict[int, int] = {}
+    for d in days:
+        count[d.year] = count.get(d.year, 0) + 1
+    return {y for y, n in count.items() if n == (date(y, 12, 31) - date(y, 1, 1)).days + 1}
+
+
+def _last_business_days(flags: Flags, years: Iterable[int]) -> dict[int, date]:
+    """The last business day of each of ``years`` (years without one are left out)."""
+    last: dict[int, date] = {}
+    wanted = set(years)
+    for d, (flag, _verified) in flags.items():
+        if flag and d.year in wanted and d > last.get(d.year, date.min):
+            last[d.year] = d
+    return last
+
+
+def spfi_days(forts: Flags) -> Flags:
+    """``MOEX_SPFI``: the trading days of the MOEX standardised derivatives (SPFI) market. MOEX
+    sets them together with the derivatives market in every holiday schedule (news n68572), so
+    the calendar is the effective ``MOEX_FORTS`` business days (weekend sessions excluded). On a
+    holiday trading day RUB obligations are not settled: a RUB swap joins ``MOSCOW``
+    (= ``RU_PRODUCTION``), as the MOEX specifications do."""
+    return dict(sorted(forts.items()))
+
+
+def ruonia_publication_days(ru: Flags, *, decided_through: int) -> Flags:
+    """``CBR_RUONIA``: days for which the Bank of Russia calculates and publishes RUONIA
+    (methodology clause 5.1): ``RU_PRODUCTION`` business days (five-day week, working Saturdays
+    included) except the last business day of every year - decided by the Bank of Russia each
+    year (2019-2025: never published); years after ``decided_through`` carry that day as a
+    provisional non-publication day. Only years ``ru`` covers in full (the year-end needs them);
+    the curated exceptions (2020 presidential non-working days) are separate rows."""
+    years = _full_years(ru)
+    last = _last_business_days(ru, years)
+    out: Flags = {}
+    for d, (flag, verified) in sorted(ru.items()):
+        if d.year not in years:
+            continue
+        if flag and d == last.get(d.year):
+            out[d] = (False, verified and d.year <= decided_through)
+        else:
+            out[d] = (flag, verified)
+    return out
+
+
+def rusfar_calculation_days(ru: Flags, stock: Flags, *, year_end_from: int) -> Flags:
+    """``MOEX_RUSFAR``: calculation days of the RUB overnight RUSFAR (MOEX methodology in force
+    from 2026-01-19, Non-calculation days): ``RU_PRODUCTION`` business days that are Monday to
+    Friday (no trading Saturdays, no trading non-working days) and ``MOEX_STOCK`` business days
+    (MOEX trades), except the last ``MOEX_STOCK`` business day of the year (from
+    ``year_end_from``; that day may itself be a trading non-working day, e.g. 30.12.2024, and then
+    the last weekday before it is calculated). Only days both calendars cover, in years
+    ``stock`` covers in full; curated exceptions are separate rows."""
+    years = _full_years(stock)
+    last = _last_business_days(stock, years)
+    year_verified = dict.fromkeys(years, True)
+    for d, (_flag, verified) in stock.items():
+        if d.year in year_verified and not verified:
+            year_verified[d.year] = False
+    out: Flags = {}
+    for d, (ru_flag, ru_verified) in sorted(ru.items()):
+        if d.year not in years or d not in stock:
+            continue
+        stock_flag, stock_verified = stock[d]
+        flag = ru_flag and stock_flag and d.weekday() < 5
+        verified = ru_verified and stock_verified
+        if d.year >= year_end_from and d == last.get(d.year):
+            flag = False
+            verified = verified and year_verified[d.year]
+        out[d] = (flag, verified)
+    return out
+
+
+@dataclass(frozen=True, slots=True)
+class DerivedCalendar:
+    """A calendar computed from the effective days of other calendars (``rule_*`` source)."""
+
+    calendar: str
+    source: str
+    version: str
+    bases: tuple[str, ...]
+    derive: Callable[[Mapping[str, Flags], DerivedRules], Flags]
+    note: str
+
+
+DERIVED_CALENDARS: Final = (SPFI_CALENDAR, RUONIA_CALENDAR, RUSFAR_CALENDAR)
+DERIVED_RULES: Final = (
+    DerivedCalendar(
+        SPFI_CALENDAR,
+        "rule_moex_spfi",
+        "moex-spfi-1",
+        ("MOEX_FORTS",),
+        lambda b, _r: spfi_days(b["MOEX_FORTS"]),
+        "MOEX SPFI market trading days = MOEX_FORTS business days (MOEX holiday schedules, "
+        "news n68572)",
+    ),
+    DerivedCalendar(
+        RUONIA_CALENDAR,
+        "rule_cbr_ruonia",
+        "cbr-ruonia-1",
+        ("RU_PRODUCTION",),
+        lambda b, r: ruonia_publication_days(
+            b["RU_PRODUCTION"], decided_through=r.ruonia_year_end_decided_through
+        ),
+        "RUONIA calculation days: RU_PRODUCTION business days except the last business day of "
+        "the year (Bank of Russia methodology cl. 5.1 and yearly decisions)",
+    ),
+    DerivedCalendar(
+        RUSFAR_CALENDAR,
+        "rule_moex_rusfar",
+        "moex-rusfar-1",
+        ("RU_PRODUCTION", "MOEX_STOCK"),
+        lambda b, r: rusfar_calculation_days(
+            b["RU_PRODUCTION"], b["MOEX_STOCK"], year_end_from=r.rusfar_year_end_from
+        ),
+        "RUB overnight RUSFAR calculation days: RU_PRODUCTION and MOEX_STOCK business days, "
+        "Monday-Friday, except the last MOEX trading day of the year (MOEX RUSFAR methodology, "
+        "Non-calculation days)",
+    ),
+)
+"""The derived calendars, in refresh order (after the curated and rule steps)."""
+
+
+def effective_flags(conn: psycopg.Connection[Any], calendar: str, start: date, end: date) -> Flags:
+    """``ref.calendar_effective`` days of ``calendar`` in ``[start, end]`` with whether the
+    winning source is verified (not ``*_unverified``)."""
+    with conn.cursor(row_factory=tuple_row) as cur:
+        rows = cur.execute(
+            """SELECT day, is_business_day, source FROM ref.calendar_effective
+               WHERE calendar = %s AND day BETWEEN %s AND %s ORDER BY day""",
+            (calendar, start, end),
+        ).fetchall()
+    return {d: (bool(flag), not str(src).endswith(UNVERIFIED_SUFFIX)) for d, flag, src in rows}
+
+
+def write_derived_calendar(
+    conn: psycopg.Connection[Any],
+    spec: DerivedCalendar,
+    rules: DerivedRules,
+    *,
+    start: date,
+    end: date,
+    run_id: int | None,
+) -> UpsertResult:
+    """Derive ``spec.calendar`` for ``[start, end]`` from the effective base days and write it:
+    verified days as ``spec.source``, provisional ones as ``spec.source + '_unverified'`` (a day
+    that moves between the two is retired from the other source), and the curated overrides of
+    the derived days as ``curated`` (an override outside the days the base calendars cover is not
+    written: it would claim a covered range; overrides no longer listed are soft-deleted)."""
+    bases = {
+        b: effective_flags(conn, b, date(start.year, 1, 1), date(end.year, 12, 31))
+        for b in spec.bases
+    }
+    days = {d: v for d, v in spec.derive(bases, rules).items() if start <= d <= end}
+    known = utc_now()
+    unverified_source = spec.source + UNVERIFIED_SUFFIX
+    verified = {d: flag for d, (flag, ok) in days.items() if ok}
+    provisional = {d: flag for d, (flag, ok) in days.items() if not ok}
+    total = retire_source(conn, spec.calendar, unverified_source, verified, run_id=run_id)
+    total += retire_source(conn, spec.calendar, spec.source, provisional, run_id=run_id)
+    for source, part in ((spec.source, verified), (unverified_source, provisional)):
+        total += write_calendar_days(
+            conn,
+            spec.calendar,
+            source,
+            part,
+            known_at=known,
+            run_id=run_id,
+            version=spec.version,
+            note=spec.note,
+        )
+    overrides = [o for o in rules.overrides[spec.calendar] if o.day in days]
+    total += _drop_unlisted(
+        conn,
+        spec.calendar,
+        "curated",
+        {o.day for o in overrides},
+        after=start - timedelta(days=1),
+        run_id=run_id,
+    )
+    for o in overrides:
+        total += write_calendar_days(
+            conn,
+            spec.calendar,
+            "curated",
+            {o.day: o.is_business_day},
+            known_at=rules.known_at,
+            run_id=run_id,
+            version=rules.version,
+            note=o.reference[:500],
+        )
+    return total
+
+
+def fixing_crosscheck(
+    fixing_dates: Iterable[date], flags: Mapping[date, bool], today: date
+) -> tuple[list[date], list[date]]:
+    """Fixing dates vs a derived fixing calendar (``CBR_RUONIA``, ``MOEX_RUSFAR``), as
+    :func:`target_crosscheck`: ``(missing, unexpected)``. Days the calendar does not cover are
+    not judged."""
+    covered = [d for d in fixing_dates if d in flags]
+    missing, unexpected = target_crosscheck(covered, lambda d: flags.get(d, False), today)
+    return [d for d in missing if d in flags], unexpected
 
 
 def target_crosscheck(
@@ -862,8 +1186,10 @@ def refresh_calendar(
     ctx: JobContext, *, full: bool = False, since: date | None = None
 ) -> dict[str, Any]:
     """Refresh ``ref.calendar_day`` (observed MOEX history, MOEX ISS calendar, curated file,
-    the rule calendars :data:`RULE_CALENDARS`: TARGET, US_FED, CH_ZURICH) and cross-check
-    RU_PRODUCTION against the RUONIA dates and TARGET against the ECB rate dates.
+    the rule calendars :data:`RULE_CALENDARS`: TARGET, US_FED, CH_ZURICH, then the derived
+    calendars :data:`DERIVED_RULES`: MOEX_SPFI, CBR_RUONIA, MOEX_RUSFAR) and cross-check
+    RU_PRODUCTION against the RUONIA dates, CBR_RUONIA / MOEX_RUSFAR against the RUONIA / RUSFAR
+    dates and TARGET against the ECB rate dates.
 
     ``full`` re-reads observed history from ``since``; otherwise from the last observed day
     minus :data:`INCREMENTAL_OVERLAP_DAYS`. ``since`` defaults to :data:`OBSERVED_START`
@@ -999,6 +1325,71 @@ def refresh_calendar(
             )
 
         step(rc.source, rule)
+
+    derived_rules: list[DerivedRules] = []
+
+    def derived(conn: psycopg.Connection[Any], spec: DerivedCalendar) -> UpsertResult:
+        if not derived_rules:
+            derived_rules.append(load_derived())
+        start = DERIVED_START if since is None else max(since, DERIVED_START)
+        return write_derived_calendar(
+            conn,
+            spec,
+            derived_rules[0],
+            start=start,
+            end=max(date(today.year + 1, 12, 31), RULE_END),
+            run_id=ctx.run.id,
+        )
+
+    for spec in DERIVED_RULES:
+
+        def derived_step(
+            conn: psycopg.Connection[Any], spec: DerivedCalendar = spec
+        ) -> UpsertResult:
+            return derived(conn, spec)
+
+        step(spec.source, derived_step)
+
+    def fixing_check(conn: psycopg.Connection[Any]) -> None:
+        """RUONIA (CBR) and RUSFAR (MOEX) fixing dates vs ``CBR_RUONIA`` / ``MOEX_RUSFAR``.
+        Reports only - never changes the calendars. A fixing on a non-calculation day is a
+        calendar error (warning, run ``partial``: add a curated override); a calculation day
+        without a fixing is a data gap of the fixing dataset (listed, quality job)."""
+        lo = base if full or since is not None else today - timedelta(days=62)
+        lo = max(lo, DERIVED_START)
+        queries = {
+            RUONIA_CALENDAR: "SELECT fixing_date FROM md.fixing WHERE index_code = 'RUONIA' "
+            "AND source = 'cbr' AND fixing_date BETWEEN %s AND %s",
+            RUSFAR_CALENDAR: "SELECT DISTINCT trade_date FROM md.index_eod "
+            "WHERE secid = 'RUSFAR' AND trade_date BETWEEN %s AND %s",
+        }
+        result: dict[str, Any] = {}
+        for calendar, query in queries.items():
+            with conn.cursor(row_factory=tuple_row) as cur:
+                dates = [r[0] for r in cur.execute(query, (lo, today)).fetchall()]
+            flags = {d: v for d, (v, _ok) in effective_flags(conn, calendar, lo, today).items()}
+            missing, unexpected = fixing_crosscheck(dates, flags, today)
+            result[calendar] = {
+                "checked_days": len(dates),
+                "calculation_days_without_fixing": [d.isoformat() for d in missing],
+                "fixings_on_non_calculation_days": [d.isoformat() for d in unexpected],
+            }
+            if unexpected:
+                msg = (
+                    f"calendar {calendar} cross-check: {len(unexpected)} fixing(s) on "
+                    f"non-calculation days {_short(unexpected)}; calendar unchanged"
+                )
+                ctx.logger.warning(msg)
+                failures.append(msg)
+        summary["fixing_crosscheck"] = result
+
+    try:
+        with ctx.connection() as conn:
+            fixing_check(conn)
+    except (psycopg.Error, ValueError) as exc:
+        ctx.logger.exception("calendar fixing cross-check failed")
+        failures.append(f"calendar fixing_crosscheck: {type(exc).__name__}: {exc}")
+        summary["fixing_crosscheck"] = "failed"
 
     def target_check(conn: psycopg.Connection[Any]) -> None:
         """ECB rate dates vs the effective TARGET calendar (rule, or a curated override; rule

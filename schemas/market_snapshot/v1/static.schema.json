@@ -1290,7 +1290,7 @@
           ]
         },
         "provisional_from": {
-          "description": "First day whose flag comes from an unverified source (curated_unverified); null if none",
+          "description": "First day whose flag comes from an unverified source (curated_unverified; 1.6: also rule_*_unverified, a derived calendar on a provisional input); null if none",
           "allOf": [
             {
               "$ref": "common.schema.json#/$defs/date_or_null"

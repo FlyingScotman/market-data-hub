@@ -47,7 +47,8 @@ def _bundle(conn: Conn, sid: str) -> dict[str, Any]:
 
 
 def test_version() -> None:
-    assert SCHEMA_VERSION == "market_snapshot/1.5"
+    assert SCHEMA_VERSION.startswith("market_snapshot/1.")  # the 1.5 rules hold in later minors
+    assert int(SCHEMA_VERSION.rsplit(".", 1)[1]) >= 5
 
 
 def test_settlement_calendar_mapping() -> None:
@@ -174,7 +175,7 @@ def _ds(doc: dict[str, Any], name: str) -> dict[str, Any]:
 
 def test_fx_rates_value_dates(market: tuple[dict[str, Any], dict[str, Any]]) -> None:
     eod, _ = market
-    assert eod["schema_version"] == "market_snapshot/1.5"
+    assert eod["schema_version"] == SCHEMA_VERSION
     moex = {r["secid"]: r for r in eod["data"]["fx_rates"] if r["kind"] == "moex_eod"}
     assert moex["CNY000000TOD"]["settle_date"] == "2026-10-15"
     assert moex["CNYRUB_TOM"]["settle_date"] == "2026-10-16"

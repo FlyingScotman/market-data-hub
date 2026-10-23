@@ -1,0 +1,48 @@
+{
+  "format": 1,
+  "version": "2026-10-23.1",
+  "known_at": "2026-10-23T00:00:00+03:00",
+  "description": "Rules and curated exceptions of the derived calendars MOEX_SPFI, CBR_RUONIA and MOEX_RUSFAR (contract market_snapshot/1.6, TDM brief H17, market-data-hub#38). The refresh derives each calendar from the effective days of its base calendar(s) by the rule of mdhub.loaders.calendar (sources rule_*; rule_*_unverified where an input is provisional) and writes the overrides below as source curated (precedence curated > rule). Every rule and override cites its primary source.",
+  "calendars": {
+    "MOEX_SPFI": {
+      "rule": "MOEX_FORTS business days: MOEX announces the trading days of the standardised derivatives (SPFI) market together with the derivatives market in every holiday schedule; the MOEX swap specifications name the SPFI calendar next to MOSCOW",
+      "reference": "MOEX news n68572 of 2024-03-27 (https://www.moex.com/n68572): trading on the derivatives market and the SPFI market on 29-30.04 and 10.05.2024, not on 28.04, 01.05, 04-05.05, 09.05; on those holiday trading days SPFI contracts with RUB obligations are not settled (a RUB consumer joins MOSCOW = RU_PRODUCTION). MOEX, Metodika formirovaniya tsenovykh krivykh SPFI, version of 2025-03-24 (https://www.moex.com/ru/documents/27002), Appendix 1: calendars SPFI, MOSCOW (, RUONIA / RUSFAR) of the RUB swap specifications",
+      "overrides": []
+    },
+    "CBR_RUONIA": {
+      "rule": "RU_PRODUCTION business days (production calendar for a five-day week, working Saturdays included) except the days for which the Bank of Russia decides not to calculate RUONIA: every year 2019-2025 the last business day of the year; for later years that day is projected as provisional until the decision is known",
+      "reference": "Bank of Russia, RUONIA methodology (https://www.cbr.ru/Content/Document/File/131094/Meth_ruonia_20211129.pdf, page https://www.cbr.ru/hd_base/ruonia/method/), clause 5.1: RUONIA is not calculated or published for days that are weekends or non-working holidays under the production calendar for a five-day week, nor for days for which the Bank of Russia decides not to calculate it. Year-end days without a published RUONIA: 31.12.2019, 31.12.2020, 30.12.2021, 30.12.2022, 29.12.2023, Sat 28.12.2024, 30.12.2025 (CBR RUONIA history, hub md.fixing source cbr, checked 2026-10-23)",
+      "year_end_decided_through": 2025,
+      "overrides": [
+        {"day": "2020-03-30", "is_business_day": false, "reference": "presidential non-working week 30.03-03.04.2020 (Decree No. 206): no RUONIA published by the Bank of Russia (CBR RUONIA history, checked 2026-10-23); a production-calendar business day"},
+        {"day": "2020-03-31", "is_business_day": false, "reference": "presidential non-working week 30.03-03.04.2020 (Decree No. 206): no RUONIA published by the Bank of Russia (CBR RUONIA history, checked 2026-10-23); a production-calendar business day"},
+        {"day": "2020-04-01", "is_business_day": false, "reference": "presidential non-working week 30.03-03.04.2020 (Decree No. 206): no RUONIA published by the Bank of Russia (CBR RUONIA history, checked 2026-10-23); a production-calendar business day"},
+        {"day": "2020-04-02", "is_business_day": false, "reference": "presidential non-working week 30.03-03.04.2020 (Decree No. 206): no RUONIA published by the Bank of Russia (CBR RUONIA history, checked 2026-10-23); a production-calendar business day"},
+        {"day": "2020-04-03", "is_business_day": false, "reference": "presidential non-working week 30.03-03.04.2020 (Decree No. 206): no RUONIA published by the Bank of Russia (CBR RUONIA history, checked 2026-10-23); a production-calendar business day"},
+        {"day": "2020-06-24", "is_business_day": false, "reference": "presidential non-working day 24.06.2020 (Victory Parade, presidential decree): no RUONIA published by the Bank of Russia (CBR RUONIA history, checked 2026-10-23); a production-calendar business day"}
+      ]
+    },
+    "MOEX_RUSFAR": {
+      "rule": "RU_PRODUCTION business days that are Monday-Friday and MOEX_STOCK business days (MOEX trades), except the last MOEX_STOCK business day of the year (from 2021)",
+      "reference": "MOEX, Metodologiya rascheta indikatora RUSFAR, in force from 2026-01-19, approved by the Management Board on 2025-11-13 (minutes No. 84) (https://www.moex.com/ru/documents/metodologiyu-rascheta-indikatora-rusfar): the indicator is not calculated if the first or second leg of the repo falls on a trading non-working day, a trading Saturday or Sunday, nor on the last trading day of the calendar year (Non-calculation days). MOEX ISS RUSFAR history (checked 2026-10-23): RUSFAR was calculated on the last trading days of 2019 and 2020 (30.12), not on those of 2021-2025, hence year_end_from = 2021. RUB overnight RUSFAR only (RUSFARCNY also skips Chinese holidays)",
+      "year_end_from": 2021,
+      "overrides": [
+        {"day": "2019-04-30", "is_business_day": false, "reference": "MOEX ISS RUSFAR history has no value (checked 2026-10-23): the overnight repo of 30.04.2019 ended on the trading non-working day 02.05.2019"},
+        {"day": "2019-05-08", "is_business_day": false, "reference": "MOEX ISS RUSFAR history has no value (checked 2026-10-23): the overnight repo of 08.05.2019 ended on the trading non-working day 10.05.2019"},
+        {"day": "2022-02-28", "is_business_day": true, "reference": "MOEX equity indices were not calculated 28.02-18.03.2022 (observed MOEX_STOCK: no trading) but the money market traded and RUSFAR was published (MOEX ISS RUSFAR history, checked 2026-10-23)"},
+        {"day": "2022-03-01", "is_business_day": true, "reference": "MOEX equity indices were not calculated 28.02-18.03.2022 (observed MOEX_STOCK: no trading) but the money market traded and RUSFAR was published (MOEX ISS RUSFAR history, checked 2026-10-23)"},
+        {"day": "2022-03-02", "is_business_day": true, "reference": "MOEX equity indices were not calculated 28.02-18.03.2022 (observed MOEX_STOCK: no trading) but the money market traded and RUSFAR was published (MOEX ISS RUSFAR history, checked 2026-10-23)"},
+        {"day": "2022-03-03", "is_business_day": true, "reference": "MOEX equity indices were not calculated 28.02-18.03.2022 (observed MOEX_STOCK: no trading) but the money market traded and RUSFAR was published (MOEX ISS RUSFAR history, checked 2026-10-23)"},
+        {"day": "2022-03-04", "is_business_day": true, "reference": "MOEX equity indices were not calculated 28.02-18.03.2022 (observed MOEX_STOCK: no trading) but the money market traded and RUSFAR was published (MOEX ISS RUSFAR history, checked 2026-10-23)"},
+        {"day": "2022-03-09", "is_business_day": true, "reference": "MOEX equity indices were not calculated 28.02-18.03.2022 (observed MOEX_STOCK: no trading) but the money market traded and RUSFAR was published (MOEX ISS RUSFAR history, checked 2026-10-23)"},
+        {"day": "2022-03-10", "is_business_day": true, "reference": "MOEX equity indices were not calculated 28.02-18.03.2022 (observed MOEX_STOCK: no trading) but the money market traded and RUSFAR was published (MOEX ISS RUSFAR history, checked 2026-10-23)"},
+        {"day": "2022-03-11", "is_business_day": true, "reference": "MOEX equity indices were not calculated 28.02-18.03.2022 (observed MOEX_STOCK: no trading) but the money market traded and RUSFAR was published (MOEX ISS RUSFAR history, checked 2026-10-23)"},
+        {"day": "2022-03-14", "is_business_day": true, "reference": "MOEX equity indices were not calculated 28.02-18.03.2022 (observed MOEX_STOCK: no trading) but the money market traded and RUSFAR was published (MOEX ISS RUSFAR history, checked 2026-10-23)"},
+        {"day": "2022-03-15", "is_business_day": true, "reference": "MOEX equity indices were not calculated 28.02-18.03.2022 (observed MOEX_STOCK: no trading) but the money market traded and RUSFAR was published (MOEX ISS RUSFAR history, checked 2026-10-23)"},
+        {"day": "2022-03-16", "is_business_day": true, "reference": "MOEX equity indices were not calculated 28.02-18.03.2022 (observed MOEX_STOCK: no trading) but the money market traded and RUSFAR was published (MOEX ISS RUSFAR history, checked 2026-10-23)"},
+        {"day": "2022-03-17", "is_business_day": true, "reference": "MOEX equity indices were not calculated 28.02-18.03.2022 (observed MOEX_STOCK: no trading) but the money market traded and RUSFAR was published (MOEX ISS RUSFAR history, checked 2026-10-23)"},
+        {"day": "2022-03-18", "is_business_day": true, "reference": "MOEX equity indices were not calculated 28.02-18.03.2022 (observed MOEX_STOCK: no trading) but the money market traded and RUSFAR was published (MOEX ISS RUSFAR history, checked 2026-10-23)"}
+      ]
+    }
+  }
+}

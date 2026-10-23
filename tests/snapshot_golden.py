@@ -31,6 +31,14 @@ bonds and the business date 2026-10-15, stored as ``tests/fixtures/snapshot/sour
   core library checks the same rule against the CETS listing of 2026-10-16); every other FX
   row shows the ``*_not_observed`` labels.
 
+* 2026-10-23 (contract 1.6, TDM brief H17, market-data-hub#38; version times = the seed's latest
+  version time, so ``known_at`` is unchanged): the derived calendars ``MOEX_SPFI``,
+  ``CBR_RUONIA`` and ``MOEX_RUSFAR`` for the calendar window, computed by
+  ``mdhub.loaders.calendar.DERIVED_RULES`` from the effective ``MOEX_FORTS`` / ``RU_PRODUCTION`` /
+  ``MOEX_STOCK`` days of these source rows (sources ``rule_*``, ``rule_*_unverified`` where the
+  base day is provisional or the RUONIA year-end is not decided; no curated exception falls in
+  the window).
+
 * rebuild the golden bundles (pytest provides the throw-away PostgreSQL)::
 
     MDHUB_REGEN_GOLDEN=1 uv run pytest tests/test_snapshot_golden.py

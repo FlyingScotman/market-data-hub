@@ -61,7 +61,9 @@ MATURED_LOOKBACK_DAYS: Final = 31
 BOND_CALENDAR: Final = "MOEX_STOCK"
 """Settlement calendar of MOEX bonds (the hub's bond datasets use it)."""
 
-_PROVISIONAL_SOURCES: Final = frozenset({"curated_unverified"})
+_PROVISIONAL_SUFFIX: Final = "_unverified"
+"""Sources whose rows are provisional: ``curated_unverified`` and the derived ``rule_*_unverified``
+(contract 1.6)."""
 
 
 def _alive_not_traded(b: dict[str, Any], day: date) -> bool:
@@ -372,7 +374,7 @@ def calendar_objects(
             elif not weekday and flag:
                 working_weekends.append(d)
             d += timedelta(days=1)
-        provisional = [r["day"] for r in rows if r["source"] in _PROVISIONAL_SOURCES]
+        provisional = [r["day"] for r in rows if str(r["source"]).endswith(_PROVISIONAL_SUFFIX)]
         body = {
             "calendar": code,
             "valid_from": valid_from,

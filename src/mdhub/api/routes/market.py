@@ -449,7 +449,10 @@ def calendar(
     page: PageDep,
     calendar: Annotated[
         str | None,
-        Query(description="MOEX_STOCK, MOEX_FX, MOEX_FORTS, RU_PRODUCTION, TARGET (comma)"),
+        Query(
+            description="MOEX_STOCK, MOEX_FX, MOEX_FORTS, RU_PRODUCTION, TARGET, CN_INTERBANK, "
+            "US_FED, CH_ZURICH, MOEX_SPFI, CBR_RUONIA, MOEX_RUSFAR (comma)"
+        ),
     ] = None,
     day: DateQ = None,
     date_from: FromQ = None,

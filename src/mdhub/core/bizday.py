@@ -44,13 +44,19 @@ CALENDARS: Final = (
     "CN_INTERBANK",
     "US_FED",
     "CH_ZURICH",
+    "MOEX_SPFI",
+    "CBR_RUONIA",
+    "MOEX_RUSFAR",
 )
-"""Known business-day calendars (``ref.calendar_day.calendar`` CHECK, migrations 0422, 0428): the
-MOEX engines, the Russian production calendar, TARGET (euro area; ECB reference-rate days) and
-the foreign settlement calendars of FX value dates (contract 1.5): ``CN_INTERBANK`` (China
+"""Known business-day calendars (``ref.calendar_day.calendar`` CHECK, migrations 0422, 0428,
+0429): the MOEX engines, the Russian production calendar, TARGET (euro area; ECB reference-rate
+days), the foreign settlement calendars of FX value dates (contract 1.5): ``CN_INTERBANK`` (China
 interbank market: State Council public holidays and adjusted working weekends), ``US_FED``
 (Federal Reserve Banks holidays: USD settlement), ``CH_ZURICH`` (Zurich bank holidays: CHF
-settlement, SARON days)."""
+settlement, SARON days), and the calendars of RUB swap and fixing conventions (contract 1.6, TDM
+brief H17): ``MOEX_SPFI`` (MOEX standardised derivatives market trading days), ``CBR_RUONIA``
+(days for which the Bank of Russia publishes RUONIA) and ``MOEX_RUSFAR`` (RUB overnight RUSFAR
+calculation days) - see :mod:`mdhub.loaders.calendar`."""
 DEFAULT_CALENDAR: Final = "MOEX_STOCK"
 
 
