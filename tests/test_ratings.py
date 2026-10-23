@@ -568,3 +568,158 @@ def test_region_rating_maps_through_its_bonds(
     assert (row["rating"], row["evidence"]["mapping_basis"]) == ("ruA+", "region_bond_isin")
     b = conn.execute("SELECT * FROM ref.bond_rating WHERE secid = 'RU000A10D4D6'").fetchone()
     assert b is not None and (b["agency"], b["rating"]) == ("Эксперт РА", "ruA+")
+
+
+# ------------------------------------------------- RA Expert request budget (issue #22)
+
+RAEX_LISTS = ("/ratings/a/", "/ratings/b/", "/ratings/c/")
+RAEX_CHILD_SITEMAPS = ("/sitemap1.xml", "/sitemap2.xml", "/sitemap3.xml")
+RAEX_DISCOVERY = len(RAEX_LISTS) + 1 + len(RAEX_CHILD_SITEMAPS)  # lists + index + children
+
+
+def _sitemap_index(children: tuple[str, ...]) -> bytes:
+    locs = "".join(f"<sitemap><loc>https://raexpert.ru{c}</loc></sitemap>" for c in children)
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">{locs}</sitemapindex>'
+    ).encode()
+
+
+# a child sitemap with one (old, out-of-window) release: parses, queues nothing
+_CHILD_SITEMAP = (
+    b'<?xml version="1.0" encoding="UTF-8"?>'
+    b'<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+    b"<url><loc>https://raexpert.ru/releases/2004/mar04/</loc></url></urlset>"
+)
+
+
+def _mock_raexpert_counting(router: respx.Router) -> list[str]:
+    """Synthetic site: 3 list pages (the recorded credits list), a sitemap index linking 3
+    children; releases and companies from the fixtures. Returns the requested paths."""
+    calls: list[str] = []
+    pages: dict[str, bytes] = {
+        "/sitemap.xml": _sitemap_index(RAEX_CHILD_SITEMAPS),
+        **dict.fromkeys(RAEX_CHILD_SITEMAPS, _CHILD_SITEMAP),
+        **dict.fromkeys(RAEX_LISTS, raw("raexpert/list_credits.html.gz")),
+        **{p: raw(n) for p, n in RAEX_PAGES.items() if p.startswith(("/releases", "/database"))},
+    }
+
+    def raex(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        body = pages.get(request.url.path)
+        if body is None:
+            return httpx.Response(404, text="not recorded")
+        return httpx.Response(200, content=body, headers={"content-type": "text/html"})
+
+    router.get(url__regex=r"^https://raexpert\.ru/").mock(side_effect=raex)
+    return calls
+
+
+@pytest.mark.parametrize(
+    ("budget", "phase", "skipped"),
+    [
+        (0, "lists", {"lists": 3, "sitemap_index": True, "sitemaps": 0}),
+        (1, "lists", {"lists": 2, "sitemap_index": True, "sitemaps": 0}),
+        (3, "sitemaps", {"lists": 0, "sitemap_index": True, "sitemaps": 0}),
+        (4, "sitemaps", {"lists": 0, "sitemap_index": False, "sitemaps": 3}),
+        (6, "sitemaps", {"lists": 0, "sitemap_index": False, "sitemaps": 1}),
+        (RAEX_DISCOVERY, "releases", None),  # oct21b, oct21c of the list are due
+        (RAEX_DISCOVERY + 1, "releases", None),
+        (RAEX_DISCOVERY + 2, "objects", None),  # the 2 companies they link (+ 17 listed)
+        (RAEX_DISCOVERY + 3, "objects", None),
+    ],
+)
+def test_raexpert_budget_caps_every_phase(
+    respx_mock: respx.Router,
+    conn: Conn,
+    settings: Settings,
+    db: Database,
+    today_is: Any,
+    monkeypatch: pytest.MonkeyPatch,
+    budget: int,
+    phase: str,
+    skipped: dict[str, Any] | None,
+) -> None:
+    today_is(TODAY)
+    monkeypatch.setattr(raexpert, "LIST_PATHS", RAEX_LISTS)
+    calls = _mock_raexpert_counting(respx_mock)
+    out = _run(settings, db, agencies=["raexpert"], since_days=0, max_requests=budget)
+    res = out.result["raexpert"]
+    assert len(calls) == budget, calls  # never one page more than the budget
+    assert (res["requests"], res["budget_exhausted"]) == (budget, phase)
+    assert res["discovery_complete"] is (skipped is None)
+    assert res.get("discovery_skipped") == skipped
+    caps = conn.execute(
+        "SELECT count(*) AS n FROM ops.raw_capture WHERE source = 'raexpert'"
+    ).fetchone()
+    assert caps is not None and caps["n"] == budget  # every fetched page captured
+    if skipped is None:
+        # a backlog left for later runs is reported, not a failure
+        assert out.status == "succeeded", out
+        assert res["backlog"]["releases"] + res["backlog"]["objects"] > 0
+    else:
+        assert out.status == "partial", out
+        run = conn.execute("SELECT error FROM ops.job_run WHERE id = %s", (out.run_id,)).fetchone()
+        assert run is not None and "before discovery finished" in run["error"]
+
+
+def test_raexpert_budget_rejects_negative_before_network(
+    respx_mock: respx.Router, settings: Settings, db: Database
+) -> None:
+    calls = _mock_raexpert_counting(respx_mock)
+    with pytest.raises(ValueError, match="max_requests"):
+        _run(settings, db, agencies=["raexpert"], max_requests=-1)
+    assert calls == []
+
+
+def test_raexpert_budget_continues_across_runs(
+    respx_mock: respx.Router,
+    conn: Conn,
+    settings: Settings,
+    db: Database,
+    today_is: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Small bounded runs make progress on the stored backlog and never duplicate actions."""
+    today_is(TODAY)
+    monkeypatch.setattr(raexpert, "LIST_PATHS", RAEX_LISTS)
+    calls = _mock_raexpert_counting(respx_mock)
+
+    def run(extra: int) -> dict[str, Any]:
+        calls.clear()
+        budget = RAEX_DISCOVERY + extra
+        out = _run(settings, db, agencies=["raexpert"], since_days=0, max_requests=budget)
+        assert out.status == "succeeded", out
+        assert len(calls) == budget
+        return dict(out.result["raexpert"])
+
+    def actions() -> tuple[int, int]:
+        r = conn.execute(
+            "SELECT count(*) AS n, count(DISTINCT (object_key, rating_type, scale, action_date, "
+            "action_ref)) AS d FROM ref.rating_action WHERE agency = 'raexpert'"
+        ).fetchone()
+        assert r is not None
+        return r["n"], r["d"]
+
+    first = run(3)  # both releases + one linked company
+    assert (first["releases_fetched"], first["objects_fetched"]) == (2, 1)
+    assert first["budget_exhausted"] == "objects"
+    second = run(1)  # releases done: the other linked company
+    assert (second["releases_fetched"], second["objects_fetched"]) == (0, 1)
+    assert second["backlog"]["releases"] == 0
+    stored = conn.execute(
+        "SELECT count(DISTINCT object_key) AS n FROM ref.agency_rating WHERE agency = 'raexpert'"
+    ).fetchone()
+    assert stored is not None and stored["n"] == 2
+    n_actions = actions()
+    assert n_actions[0] == n_actions[1] > 0
+
+    # a newer release links both companies again: re-read, nothing duplicated
+    conn.execute(
+        "UPDATE ref.agency_page SET linked_at = now() WHERE agency = 'raexpert' "
+        "AND kind = 'company' AND fetched_at IS NOT NULL"
+    )
+    conn.commit()
+    third = run(2)
+    assert third["objects_fetched"] == 2
+    assert actions() == n_actions

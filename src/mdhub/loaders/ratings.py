@@ -14,6 +14,17 @@ which reads the agencies' industries for sectors, and the 07:45 static snapshot)
   an initial load needs ~1,800 releases and as many object pages (run with a larger
   ``max_requests`` once, see ROADMAP WEB-18), later runs read a few dozen pages.
 
+  ``max_requests`` is a hard cap on **logical page fetches** (one per URL requested: list
+  pages, the sitemap index, child sitemaps, releases, object pages), checked before every
+  fetch; ``HttpClient`` retries of the same page are not counted separately, a page that
+  answers with an HTTP error is. 0 means no RA Expert request at all, a negative budget is
+  rejected before any network access. When the budget runs out the crawl stops cleanly:
+  captures and the discovered backlog are kept (the next run continues from
+  ``ref.agency_page``), the result reports ``budget_exhausted`` (the phase) and what was
+  skipped, and a run whose *discovery* (lists, sitemaps) was cut short is ``partial`` - its
+  view of new releases is incomplete. A backlog of releases / object pages left for later
+  runs is reported in ``backlog`` and does not make the run partial.
+
 Every response is a raw capture (endpoints ``issues_xlsx``, ``issuers_xlsx``,
 ``ratings_page``, ``export_xlsx``, ``list``, ``sitemap``, ``release``, ``company``,
 ``region``, ``bond``). Agency rows go to ``ref.agency_rating`` (latest state, verbatim) and
@@ -299,6 +310,14 @@ def _fetch_page(
     return resp, cap
 
 
+def _spend(budget: list[int]) -> bool:
+    """Take one page fetch from the run's RA Expert budget; False when it is used up."""
+    if budget[0] <= 0:
+        return False
+    budget[0] -= 1
+    return True
+
+
 def _load_raexpert(
     ctx: JobContext,
     http: HttpClient,
@@ -312,6 +331,11 @@ def _load_raexpert(
     since = today - timedelta(days=since_days)
     failures: list[str] = []
     out: dict[str, Any] = {"releases_fetched": 0, "objects_fetched": 0, "objects_stored": 0}
+    start_budget = max(0, budget[0])
+    exhausted: str | None = None  # first phase that wanted a page the budget did not allow
+    lists_skipped = 0
+    index_skipped = False
+    sitemaps_skipped = 0
 
     def in_window(d: date | None) -> bool:
         # a few sitemap URLs carry dates in the future (misfiled): not datable, skipped
@@ -320,9 +344,12 @@ def _load_raexpert(
     # 1a. rating lists -> latest releases and (new) objects; objects are only discovered
     #     here: a new release links them for a re-read (step 2)
     listed = 0
-    for path in raexpert.LIST_PATHS:
+    for i, path in enumerate(raexpert.LIST_PATHS):
         url = raexpert.BASE_URL + path
-        budget[0] -= 1
+        if not _spend(budget):
+            exhausted = "lists"
+            lists_skipped = len(raexpert.LIST_PATHS) - i
+            break
         got = _fetch_page(ctx, http, url, "list", failures, track=False)
         if got is None:
             continue
@@ -344,16 +371,24 @@ def _load_raexpert(
     out["list_releases_seen"] = listed
 
     # 1b. sitemap -> releases of the window (the sitemap lags by days; it backfills)
-    index = raexpert.fetch_page(http, raexpert.BASE_URL + raexpert.SITEMAP_PATH)
-    budget[0] -= 1
-    with ctx.connection() as conn:
-        record_capture(
-            conn, ctx.run.id, "raexpert", "sitemap", None, index, raexpert.PARSER_VERSION
-        )
     discovered = 0
-    for sm_url in raexpert.parse_sitemap_index(index.content):
+    sitemap_urls: list[str] = []
+    if exhausted is None and _spend(budget):
+        index = raexpert.fetch_page(http, raexpert.BASE_URL + raexpert.SITEMAP_PATH)
+        with ctx.connection() as conn:
+            record_capture(
+                conn, ctx.run.id, "raexpert", "sitemap", None, index, raexpert.PARSER_VERSION
+            )
+        sitemap_urls = raexpert.parse_sitemap_index(index.content)
+    else:
+        exhausted = exhausted or "sitemaps"
+        index_skipped = True
+    for i, sm_url in enumerate(sitemap_urls):
+        if not _spend(budget):
+            exhausted = "sitemaps"
+            sitemaps_skipped = len(sitemap_urls) - i
+            break
         sm = raexpert.fetch_page(http, sm_url)
-        budget[0] -= 1
         with ctx.connection() as conn:
             record_capture(
                 conn, ctx.run.id, "raexpert", "sitemap", None, sm, raexpert.PARSER_VERSION
@@ -373,13 +408,13 @@ def _load_raexpert(
             for r in conn.execute(
                 "SELECT url FROM ref.agency_page WHERE agency = 'raexpert' AND kind = 'release' "
                 "AND fetched_at IS NULL ORDER BY page_date DESC NULLS FIRST, url DESC LIMIT %s",
-                (max(0, budget[0]),),
+                (max(0, budget[0]) + 1,),
             ).fetchall()
         ]
     for url in due:
-        if budget[0] <= 0:
+        if not _spend(budget):
+            exhausted = exhausted or "releases"
             break
-        budget[0] -= 1
         got = _fetch_page(ctx, http, url, "release", failures)
         if got is None:
             continue
@@ -424,13 +459,13 @@ def _load_raexpert(
                          fetched_at NULLS FIRST, url
                 LIMIT %(n)s
                 """,
-                {"refresh": refresh_days, "n": max(0, budget[0])},
+                {"refresh": refresh_days, "n": max(0, budget[0]) + 1},
             ).fetchall()
         ]
     for url, kind in due:
-        if budget[0] <= 0:
+        if not _spend(budget):
+            exhausted = exhausted or "objects"
             break
-        budget[0] -= 1
         got = _fetch_page(ctx, http, url, kind, failures)
         if got is None:
             continue
@@ -474,6 +509,24 @@ def _load_raexpert(
             """
         ).fetchone()
     out["backlog"] = dict(backlog) if backlog else {}
+    out["requests"] = start_budget - max(0, budget[0])
+    out["budget_exhausted"] = exhausted
+    out["discovery_complete"] = not (lists_skipped or index_skipped or sitemaps_skipped)
+    if not out["discovery_complete"]:
+        out["discovery_skipped"] = {
+            "lists": lists_skipped,
+            "sitemap_index": index_skipped,
+            "sitemaps": sitemaps_skipped,
+        }
+    if exhausted is not None:
+        ctx.logger.warning(
+            "ratings raexpert: request budget used up (%d pages) in phase %s; "
+            "discovery complete: %s; backlog %s",
+            out["requests"],
+            exhausted,
+            out["discovery_complete"],
+            out["backlog"],
+        )
     if failures:
         out["failed_pages"] = len(failures)
         out["failures"] = failures[:10]
@@ -685,7 +738,9 @@ def ratings_agencies(
     """Load the agencies' ratings and map them (see module docstring).
 
     :param agencies: subset of ``nkr``, ``nra``, ``raexpert`` (default all).
-    :param max_requests: RA Expert page budget of this run (sitemaps included).
+    :param max_requests: RA Expert page budget of this run: a hard cap on logical page
+        fetches of every phase (lists, sitemap index and children, releases, objects);
+        0 = no RA Expert request, negative is rejected.
     :param since_days: RA Expert releases published within this many days are read.
     :param refresh_days: RA Expert object pages older than this are re-read.
     """
@@ -693,6 +748,8 @@ def ratings_agencies(
     unknown = sorted(set(selected) - set(AGENCIES))
     if unknown:
         raise ValueError(f"ratings_agencies: unknown agencies {unknown} (known: {AGENCIES})")
+    if max_requests < 0:
+        raise ValueError(f"ratings_agencies: max_requests must be >= 0, got {max_requests}")
     summary: dict[str, Any] = {}
     failures: list[str] = []
     budget = [max_requests]
@@ -711,9 +768,15 @@ def ratings_agencies(
     with ctx.connection() as conn:
         summary["mapping"] = map_ratings(ctx, conn)
         summary["coverage"] = rating_coverage(conn)
-    page_failures = summary.get("raexpert", {}).get("failed_pages")
+    raex = summary.get("raexpert", {})
+    page_failures = raex.get("failed_pages")
     if page_failures:
         failures.append(f"raexpert: {page_failures} pages failed")
+    if raex.get("discovery_complete") is False:
+        failures.append(
+            f"raexpert: request budget {max_requests} used up in {raex['budget_exhausted']} "
+            f"before discovery finished (skipped {raex['discovery_skipped']})"
+        )
     if failures:
         ctx.run.mark_partial("; ".join(failures))
     return summary
