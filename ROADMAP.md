@@ -1,5 +1,7 @@
 # Roadmap и передача работы
 
+> **Заморожено как список работ 23.10.2026.** Открытые пункты перенесены в [GitHub Issues](https://github.com/FlyingScotman/market-data-hub/issues) (эпики с меткой `epic`, корень программы — [FlyingScotman/trading-desk-monitor#5](https://github.com/FlyingScotman/trading-desk-monitor/issues/5)); правила — [AGENTS.md](AGENTS.md). Новых пунктов сюда не добавляем; ключи `WEB-*`, `H*`, `HS*` остаются для ссылок.
+
 Обновлено 22.10.2026 (входы монитора H10–H17). Репозиторий: **FlyingScotman/market-data-hub**.
 Этот файл переносит задачи из BB Tasks в Git: для продолжения не нужен доступ к истории чата
 или конкретному агентному инструменту. Ключи WEB-* оставлены для сопоставления с Tasks.

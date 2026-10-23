@@ -1,5 +1,7 @@
 # STATUS — 2026-10-17 (orchestrator checkpoint)
 
+> **2026-10-23:** open work is tracked in [GitHub Issues](https://github.com/FlyingScotman/market-data-hub/issues); see [AGENTS.md](../AGENTS.md). This file is history only.
+
 > Historical checkpoints below. For the current deployment state and actionable open work,
 > use [ROADMAP.md](../ROADMAP.md), updated 19 October 2026. Earlier "Remaining steps" and
 > source-access assumptions below may have been superseded; recheck before acting.
