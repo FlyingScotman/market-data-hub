@@ -21,9 +21,10 @@ counts and partial floater formulas are published with **labels** (contract rule
 
 Calendars come from ``ref.calendar_effective`` only (never ``ref.weekend_session``): per
 calendar the covered range ``[valid_from, valid_to]`` of its rows, holidays (weekdays that are
-not business days), working weekends, ``provisional_from`` (first day decided by an unverified
-curated row), a version (latest row change time) and a fingerprint; the snapshot carries one
-calendar version and fingerprint for the whole set.
+not business days), working weekends, ``provisional_from`` (first day decided by a provisional
+row: ``curated_unverified`` or a derived calendar's ``rule_*_unverified``), a version (latest
+row change time) and a fingerprint; the snapshot carries one calendar version and fingerprint
+for the whole set.
 """
 
 from __future__ import annotations

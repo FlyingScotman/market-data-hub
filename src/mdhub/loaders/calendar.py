@@ -2,7 +2,8 @@
 
 Calendars and sources (``DbCalendar`` / ``ref.calendar_effective`` take, per day, the row of
 the highest-priority source - :data:`SOURCE_PRIORITY`: observed > MOEX ISS calendar > curated >
-rule > curated_unverified; ``known_at`` only breaks ties):
+rule > provisional ``*_unverified`` (``curated_unverified`` and the derived calendars'
+``rule_*_unverified``); ``known_at`` only breaks ties):
 
 =============== ============================ ===============================================
 calendar        past days (observed)          future days

@@ -79,7 +79,8 @@ weekday_calendar: Final = CalendarPredicate()
 class DbCalendar(CalendarPredicate):
     """Looks up ``ref.calendar_day`` - per day the row of the highest-priority source
     (``ref.calendar_source_rank``: observed > MOEX ISS calendar > curated > rule >
-    curated_unverified, ``known_at`` breaks ties; same rule as ``ref.calendar_effective``);
+    provisional ``*_unverified`` - ``curated_unverified`` and the derived calendars'
+    ``rule_*_unverified`` -, ``known_at`` breaks ties; same rule as ``ref.calendar_effective``);
     falls back to weekdays.
 
     Results are cached per ``(calendar, day)`` for ``ttl`` seconds. Database errors (table
