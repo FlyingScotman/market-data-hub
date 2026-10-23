@@ -449,14 +449,18 @@ def calendar(
     page: PageDep,
     calendar: Annotated[
         str | None,
-        Query(description="MOEX_STOCK, MOEX_FX, MOEX_FORTS, RU_PRODUCTION, TARGET (comma)"),
+        Query(
+            description="MOEX_STOCK, MOEX_FX, MOEX_FORTS, RU_PRODUCTION, TARGET, CN_INTERBANK, "
+            "US_FED, CH_ZURICH, MOEX_SPFI, CBR_RUONIA, MOEX_RUSFAR (comma)"
+        ),
     ] = None,
     day: DateQ = None,
     date_from: FromQ = None,
     date_to: ToQ = None,
 ) -> Response:
     """Flag per (calendar, day) from ``ref.calendar_effective`` - the highest-priority source
-    (observed > MOEX ISS calendar > curated > rule > curated_unverified; ``known_at`` breaks
+    (observed > MOEX ISS calendar > curated > rule > provisional ``*_unverified``, i.e.
+    ``curated_unverified`` and the derived calendars' ``rule_*_unverified``; ``known_at`` breaks
     ties) - with its source and version. Days without any information are absent (never
     assumed)."""
     d1, d2 = date_range(day, date_from, date_to, default_days=366)

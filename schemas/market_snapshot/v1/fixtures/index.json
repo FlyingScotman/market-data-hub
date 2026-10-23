@@ -5,14 +5,14 @@
    "cut_type": "eod_final",
    "file": "market_eod_final.json",
    "kind": "market",
-   "snapshot_id": "1523297c2cf183bd120e21665d770f1bdddecbe69b2e209022bd5e9c773fb334"
+   "snapshot_id": "e825426625a42fccec30043aedd50dee693fce9500d7c26e61f484f3b5715ac8"
   },
   "static_daily": {
    "business_date": "2026-10-15",
    "cut_type": "daily",
    "file": "static_daily.json",
    "kind": "static",
-   "snapshot_id": "2d61f73f3fd06d50235a1c83e0ee887aa9fac92381df4e0421a804219d89c535"
+   "snapshot_id": "45ee8838bdec10cfbdc2e2bfaa8b27537990c203a556afdd2028355130fb840a"
   }
  },
  "instruments": {
@@ -28,5 +28,5 @@
   "SU46020RMFS2": "OFZ-AD, fixed amortizer",
   "SU52005RMFS4": "OFZ-IN, inflation-indexed face"
  },
- "schema_version": "market_snapshot/1.5"
+ "schema_version": "market_snapshot/1.6"
 }

@@ -1,7 +1,7 @@
 {
  "business_date": "2026-10-15",
  "calendar": {
-  "fingerprint": "f006c6a3d2d276a768c131d130bcab95a1543661f86d177c78393c6e72f940d8",
+  "fingerprint": "e1f0416582b18552f7139f1bc90fb6f8b512195da09707d1c77f5e00ba100ecc",
   "version": "2026-10-16T15:42:44.435784Z"
  },
  "cut_ts": "2026-10-16T05:00:00Z",
@@ -29207,7 +29207,7 @@
   "name": "market-data-hub",
   "version": "0.1.0"
  },
- "schema_version": "market_snapshot/1.5",
+ "schema_version": "market_snapshot/1.6",
  "sources": [
   {
    "dataset": "bond_quotes",
@@ -29350,6 +29350,6 @@
    "source": "moex_iss"
   }
  ],
- "static_snapshot_id": "2d61f73f3fd06d50235a1c83e0ee887aa9fac92381df4e0421a804219d89c535",
+ "static_snapshot_id": "45ee8838bdec10cfbdc2e2bfaa8b27537990c203a556afdd2028355130fb840a",
  "supersedes": null
 }

@@ -21,9 +21,10 @@ counts and partial floater formulas are published with **labels** (contract rule
 
 Calendars come from ``ref.calendar_effective`` only (never ``ref.weekend_session``): per
 calendar the covered range ``[valid_from, valid_to]`` of its rows, holidays (weekdays that are
-not business days), working weekends, ``provisional_from`` (first day decided by an unverified
-curated row), a version (latest row change time) and a fingerprint; the snapshot carries one
-calendar version and fingerprint for the whole set.
+not business days), working weekends, ``provisional_from`` (first day decided by a provisional
+row: ``curated_unverified`` or a derived calendar's ``rule_*_unverified``), a version (latest
+row change time) and a fingerprint; the snapshot carries one calendar version and fingerprint
+for the whole set.
 """
 
 from __future__ import annotations
@@ -61,7 +62,9 @@ MATURED_LOOKBACK_DAYS: Final = 31
 BOND_CALENDAR: Final = "MOEX_STOCK"
 """Settlement calendar of MOEX bonds (the hub's bond datasets use it)."""
 
-_PROVISIONAL_SOURCES: Final = frozenset({"curated_unverified"})
+_PROVISIONAL_SUFFIX: Final = "_unverified"
+"""Sources whose rows are provisional: ``curated_unverified`` and the derived ``rule_*_unverified``
+(contract 1.6)."""
 
 
 def _alive_not_traded(b: dict[str, Any], day: date) -> bool:
@@ -372,7 +375,7 @@ def calendar_objects(
             elif not weekday and flag:
                 working_weekends.append(d)
             d += timedelta(days=1)
-        provisional = [r["day"] for r in rows if r["source"] in _PROVISIONAL_SOURCES]
+        provisional = [r["day"] for r in rows if str(r["source"]).endswith(_PROVISIONAL_SUFFIX)]
         body = {
             "calendar": code,
             "valid_from": valid_from,

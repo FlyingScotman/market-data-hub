@@ -94,7 +94,10 @@
         "TARGET",
         "CN_INTERBANK",
         "US_FED",
-        "CH_ZURICH"
+        "CH_ZURICH",
+        "MOEX_SPFI",
+        "CBR_RUONIA",
+        "MOEX_RUSFAR"
       ]
     },
     "key_value": {
