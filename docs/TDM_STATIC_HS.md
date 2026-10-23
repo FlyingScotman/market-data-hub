@@ -67,7 +67,7 @@
 # WEB-18: рейтинги агентств, сектора, условия выпуска (контракт 1.3, static)
 
 21.10.2026, ветка `claude/hub-static-ratings-terms` (слита с `main` 7d6daef). Порядок для
-владельца — [UPGRADE_TO_0.4.0](../deploy/UPGRADE_TO_0.4.0.md); задачи — ROADMAP WEB-18.
+владельца — [UPGRADE_TO_0.3.2](../deploy/UPGRADE_TO_0.3.2.md); задачи — ROADMAP WEB-18.
 
 ## Какие источники ответили (среда разработки, 21.10.2026)
 

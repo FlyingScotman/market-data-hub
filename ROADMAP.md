@@ -105,7 +105,7 @@ H18/H19 — механизм курирования (WEB-18), наполнени
 Предполагаемый релиз **0.4.0** (после 0.3.1 = WEB-17). Контракт 1.3 расширен, не 1.4: рыночная
 часть 1.3 — WEB-16 (PR #6), здесь — static. Тег не ставился, production не трогался. Источник — ревью хаба для монитора
 (`docs/reviews/HUB_REVIEW_FOR_DESK_MONITOR.md`, §4.4, §5, §7.3 P1-1, P1-6, P1-9, P1-10, §7.4).
-Порядок для владельца: [UPGRADE_TO_0.4.0.md](deploy/UPGRADE_TO_0.4.0.md).
+Порядок для владельца: [UPGRADE_TO_0.3.2.md](deploy/UPGRADE_TO_0.3.2.md).
 Цифры живого прогона — в [TDM_STATIC_HS.md](docs/TDM_STATIC_HS.md), раздел WEB-18.
 
 - [x] P1-1 рейтинги: задание `ratings_agencies` — НКР (выгрузки `/issues.php`, `/issuers.php`),
