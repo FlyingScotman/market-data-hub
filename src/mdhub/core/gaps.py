@@ -34,6 +34,7 @@ import psycopg
 from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 
+from mdhub.core.bizday import calendar_chain
 from mdhub.core.timeutil import is_weekday
 from mdhub.datasets import get_dataset
 
@@ -81,8 +82,9 @@ def db_business_days(
     conn: psycopg.Connection[Any], calendar: str | None, start: date, end: date
 ) -> Callable[[date], bool]:
     """Business-day predicate of ``calendar`` for ``[start, end]`` from ``ref.calendar_effective``
-    (one query; days without a row and days outside the range: Monday-Friday). ``None``
-    calendar: Monday-Friday."""
+    (one query; a day without a row: the base calendar of a derived one -
+    :data:`mdhub.core.bizday.CALENDAR_FALLBACK` -, else Monday-Friday, as for days outside the
+    range). ``None`` calendar: Monday-Friday."""
     if calendar is None or end < start:
         return is_weekday
     end = min(end, start + timedelta(days=_MAX_SCAN_DAYS))
@@ -90,12 +92,14 @@ def db_business_days(
         exists = cur.execute("SELECT to_regclass('ref.calendar_effective')").fetchone()
         if not exists or exists[0] is None:
             return is_weekday
+        chain = list(calendar_chain(calendar))
         flags: dict[date, bool] = {
             d: bool(b)
             for d, b in cur.execute(
-                """SELECT day, is_business_day FROM ref.calendar_effective
-                   WHERE calendar = %s AND day BETWEEN %s AND %s""",
-                (calendar, start, end),
+                """SELECT DISTINCT ON (day) day, is_business_day FROM ref.calendar_effective
+                   WHERE calendar = ANY(%s) AND day BETWEEN %s AND %s
+                   ORDER BY day, array_position(%s, calendar)""",
+                (chain, start, end, chain),
             ).fetchall()
         }
     return lambda d: flags.get(d, is_weekday(d))

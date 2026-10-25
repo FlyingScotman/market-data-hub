@@ -81,6 +81,13 @@ log = logging.getLogger(__name__)
 
 SOURCE: Final = "cbr"
 RU_CALENDAR: Final = "RU_PRODUCTION"
+RUONIA_CALENDAR: Final = "CBR_RUONIA"
+"""Gap calendar of ``cbr_ruonia``: the days the Bank of Russia publishes RUONIA for
+(:func:`mdhub.loaders.calendar.ruonia_publication_days`, contract 1.6) - not the last business day
+of the year nor the 2020 non-working days; ``RU_PRODUCTION`` before 2019 (the derived calendar's
+start, :data:`mdhub.core.bizday.CALENDAR_FALLBACK`). The snapshot's
+``fixings.ruonia_unpublished_days`` keeps ``RU_PRODUCTION`` (contract 1.5: unpublished business
+days)."""
 FIXING_KEY: Final = ["index_code", "fixing_date", "source"]
 FX_KEY: Final = ["effective_date", "ccy"]
 WINDOW_FIXINGS_DAYS: Final = 14
@@ -146,7 +153,7 @@ _fixing_dataset(
     "cbr_ruonia",
     "index_code = 'RUONIA' AND source = 'cbr'",
     "business_daily",
-    RU_CALENDAR,
+    RUONIA_CALENDAR,
     2,
     date(2010, 1, 11),
     "RUONIA by observation date (published next business day)",

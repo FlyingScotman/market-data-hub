@@ -369,7 +369,7 @@ def test_datasets_registered() -> None:
 
     fx = get_dataset("cbr_fx_official")
     assert fx.frequency == "daily" and fx.backfill_job == "cbr_daily"
-    assert get_dataset("cbr_ruonia").calendar == "RU_PRODUCTION"
+    assert get_dataset("cbr_ruonia").calendar == "CBR_RUONIA"
     assert get_dataset("cbr_key_rate").history_start == date(2013, 9, 17)
 
 
