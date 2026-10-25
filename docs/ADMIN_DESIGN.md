@@ -69,7 +69,7 @@ skip `admin`. A test asserts that `mdhub_ro` can read nothing in `admin`.
 | `admin.session` | sha256 of the session id, user, created_at, last_seen_at, expires_at, ip, user agent, `mfa_at`, `step_up_at`, revoked_at |
 | `admin.login_attempt` | ts, login (as typed), ip, outcome, used by throttling (kept 30 days) |
 | `admin.audit_log` | append-only: ts, user, session, ip, action, target, details jsonb, outcome. Holds no secrets. `UPDATE`/`DELETE` are revoked, even for the app role. |
-| `admin.api_token` | consumer tokens: id, name ("tdm-backend", "inside-replica"), sha256 of the token, prefix (first 8 characters, for display), scopes, created_by, created_at, expires_at, revoked_at, last_used_at, last_used_ip |
+| `admin.api_token` | consumer tokens: id, name ("tdm-backend", "dev-laptop"), sha256 of the token, prefix (first 8 characters, for display), scopes, created_by, created_at, expires_at, revoked_at, last_used_at, last_used_ip |
 
 ### 3.2 `ops` additions: state shown by the console
 
@@ -91,7 +91,7 @@ skip `admin`. A test asserts that `mdhub_ro` can read nothing in `admin`.
   The console offers to migrate them into the database.
 - Token format: `mdh_<base32 of 32 random bytes>`. The prefix makes leaked tokens easy to find with secret scanners.
   The full token is shown once, at creation.
-- Scopes: `read` (all of `/v1`), `snapshots` (only `/v1/snapshots*`, for the inside replica), `export` (the TDM CSV).
+- Scopes: `read` (all of `/v1`), `snapshots` (only `/v1/snapshots*`, for snapshot consumers such as the desk backend's cache), `export` (the TDM CSV).
 
 ## 4. Console pages
 
