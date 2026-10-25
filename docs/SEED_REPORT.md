@@ -112,8 +112,8 @@
 | price_observations | 0 | 32.0 kB |
 | projection_curve_build_meta | 1669 | 4.9 MB |
 | projection_curve_scenarios | 5007 | 568.0 kB |
-| rubik_curve_artifacts | 0 | 32.0 kB |
-| rubik_curve_nodes | 0 | 24.0 kB |
+| <desk>_curve_artifacts | 0 | 32.0 kB |
+| <desk>_curve_nodes | 0 | 24.0 kB |
 | schema_migrations | 17 | 32.0 kB |
 | sources | 4 | 48.0 kB |
 | term_ruonia_fixings | 1900 | 328.0 kB |

@@ -1,7 +1,6 @@
 # Production upgrade 0.1.0 → 0.1.3
 
 Completed 19 October 2026, approximately 11:26 UTC / 14:26 MSK.
-Live console: <https://marketdatahub.cc/login>.
 
 ## Installed artifact
 

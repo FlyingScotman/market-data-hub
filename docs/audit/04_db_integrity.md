@@ -54,7 +54,7 @@
   - **18 `price_observation_revisions`:** a no-op on data, because `price_observations` has 0 rows.
   - **19 `index_fixing_revisions`:** seeds the revision table from `index_fixings`, using `fetched_at_utc` as the as-known time. Every fixing from 2021-08-02 onward will look as if it was "known" from 2026-08-06 at the earliest. As-known replays before 2026-08-06 must therefore use the `retrospective_backfill` policy.
   - The hub will apply both migrations on first open. Run them on a copy first.
-- **Tables that are empty by design in MD:** `instruments`, `instrument_identifiers`, `price_observations`, `backfill_requests`, `curve_world_instances`, `curve_source_policies`, `rubik_curve_artifacts`, `rubik_curve_nodes`. The repo doc `docs/critical-fixes-2026-10-14.md` also notes the empty price table.
+- **Tables that are empty by design in MD:** `instruments`, `instrument_identifiers`, `price_observations`, `backfill_requests`, `curve_world_instances`, `curve_source_policies`, `<desk>_curve_artifacts`, `<desk>_curve_nodes`. The repo doc `docs/critical-fixes-2026-10-14.md` also notes the empty price table.
 - **Empty in BC:** `ratings`, because the MOEX CCI entitlement is unavailable.
 
 ### Blanked payload columns
@@ -67,7 +67,7 @@ Every blanked value is a 0-length TEXT. No NULLs and no non-empty values remain.
 - `gcurve_snapshots`: 1,167
 - `intraday_quote_captures`: 63,715
 - `normalized_base_curve_bundles`: 107
-- `rubik`: 0 rows
+- `<desk>` curves: 0 rows
 
 **BC:**
 - `issuers`: 1,670
@@ -368,8 +368,8 @@ The full analysis is in a sub-report. The key points, verified in the code:
   - otc_monitor parser versions 1–4 (2026-09-04..09-22);
   - cbr liquidity legacy-normalized capture.
 - **No re-derivation of fields that were never normalized.** Examples: intraday raw rows beyond bid/offer/last, the G-curve raw page, and bundle provenance.
-- **Immutability triggers block any later fix-up.** The gcurve, intraday, rubik and base-bundle tables reject UPDATE, so raw cannot be repopulated in place. The export must have bypassed the triggers by rebuilding the file.
-- **Rubik imports:** `rubik_curve_artifacts.serialized_payload` is `STRICT BLOB NOT NULL`. The table is empty, but any future import tooling must use `X''` and not `''`.
+- **Immutability triggers block any later fix-up.** The gcurve, intraday, desk-curve and base-bundle tables reject UPDATE, so raw cannot be repopulated in place. The export must have bypassed the triggers by rebuilding the file.
+- **Desk-curve imports:** `<desk>_curve_artifacts.serialized_payload` is `STRICT BLOB NOT NULL`. The table is empty, but any future import tooling must use `X''` and not `''`.
 
 **Not affected:** the normalized values themselves. Quotes, nodes, fixings, liquidity, intraday bid/offer/last and bond normalized columns were all checked above.
 

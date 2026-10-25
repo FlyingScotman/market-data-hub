@@ -3,20 +3,20 @@
 Audit date: 2026-10-15. Auditor scope: read-only.
 
 - Repo clone: `scratchpad/ref/market-data-store` at `main` = `ec22738` (2026-10-15 16:28 +0300), package version `0.13.0` (`pyproject.toml:3`). 29 commits; first commit `9fc82e6 "baseline: production state as of 2026-09-11"`.
-- DB snapshot: `/Users/badtako/Code/python/market-data-server/data/incoming/md/market-data/market-data.sqlite3` (232 MB, exported 2026-10-15T16:16Z, opened with `mode=ro`). `SNAPSHOT.json` says all rows are preserved but **all raw payload columns were blanked** (`curve_snapshots.raw_payload`, `cbr_liquidity_captures.raw_payload`, `gcurve_snapshots.raw_payload`, `intraday_quote_captures.raw_payload`, `normalized_base_curve_bundles.raw_payload`, `rubik_curve_artifacts.serialized_payload`); hashes kept. Re-parsing from this export is impossible.
+- DB snapshot: `<workspace>/market-data-server/data/incoming/md/market-data/market-data.sqlite3` (232 MB, exported 2026-10-15T16:16Z, opened with `mode=ro`). `SNAPSHOT.json` says all rows are preserved but **all raw payload columns were blanked** (`curve_snapshots.raw_payload`, `cbr_liquidity_captures.raw_payload`, `gcurve_snapshots.raw_payload`, `intraday_quote_captures.raw_payload`, `normalized_base_curve_bundles.raw_payload`, `<desk>_curve_artifacts.serialized_payload`); hashes kept. Re-parsing from this export is impossible.
 - All file:line references below are relative to the repo root unless prefixed.
 
 ---
 
 ## 0. Executive summary
 
-1. **What it really is.** A single-SQLite, cron-driven *RUB rates* store plus a heavy analytics layer (RUONIA discount bootstrap, key-rate projection, meeting-path MILP, bond Z-spread/DM service, MCP server, Telegram reports). Raw market data is a minority of the code: of ~14k src lines, ~3k are loaders; `fixed_income.py` (2542), `storage.py` (2605, half of which is curve building + migrations), `curves.py`, `key_rate_projection.py`, `meeting_key_rate_path.py`, `curve_worlds.py`, `release_seed.py`, `rubik_archive.py` are analytics/distribution.
+1. **What it really is.** A single-SQLite, cron-driven *RUB rates* store plus a heavy analytics layer (RUONIA discount bootstrap, key-rate projection, meeting-path MILP, bond Z-spread/DM service, MCP server, Telegram reports). Raw market data is a minority of the code: of ~14k src lines, ~3k are loaders; `fixed_income.py` (2542), `storage.py` (2605, half of which is curve building + migrations), `curves.py`, `key_rate_projection.py`, `meeting_key_rate_path.py`, `curve_worlds.py`, `release_seed.py`, `<desk>_archive.py` are analytics/distribution.
 2. **Raw data actually captured in production** (DB): RUONIA OIS and KRS (key-rate IRS) curves from 3 sources (Ratescalcs, OTC Monitor, Andromeda archive), XCCY CNY/RUONIA curve (OTC Monitor, **written by code that is not in the repo**), minute-level FX spot + FX futures (USD/EUR/CNY vs RUB only; Si/Eu/CR front-3 + USDRUBF/EURRUBF/CNYRUBF), MOEX G-curve parameters (~15-min), CBR RUONIA / key rate / term RUONIA / meeting calendar / liquidity balance, and a few external base curves (US/DE govt proxies, CFETS FR007, one SPFI RUSFARCNY email).
 3. **Bonds are essentially not covered as stored data.** The generic `instruments / price_observations` layer exists, but has **0 rows in production**; bond quotes are fetched on demand (never persisted) by the analytics service; bond reference data lives in a different repo (`moex-market-data-mcp` bond catalog DB).
-4. **Repo != production.** The prod DB contains OTC Monitor parser versions 3–5, an `otc_monitor/cnyruonia_xccy` dataset, `mid_only` OTC snapshots and `cfets_chinamoney` `curve_snapshots` — none of which any branch of the repo can produce (repo OTC `PARSER_VERSION = 2`, `src/market_data_store/otc_monitor.py:20`; README says XCCY is ignored, `README.md:142-143`). Conversely the repo has migrations 18–19 (`price_observation_revisions`, `index_fixing_revisions`, `src/market_data_store/storage.py:1565-1566`) that the prod DB has not applied (prod `schema_migrations` stops at 17). Cron wrappers live outside the repo in `~/.hermes/scripts/…`.
+4. **Repo != production.** The prod DB contains OTC Monitor parser versions 3–5, an `otc_monitor/cnyruonia_xccy` dataset, `mid_only` OTC snapshots and `cfets_chinamoney` `curve_snapshots` — none of which any branch of the repo can produce (repo OTC `PARSER_VERSION = 2`, `src/market_data_store/otc_monitor.py:20`; README says XCCY is ignored, `README.md:142-143`). Conversely the repo has migrations 18–19 (`price_observation_revisions`, `index_fixing_revisions`, `src/market_data_store/storage.py:1565-1566`) that the prod DB has not applied (prod `schema_migrations` stops at 17). Cron wrappers live outside the repo in `<agent-dir>/scripts/…`.
 5. **Strong reusable patterns:** append-only captures with raw payload + SHA-256 + parser version + separate source/fetch clocks; minute-bucket idempotency keys; immutable tables enforced with SQLite triggers; formal migration runner; fail-closed point-in-time resolvers; Decimal-as-text storage for intraday quotes; explicit `quote_basis` / `latency` / `instrument_type` labelling; strict schema/format validation of every source; CBR liquidity revision model (captures → revisions → current view).
-6. **Main weaknesses:** hard-coded `/home/tako/...`, `~/.config/lima/secrets`, `~/.hermes`, `~/.cache/lima` paths; Playwright UI scraping (Andromeda) and undocumented-endpoint scraping (WorldGovernmentBonds POST, Ratescalcs HTML textarea, CBR HTML tables); spoofed User-Agent `"OpenAI File Downloader, XaiImageApiFetch/1.0"`; ingestion coupled to curve building in the same transaction path; 5-minute AlgoPack data polled every minute (~80 % duplicate rows); MOEX history loader drops multi-board rows and creates revision churn; `backfill_requests` queue has no worker; several tests depend on files outside the repo.
-7. **Tests:** `uv run pytest -q` (frozen lock, extra `meeting-path`, sibling path deps present): **378 passed, 5 failed in ~24 s**. All 5 failures are environmental: 4 load wrappers from `~/.hermes/scripts/*.py`, 1 expects `.venv/bin/rub-fixed-income-mcp` inside the repo. Without `--extra meeting-path` collection aborts (matplotlib missing).
+6. **Main weaknesses:** hard-coded `<home>/...`, `<secrets-dir>`, `<agent-dir>`, `<cache-dir>` paths; Playwright UI scraping (Andromeda) and undocumented-endpoint scraping (WorldGovernmentBonds POST, Ratescalcs HTML textarea, CBR HTML tables); spoofed User-Agent `"OpenAI File Downloader, XaiImageApiFetch/1.0"`; ingestion coupled to curve building in the same transaction path; 5-minute AlgoPack data polled every minute (~80 % duplicate rows); MOEX history loader drops multi-board rows and creates revision churn; `backfill_requests` queue has no worker; several tests depend on files outside the repo.
+7. **Tests:** `uv run pytest -q` (frozen lock, extra `meeting-path`, sibling path deps present): **378 passed, 5 failed in ~24 s**. All 5 failures are environmental: 4 load wrappers from `<agent-dir>/scripts/*.py`, 1 expects `.venv/bin/rub-fixed-income-mcp` inside the repo. Without `--extra meeting-path` collection aborts (matplotlib missing).
 
 ---
 
@@ -27,9 +27,9 @@ Common plumbing used by most CLI commands (`src/market_data_store/cli.py`):
 - One SQLite file, default `<repo>/data/market-data.sqlite3` (`cli.py:40-41`), overridable with `--database`.
 - Process lock `flock` on `<db>.lock`, 30 s wait (`cli.py:49-70`); every ingest wraps the DB write in it.
 - `connect_database` (`storage.py:1570-1580`): `chmod 0600`, `foreign_keys=ON`, `journal_mode=WAL`, `synchronous=FULL`, `busy_timeout=30000`, then applies all pending migrations on *every* open (`migrations.py:29-66`, one `BEGIN IMMEDIATE` per version, records `schema_migrations` + `PRAGMA user_version`).
-- Secret env var names: `RATESCALC_BASE_URL`, `RATESCALC_USERNAME`, `RATESCALC_PASSWORD` (`cli.py:181-183`, `249-251`), `MOEX_APIM_KEY` (`cli.py:541`, see note under 1.9). Read-side env: `MARKET_DATA_DATABASE` (`http_api.py:233`), `MARKET_DATA_STORE_DB`, `BOND_CATALOG_DB` (`fixed_income_server.py:187`, `194`). Script-only: `CALYPSO_LOGIN`, `CALYPSO_PASSWORD` (`scripts/calculate_qr_fixed_ofz_spreads_windows.py:136-137`).
-- Secret files (all expected `0600`): `~/.config/lima/secrets/ratescalc.env` (sourced by `scripts/cron_ingest_ratescalcs.sh:6-11`), `~/.config/lima/secrets/otc-monitor-token` (`cli.py:46`; checked for mode 0600 and parent dir without group/world bits, `otc_monitor.py:190-200`), `~/.config/lima/secrets/moex-api-key` (AlgoPack/APIM Bearer token, `intraday_fx.py:219`, mode check `intraday_fx.py:355-363`), `~/.config/lima/secrets/moex-realtime.json` (MOEX Passport `{"login","password"}`, `intraday_fx.py:221`; schema enforced in sibling `moex-live-bonds/moex_live_bonds/realtime.py:14,34-40`), `~/.config/lima/secrets/andromeda/storage-state.json` (Playwright cookies, `cli.py:43`; README wrongly says `~/.hermes/secrets/andromeda/...`, `README.md:251-252`).
-- Network egress: per tests, the production hermes wrappers route MOEX HTTPS through a local proxy `HTTPS_PROXY=http://127.0.0.1:1080` (`tests/test_cron_scripts.py:79-88`); `httpx[socks]` is a dependency (`pyproject.toml:8`). The wrapper code itself is not in the repo.
+- Secret env var names: `RATESCALC_BASE_URL`, `RATESCALC_USERNAME`, `RATESCALC_PASSWORD` (`cli.py:181-183`, `249-251`), `MOEX_APIM_KEY` (`cli.py:541`, see note under 1.9). Read-side env: `MARKET_DATA_DATABASE` (`http_api.py:233`), `MARKET_DATA_STORE_DB`, `BOND_CATALOG_DB` (`fixed_income_server.py:187`, `194`). Script-only: desk-system login/password variables (`scripts/calculate_<desk>_fixed_ofz_spreads_windows.py:136-137`).
+- Secret files (all expected `0600`): `<secrets-dir>/ratescalc.env` (sourced by `scripts/cron_ingest_ratescalcs.sh:6-11`), `<secrets-dir>/otc-monitor-token` (`cli.py:46`; checked for mode 0600 and parent dir without group/world bits, `otc_monitor.py:190-200`), `<secrets-dir>/moex-api-key` (AlgoPack/APIM Bearer token, `intraday_fx.py:219`, mode check `intraday_fx.py:355-363`), `<secrets-dir>/moex-realtime.json` (MOEX Passport `{"login","password"}`, `intraday_fx.py:221`; schema enforced in sibling `moex-live-bonds/moex_live_bonds/realtime.py:14,34-40`), `<secrets-dir>/andromeda/storage-state.json` (Playwright cookies, `cli.py:43`; README wrongly says `<agent-dir>/secrets/andromeda/...`, `README.md:251-252`).
+- Network egress: per tests, the production agent wrappers route MOEX HTTPS through a local proxy (`HTTPS_PROXY` on a loopback port) (`tests/test_cron_scripts.py:79-88`); `httpx[socks]` is a dependency (`pyproject.toml:8`). The wrapper code itself is not in the repo.
 - MOEX APIM TLS uses a bundled Russian Trusted Root CA (`src/market_data_store/certs/russian_trusted_root_ca.pem`, loaded at `intraday_fx.py:220`, `365-370`).
 
 ### Observed schedules (from `fetched_at_utc` in the DB, plus README)
@@ -38,9 +38,9 @@ Common plumbing used by most CLI commands (`src/market_data_store/cli.py`):
 |---|---|---|
 | Ratescalcs curves | every 2 h at 07,09,11,13,15:00 UTC (10–18 MSK), weekdays | `scripts/cron_ingest_ratescalcs.sh` (writes prod **and** dev DB), scheduler config outside repo (README mentions 10/14/18 MSK, `README.md:266-270` — outdated) |
 | OTC Monitor curves | every 15 min 07:00–16:45 UTC | `scripts/cron_ingest_otc_monitor.sh` (prod + dev DB) |
-| Intraday FX/futures | every minute, `* 3-20 * * 1-5` UTC (06:00–23:59 MSK) | `~/.hermes/scripts/run_intraday_fx_ingest.py` (not in repo), `README.md:212-216` |
-| MOEX G-curve | ~4×/hour 07–15 UTC (avg 34 snapshots/trade date) | `scripts/cron_ingest_gcurve.sh`; hermes wrapper `~/.hermes/scripts/run_gcurve_ingest.py` (not in repo) |
-| CBR fixings + liquidity | daily ~06:00 UTC (09:00 MSK) | `scripts/run_liquidity_report.py:20-26` (via hermes job `README.md:246-249`) and separate daily fixings job (`README.md:435-436`) |
+| Intraday FX/futures | every minute, `* 3-20 * * 1-5` UTC (06:00–23:59 MSK) | `<agent-dir>/scripts/run_intraday_fx_ingest.py` (not in repo), `README.md:212-216` |
+| MOEX G-curve | ~4×/hour 07–15 UTC (avg 34 snapshots/trade date) | `scripts/cron_ingest_gcurve.sh`; agent wrapper `<agent-dir>/scripts/run_gcurve_ingest.py` (not in repo) |
+| CBR fixings + liquidity | daily ~06:00 UTC (09:00 MSK) | `scripts/run_liquidity_report.py:20-26` (via agent job `README.md:246-249`) and separate daily fixings job (`README.md:435-436`) |
 | CBR meetings | 1st of month | `README.md:435-436` |
 | Andromeda archive | manual (last fetch 2026-09-10) | `cli.py:326-360` |
 | Free base curves | ~daily (106 bundles 2026-08-28..10-15) | `cli.py:139-153` |
@@ -72,7 +72,7 @@ Common plumbing used by most CLI commands (`src/market_data_store/cli.py`):
 
 - Code: `intraday_fx.py:225-336` (`MoexPassportFxClient`, `parse_passport_cny_snapshot`), transport from sibling package `moex-live-bonds` (`moex_live_bonds/realtime.py:261-282`).
 - Fetch: `GET https://iss.moex.com/iss/engines/currency/markets/selt/boards/CETS/securities/CNYRUB_TOM.json?iss.only=securities,marketdata,dataversion&iss.meta=off`.
-- Auth: MOEX Passport login/password from `~/.config/lima/secrets/moex-realtime.json` → one-time HTTP Basic, then session cookie `MicexPassportCert` required (`realtime.py:105-116`, `190-216`). Host pinned to `iss.moex.com`.
+- Auth: MOEX Passport login/password from `<secrets-dir>/moex-realtime.json` → one-time HTTP Basic, then session cookie `MicexPassportCert` required (`realtime.py:105-116`, `190-216`). Host pinned to `iss.moex.com`.
 - Validation: exactly one row per block, SECID/BOARD must be `CNYRUB_TOM`/`CETS`, session dates must agree, `SETTLEDATE` taken from security row (never synthesized), `SYSTIME` (MSK) must be ≤ 90 s old and not in the future (`intraday_fx.py:222`, `304-309`), bid ≤ offer. Stores bid/offer/last + `SEQNUM`.
 - Retries (in `moex-live-bonds`): on 429/5xx with linear backoff (`realtime.py:187-213`).
 - Optional: any failure → `PassportRealtimeUnavailable` → source skipped for that minute (`intraday_fx.py:246-251`, `1319-1320`).
@@ -80,7 +80,7 @@ Common plumbing used by most CLI commands (`src/market_data_store/cli.py`):
 ### 1.4 MOEX APIM / AlgoPack — CNY spot mid + FX futures (intraday, 5-min data polled every minute)
 
 - Code: `intraday_fx.py:339-536` (`MoexIntradayFxClient`), parsers `parse_algopack_fx_mid` (`662-706`), `parse_algopack_rfud_snapshot` (`874-951`), contract selection `_select_rfud_securities` (`616-649`).
-- Base URL `https://apim.moex.com/iss`, Bearer token from file `~/.config/lima/secrets/moex-api-key`, custom CA bundle (`intraday_fx.py:340-370`, `424-435`).
+- Base URL `https://apim.moex.com/iss`, Bearer token from file `<secrets-dir>/moex-api-key`, custom CA bundle (`intraday_fx.py:340-370`, `424-435`).
 - Requests per run (`intraday_fx.py:436-483`):
   1. `GET /engines/currency/markets/selt/boards/CETS/securities/CNYRUB_TOM.json?iss.meta=off&iss.only=securities,marketdata,dataversion` (only for `SETTLEDATE` and session date);
   2. `GET /datashop/algopack/fx/obstats/CNYRUB_TOM.json?latest=1&iss.meta=off` → `mid_price`;
@@ -160,7 +160,7 @@ Point-in-time FX reference (`intraday_fx.py:971-1132`): fixed priority per pair 
   - Result is written as a JSON manifest under `<repo>/data/free-base-curves-latest.json` and imported via the bundle importer.
 - `import-spfi-email-curve` (`free_base_curves.py:65-155`): parses a forwarded MOEX SPFI e-mail text file for `OIS RUSFARCNY` bid/ask (1W..5Y), stores **mid** only into `cny_onshore_base_v1` after an approximate bootstrap. Bid/ask survive only inside the bundle raw payload.
 - `import-base-curves` (`base_curve_bundles.py:178+`): validated `normalized-base-curve-bundle.v1` JSON (template `docs/base-curve-bundle.example.json`), immutable bundles/snapshots/nodes as canonical decimal text.
-- Rubik / QR (proprietary desk system on a Windows desk): `scripts/export_rubik_curves_windows.py` + `scripts/import_rubik_bundle.py` → `rubik_curve_artifacts/_nodes` (`rubik_archive.py`). Prod rows: 0. `scripts/calculate_qr_fixed_ofz_spreads_windows.py` hard-codes `C:\Users\atkachenko\...` (line 25) and Calypso env credentials.
+- Desk curve system (proprietary, on a Windows desk): `scripts/export_<desk>_curves_windows.py` + `scripts/import_<desk>_bundle.py` → `<desk>_curve_artifacts/_nodes` (`<desk>_archive.py`). Prod rows: 0. `scripts/calculate_<desk>_fixed_ofz_spreads_windows.py` hard-codes a personal Windows profile path (line 25) and desk-system env credentials.
 
 ### 1.11 Read/serve side (for context)
 
@@ -210,7 +210,7 @@ Note: only some loaders use `ingestion_runs`; intraday, G-curve, CBR and base-cu
 | `curve_world_definitions` | M | named fail-closed policies (11 rows) | migrations 3/11/13/16 |
 | `curve_world_instances` | M | point-in-time resolution records (0 rows) | `curve_worlds.py` |
 | `curve_source_policies` | M | licensing/distribution approval per source+dataset (0 rows) | manual |
-| `rubik_curve_artifacts` / `rubik_curve_nodes` | D/R (immutable) | proprietary desk curves (0 rows) | `rubik_archive.py` |
+| `<desk>_curve_artifacts` / `<desk>_curve_nodes` | D/R (immutable) | proprietary desk curves (0 rows) | `<desk>_archive.py` |
 | `normalized_base_curve_bundles` / `_snapshots` / `_nodes` | D (immutable) | external base curves already bootstrapped to DF/zero (USD, EUR, CNY) | `base_curve_bundles.py` |
 
 ### 2.4 Official indices and CBR data
@@ -251,7 +251,7 @@ Note: only some loaders use `ingestion_runs`; intraday, G-curve, CBR and base-cu
 ### 2.8 Raw vs derived split for the hub
 
 - **Hub-worthy (raw + normalized):** `curve_snapshots` + `curve_quotes` (as "rate quote snapshots"), `intraday_quote_*`, `gcurve_snapshots` (published parameters + standard yields are official data), `index_fixings` (+ revisions), `term_ruonia_fixings`, `policy_meetings`, `cbr_liquidity_*`, `instruments`/`identifiers`/`price_observations` (redesigned), plus source/dataset/run metadata and `curve_source_policies` (licensing).
-- **Analytics (keep outside the hub):** all `derived_*`, `projection_*`, `gcurve_zero_curve_*`, `normalized_base_curve_*` (already bootstrapped — the hub should store the *input quotes* instead), `rubik_*`, `curve_world_*`.
+- **Analytics (keep outside the hub):** all `derived_*`, `projection_*`, `gcurve_zero_curve_*`, `normalized_base_curve_*` (already bootstrapped — the hub should store the *input quotes* instead), `<desk>_*`, `curve_world_*`.
 
 ---
 
@@ -267,7 +267,7 @@ Note: only some loaders use `ingestion_runs`; intraday, G-curve, CBR and base-cu
 | Fixings | CBR `ruonia`, `key_rate`, term RUONIA (index, 1M, 3M, 6M), CBR meeting calendar, CBR liquidity balance (14 metrics), CBR official FX (any CharCode, manual) |
 | Bonds | any SECID (manual backfill / current) into `price_observations`; live board snapshots in analytics only |
 | Govt curve | MOEX G-curve (KBD) parameters + standard tenors |
-| External curves | US govt zero (proxy SOFR), DE govt zero (proxy €STR), CFETS FR007 IRS closing, SPFI RUSFARCNY OIS (e-mail), Rubik (desk) |
+| External curves | US govt zero (proxy SOFR), DE govt zero (proxy €STR), CFETS FR007 IRS closing, SPFI RUSFARCNY OIS (e-mail), desk curve system |
 
 ### 3.2 In the prod DB (SQL, `mode=ro`)
 
@@ -315,7 +315,7 @@ Official / other:
 | gcurve_snapshots | 1167 | trade dates 2026-08-28 → 2026-10-15 (34 days) |
 | normalized_base_curve_snapshots | 319 | free: USD/EUR/CNY-FR007 106 each, 2026-08-28 → 2026-10-15; SPFI RUSFARCNY 1 (2026-08-28) |
 | derived_curve_builds | 4514 | ruonia_discount v1 1001 / v2 1718, key_rate_projection v1 126 / v2 1669 (2022-07-06 → 2026-10-15) |
-| instruments / price_observations / backfill_requests / rubik_* / curve_world_instances / curve_source_policies | 0 | — |
+| instruments / price_observations / backfill_requests / <desk>_* / curve_world_instances / curve_source_policies | 0 | — |
 
 ---
 
@@ -327,7 +327,7 @@ Official / other:
 |---|---|---|
 | Capture = raw payload + SHA-256 + parser version + `fetched_at` + `source_observed_at` (+ `published_at`) | `curve_snapshots`, `intraday_quote_captures`, `cbr_liquidity_captures`, `gcurve_snapshots` | lets you re-parse and audit; separates "when known" from "when true" |
 | Deterministic capture keys `<source>:<UTC minute>` + conflict on same key/different content | `ingest.py:33-35`, `intraday_fx.py:1215-1230`, `1332-1344` | cheap idempotent cron retries |
-| Immutability via `BEFORE UPDATE/DELETE` triggers | intraday, gcurve, base curve, rubik, projection tables (see SCHEMA.sql) | append-only guarantees in SQLite |
+| Immutability via `BEFORE UPDATE/DELETE` triggers | intraday, gcurve, base curve, desk-curve, projection tables (see SCHEMA.sql) | append-only guarantees in SQLite |
 | Revision model: capture → semantic revision (row hash, `revision_number`, `supersedes_*`) → current view | `storage.py:2459-2572` | the right model for official data with corrections (CBR, MOEX EOD) |
 | Formal migration runner with per-version transaction | `migrations.py:29-66` | simple, adequate (would be replaced by Alembic/Postgres in a service) |
 | Strict parsers that fail closed on format drift (tenor sets, bid ≤ ask, clock skew, reconciliation checks) | `ratescalcs.py:56-116`, `otc_monitor.py:78-161`, `gcurve.py:108-165`, `intraday_fx.py:267-336` | catches silent source changes |
@@ -342,9 +342,9 @@ Official / other:
 
 ### 4.2 Fragile / bad — do not copy
 
-1. **Repo is not the production source of truth.** Prod writes OTC parser v3–v5, XCCY CNY/RUONIA and CFETS `curve_snapshots`, while repo stops at OTC parser v2; prod lacks repo migrations 18–19. The working copy on the server (`/home/tako/lima-workspace/projects/market-data-store`) evidently has uncommitted changes. Any reuse must be checked against what runs there.
-2. **Hard-coded host paths:** `/home/tako/lima-workspace/projects/market-data-store` and `/home/tako/.config/lima/secrets/...` in all cron scripts (`scripts/cron_ingest_*.sh:5-6`), `Path.home()/.config/lima/secrets/*` (`cli.py:43-46`, `intraday_fx.py:219-221`, `moex-live-bonds realtime.py:14`), `~/.cache/lima/...` (`cli.py:42-45`, `scripts/report_swaps.py:11-13`), `~/.hermes/scripts/*` (README, tests), `/home/tako/lima-workspace/private-sources/...` (`scripts/search_evraz_andromeda.py:6`), `C:\Users\atkachenko\...` (`scripts/calculate_qr_fixed_ofz_spreads_windows.py:25`), default DB inside the repo (`cli.py:41`). Path deps on sibling checkouts `../moex-live-bonds`, `../rub-fixed-income-core` (`pyproject.toml:24-26`) and `../moex-market-data-mcp/data/bond_catalog.sqlite3`.
-3. **Scheduling outside the repo.** The minute FX job and G-curve job wrappers live only in `~/.hermes/scripts`; repo cron scripts write to prod **and** dev DB sequentially (`cron_ingest_ratescalcs.sh:13-19`), so a dev failure fails the job after prod succeeded.
+1. **Repo is not the production source of truth.** Prod writes OTC parser v3–v5, XCCY CNY/RUONIA and CFETS `curve_snapshots`, while repo stops at OTC parser v2; prod lacks repo migrations 18–19. The working copy on the server (`<workspace>/market-data-store`) evidently has uncommitted changes. Any reuse must be checked against what runs there.
+2. **Hard-coded host paths:** `<workspace>/market-data-store` and `<secrets-dir>/...` in all cron scripts (`scripts/cron_ingest_*.sh:5-6`), `<secrets-dir>/*` (`cli.py:43-46`, `intraday_fx.py:219-221`, `moex-live-bonds realtime.py:14`), `<cache-dir>/...` (`cli.py:42-45`, `scripts/report_swaps.py:11-13`), `<agent-dir>/scripts/*` (README, tests), `<workspace>/private-sources/...` (`scripts/search_evraz_andromeda.py:6`), a personal Windows profile path (`scripts/calculate_<desk>_fixed_ofz_spreads_windows.py:25`), default DB inside the repo (`cli.py:41`). Path deps on sibling checkouts `../moex-live-bonds`, `../rub-fixed-income-core` (`pyproject.toml:24-26`) and `../moex-market-data-mcp/data/bond_catalog.sqlite3`.
+3. **Scheduling outside the repo.** The minute FX job and G-curve job wrappers live only in `<agent-dir>/scripts`; repo cron scripts write to prod **and** dev DB sequentially (`cron_ingest_ratescalcs.sh:13-19`), so a dev failure fails the job after prod succeeded.
 4. **Scraping:**
    - Andromeda via Playwright clicking Russian UI labels and scrolling a virtual table (`andromeda.py:244-276`) — breaks on any UI change, needs a browser, cookie-based auth that expires.
    - WorldGovernmentBonds undocumented `POST /wp-json/country/v1/main` with reverse-engineered JS globals (`free_base_curves.py:309-347`) — contradicts README's "GET only" claim.
@@ -364,8 +364,8 @@ Official / other:
 
 - Command: `UV_PROJECT_ENVIRONMENT=<scratch venv> uv run --frozen --extra meeting-path pytest -q -p no:cacheprovider` (sibling repos present in `scratchpad/ref`, so path deps resolved). Repo left unmodified.
 - Result: **383 tests, 378 passed, 5 failed, 1 warning, ~24 s.**
-  - `tests/test_cron_scripts.py::test_gcurve_hermes_wrapper_routes_moex_https_through_local_egress` — loads `~/.hermes/scripts/run_gcurve_ingest.py` (not in repo).
-  - `tests/test_intraday_fx_cron_wrapper.py` (3 tests) — load `~/.hermes/scripts/run_intraday_fx_ingest.py` (`tests/test_intraday_fx_cron_wrapper.py:10`); also read `/proc/<pid>/stat` (Linux-only).
+  - `tests/test_cron_scripts.py::test_gcurve_<agent>_wrapper_routes_moex_https_through_local_egress` — loads `<agent-dir>/scripts/run_gcurve_ingest.py` (not in repo).
+  - `tests/test_intraday_fx_cron_wrapper.py` (3 tests) — load `<agent-dir>/scripts/run_intraday_fx_ingest.py` (`tests/test_intraday_fx_cron_wrapper.py:10`); also read `/proc/<pid>/stat` (Linux-only).
   - `tests/test_fixed_income_server.py::test_stdio_server_lists_all_tools` — expects `<repo>/.venv/bin/rub-fixed-income-mcp`.
   - Without `--extra meeting-path`, collection aborts on `tests/test_meeting_key_rate_path.py` (imports matplotlib).
   - DeprecationWarning: `free_base_curves.py:276` parses `"%d %b"` without year (breaks in Python 3.15 / on Feb 29).
@@ -405,7 +405,7 @@ Status legend: **Covered** = stored continuously with adequate fields; **Partial
 1. Treat this repo as a **source-knowledge library**, not a code base to fork: port the clients/parsers for Ratescalcs, OTC Monitor, MOEX Passport, MOEX APIM/AlgoPack, ISS (zcyc, history), CBR — each behind a uniform `fetch() -> RawCapture(payload, sha, parser_version, clocks)` + `parse(raw) -> normalized rows` contract (the intraday `FetchedIntradayQuotes` shape is the best template).
 2. Keep the capture → revision → current-view model generically for every EOD dataset (CBR liquidity is the reference implementation); add `failed`/`gap` capture states so outages are visible.
 3. Separate ingestion from analytics completely: no curve building in ingest paths; the hub publishes quotes/fixings, analytics services subscribe.
-4. Pull the prod-only OTC Monitor parser (v3–v5, XCCY, mid-only handling) and the hermes wrappers (proxy egress, timeouts, retry-on-lock) from the server before decommissioning; they are not in GitHub.
+4. Pull the prod-only OTC Monitor parser (v3–v5, XCCY, mid-only handling) and the agent wrappers (proxy egress, timeouts, retry-on-lock) from the server before decommissioning; they are not in GitHub.
 5. Fix polling cadence to source granularity (AlgoPack every 5 min aligned to interval publication; dedup on (instrument, interval)); dedup unchanged swap snapshots or at least flag them.
-6. Configuration via env/secret manager (no `~/.config/lima`, `~/.hermes`, `/home/tako`), honest User-Agent, explicit egress proxy setting, per-source licence/distribution policy carried as data.
+6. Configuration via env/secret manager (no `<config-dir>`, `<agent-dir>`, `<home>`), honest User-Agent, explicit egress proxy setting, per-source licence/distribution policy carried as data.
 7. Build the bond universe loader (all boards, EOD + intraday + yields) and FX universe (all CETS `*_TOM`, CBR daily set, external G7 source, all FORTS FX futures incl. bid/offer/OI/settlement) — the main gaps.

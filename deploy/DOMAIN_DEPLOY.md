@@ -1,12 +1,14 @@
-# Production: marketdatahub.cc
+# Production behind host nginx
 
 The release repository is `FlyingScotman/market-data-hub`. GitHub Releases contain **code only**:
 the archive, its checksum list and its minisign signature. The seed database is transferred privately
 for the first installation. An update preserves the existing PostgreSQL volume and never imports a seed.
 
-On this VPS, host nginx serves HTTPS for `marketdatahub.cc`. `/v1/` and `/health/` go to the API on
+The production layout: host nginx serves HTTPS for the console domain (written here as
+`hub.example.com`; the real name is deployment configuration, not documentation). `/v1/` and `/health/` go to the API on
 `127.0.0.1:8080`; the other paths go to the console on `127.0.0.1:8081`. PostgreSQL listens only on
-loopback. Only SSH22, HTTP80 (ACME and HTTPS redirect), and HTTPS443 are public. Let's Encrypt renewal
+loopback; only nginx and SSH face the network (see README_DEPLOY.md §1 for the firewall baseline).
+Let's Encrypt renewal
 reloads nginx automatically. Request URLs, cookies and authorization must not be written to access logs.
 
 The site-specific Compose configuration lives outside releases at
@@ -15,15 +17,16 @@ shared deployment environment. The updater applies it when building, migrating, 
 and replacing itself. If an explicitly configured override is missing, the update fails rather than
 starting with different network settings.
 
-The shared `.env` symlink resolves into `/root/.config/lima/secrets/market-data-hub/mdhub.env`.
+The shared `.env` is a symlink into a protected secrets directory outside `/opt/mdhub`
+(written here as `/etc/mdhub/secrets`; the real path is host configuration).
 Mount that protected directory at the same path in the updater only: it needs to read deployment values
 and atomically change the image tag. A symlink into an unmounted secret directory cannot be used from
 the updater container. The directory is 0700 and its configuration file is 0600.
 
-Set the console domain to `marketdatahub.cc`, origin to `https://marketdatahub.cc`, and trust only the
-Docker host gateway as the nginx proxy. nginx replaces forwarded client-IP headers. The owner chose
-access from any network, protected by password plus passkey; the app's CIDR list therefore includes
-all IPv4 and IPv6 clients. The application retains its CSRF checks, throttling, roles and second factor.
+Set the console domain to `hub.example.com`, origin to `https://hub.example.com`, and trust only the
+Docker host gateway as the nginx proxy. nginx replaces forwarded client-IP headers. The console
+allow-list (`MDHUB_ADMIN_ALLOW_CIDRS`) is the owner's deployment choice and is not recorded here; with
+any allow-list the application retains its CSRF checks, throttling, roles and second factor.
 Passkeys registered for `localhost` do not work on this domain and must be enrolled again.
 
 ## Publishing and installing updates

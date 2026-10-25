@@ -160,7 +160,7 @@ dc() { docker compose -f /opt/mdhub/current/deploy/docker-compose.yml \
 5. **Проверка API** (токен в переменной окружения, не в команде):
 
    ```bash
-   H="Authorization: Bearer $MDHUB_TOKEN"; B=https://marketdatahub.cc
+   H="Authorization: Bearer $MDHUB_TOKEN"; B=https://hub.example.com
    curl -sS -H "$H" "$B/v1/history/fixings?from=2026-10-01&code=ESTR,SOFR,CPI_RU_YOY" | head -c 800; echo
    curl -sS -H "$H" "$B/v1/history/fx?from=2026-10-15&kind=ecb,cbr_cross&pair=EUR/USD" | head -c 800; echo
    curl -sS -H "$H" "$B/v1/history/curves/usd_ust_par?from=2026-10-15" | head -c 800; echo

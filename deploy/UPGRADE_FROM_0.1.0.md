@@ -18,7 +18,7 @@ moved to `FlyingScotman/market-data-hub`. The Updates page cannot install 0.1.3 
 This file repeats by hand what the 0.1.3 updater does (`src/mdhub/updater.py`: verifying ->
 backing_up -> staging -> draining -> migrating -> starting -> checking). Once it is done, the Updates
 page lists and installs later releases. Run everything as root (`sudo -i`): the shared `.env` is a
-symlink into `/root/.config/lima/secrets/market-data-hub/` (DOMAIN_DEPLOY.md). Never print `.env`,
+symlink into the protected secrets directory (DOMAIN_DEPLOY.md). Never print `.env`,
 `docker compose config`, tokens or auth headers.
 
 ## 1. Preconditions and what changes
@@ -70,7 +70,7 @@ docker image ls mdhub                            # mdhub:0.1.0 present (used for
 docker volume ls | grep pgdata                   # mdhub_pgdata: live data, never removed
 ```
 ```bash
-ls -l /opt/mdhub/shared/                         # .env -> /root/.config/lima/secrets/..., compose.local.yaml, backups/, updater.env?
+ls -l /opt/mdhub/shared/                         # .env -> <secrets dir>/..., compose.local.yaml, backups/, updater.env?
 ```
 ```bash
 grep -E '^(MDHUB_IMAGE_TAG|MDHUB_BACKUP_HOST_DIR)=' /opt/mdhub/shared/.env   # expect 0.1.0 and /opt/mdhub/shared/backups
@@ -79,7 +79,7 @@ grep -E '^(MDHUB_IMAGE_TAG|MDHUB_BACKUP_HOST_DIR)=' /opt/mdhub/shared/.env   # e
 grep -E '^(MDHUB_UPDATE_[A-Z_]+|MDHUB_HTTP_PROXY|MDHUB_SNAPSHOT_[A-Z_]+)=' /opt/mdhub/shared/.env | cut -d= -f1   # names only
 ```
 ```bash
-grep -n -E 'MDHUB_UPDATE_|/root/.config/lima|127.0.0.1:8081' /opt/mdhub/shared/compose.local.yaml
+grep -n -E 'MDHUB_UPDATE_|secrets|127.0.0.1:8081' /opt/mdhub/shared/compose.local.yaml
 ```
 ```bash
 curl -s http://127.0.0.1:8080/health/ready       # version 0.1.0, migrations applied 23, pending 0
@@ -270,7 +270,7 @@ dc ps --format 'table {{.Service}}\t{{.Image}}\t{{.Status}}'        # mdhub:0.1.
 curl -s http://127.0.0.1:8080/health/ready                          # "version":"0.1.3", migrations applied 26 known 26 pending 0 checksum_mismatch 0
 ```
 ```bash
-curl -s https://marketdatahub.cc/health/ready                       # same, through host nginx
+curl -s https://hub.example.com/health/ready                       # same, through host nginx
 ```
 ```bash
 ss -ltn | grep -E ':(5432|8080|8081) '                              # 127.0.0.1 only
@@ -285,14 +285,14 @@ dc run --rm --no-deps -T worker mdhub db-info                       # 26 applied
 dc run --rm --no-deps -T worker mdhub jobs list | grep snapshot_    # snapshot_static, snapshot_market with their cuts
 ```
 
-In the browser: log in at <https://marketdatahub.cc/login> with password and passkey. Overview should show
+In the browser: log in at <https://hub.example.com/login> with password and passkey. Overview should show
 no version mismatch; Updates should show 0.1.3 and the heartbeats; Jobs should list `snapshot_static` and
 `snapshot_market`.
 
 API without a token: expect `401`.
 
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' https://marketdatahub.cc/v1/snapshots
+curl -s -o /dev/null -w '%{http_code}\n' https://hub.example.com/v1/snapshots
 ```
 
 API with a token. Existing `read` tokens such as `tdm-backend` already cover `/v1/snapshots`
@@ -308,10 +308,10 @@ create a dedicated least-privilege token with scope `snapshots` (DESIGN §8: `sn
 (umask 077; printf 'Authorization: Bearer %s\n' "$(cat /root/tdm-snapshots.token)" > /root/tdm-snapshots.hdr)
 ```
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' -H @/root/tdm-snapshots.hdr https://marketdatahub.cc/v1/snapshots   # 200 (empty list until step 9)
+curl -s -o /dev/null -w '%{http_code}\n' -H @/root/tdm-snapshots.hdr https://hub.example.com/v1/snapshots   # 200 (empty list until step 9)
 ```
 ```bash
-curl -s -o /dev/null -w '%{http_code}\n' -H @/root/tdm-snapshots.hdr https://marketdatahub.cc/v1/coverage    # 403: scope limited
+curl -s -o /dev/null -w '%{http_code}\n' -H @/root/tdm-snapshots.hdr https://hub.example.com/v1/coverage    # 403: scope limited
 ```
 
 Hand the token to its consumer through the usual secret channel, then delete both files.
@@ -439,7 +439,7 @@ The same for one explicit date (it must be a business day):
 dc run --rm --no-deps -T worker mdhub run snapshot_market -p mode=eod_final -p day=2026-10-06 -p cut=08:00
 ```
 ```bash
-curl -s -H @/root/tdm-snapshots.hdr 'https://marketdatahub.cc/v1/snapshots?kind=market&cut_type=eod_final' | head -c 600
+curl -s -H @/root/tdm-snapshots.hdr 'https://hub.example.com/v1/snapshots?kind=market&cut_type=eod_final' | head -c 600
 ```
 
 From now on the scheduler publishes `snapshot_static` at 07:45, `eod_final` at 08:00 (for D-1),

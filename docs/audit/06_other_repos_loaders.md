@@ -23,7 +23,7 @@ The 16 requested repos:
 - **corporate-bond-relative-value-study**
 - **trading-tracker**
 
-I skipped repos that are clearly unrelated: travelpayouts-flight-mcp, aeroflot-ticket-monitor, neovim-config, vtb-qr-toolkit (desk QR wrapper), agent-*, workspace-hygiene, tax-optimization-model, bb-orchestration-migration.
+I skipped repos that are clearly unrelated: travelpayouts-flight-mcp, aeroflot-ticket-monitor, neovim-config, a desk-library wrapper, agent-*, workspace-hygiene, tax-optimization-model, bb-orchestration-migration.
 
 Secrets: only environment-variable names and credential-file *paths* are listed. No values were read or reproduced.
 
@@ -47,7 +47,7 @@ Secrets: only environment-variable names and credential-file *paths* are listed.
 4. **Swap curves:**
    - The only real fetcher is the **Ratescalcs** scraper in `ofz-swaps-v2/ofz_workbench/ratescalcs.py`. It loads RUONIA OIS and KRS (IRS vs key rate).
    - `ofz-rates-app` reads OTC-Monitor and Andromeda swap snapshots out of market-data-store.
-   - `rgbi-futures-arbitrage-monitor` exports Rubik RUONIA and RUB_KEY_RATE curves (desk-only, Windows).
+   - `rgbi-futures-arbitrage-monitor` exports desk-system RUONIA and RUB_KEY_RATE curves (desk-only, Windows).
    - SPFI `/iss/sdfi/curves.json` was probed: public access returns metadata only.
 5. **G7 FX crosses** exist only via unofficial Yahoo chart API in `market-snapshot-reporter/src/market_snapshot_reporter/sources.py` (lines 296-320). USD/CNH ticks come from Dukascopy in `usdrub-proxy-research`.
 6. **MOEX trading calendar: no repo fetches one.** The best *consumer-side* designs are:
@@ -92,7 +92,7 @@ The legacy APIM client (`constants.py:6`, `https://apim.moex.com/iss`) has:
 
 **Auth.**
 - Environment variable `MOEX_API_KEY`, also read from `./.env` or `../.env`.
-- Credential files (JSON `{login,password}`, mode 0600 enforced): `~/.config/lima/secrets/moex-realtime.json` and `~/.config/lima/secrets/moex-bond-orderbook.json`.
+- Credential files (JSON `{login,password}`, mode 0600 enforced): `<secrets-dir>/moex-realtime.json` and `<secrets-dir>/moex-bond-orderbook.json`.
 - Bundled `certs/russian_trusted_root_ca.pem`.
 
 **Instruments.** Bonds (OFZ, corporate, replacement and NDM boards), trades, order books, CNY/RUB spot.
@@ -122,7 +122,7 @@ The legacy APIM client (`constants.py:6`, `https://apim.moex.com/iss`) has:
 
 **Auth.**
 - `CBTM_PREVIOUS_DELIVERY`, `CBTM_PREVIOUS_EXECUTION_ID`, `CBTM_CURRENT_EXECUTION_ID`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_PROXY`.
-- Passport file `~/.config/lima/secrets/moex-realtime.json`.
+- Passport file `<secrets-dir>/moex-realtime.json`.
 - `--key-path` (moex-api-key) is accepted but never used.
 
 **Instruments.** RUB corporate bonds on TQCB, fixed and floating. The benchmark mapping for RUONIA / key rate / G-curve / CPI is at `production.py:72-94`. RUSFAR is a display label only.
@@ -151,8 +151,8 @@ The legacy APIM client (`constants.py:6`, `https://apim.moex.com/iss`) has:
 
 **Purpose.** Local FastAPI monitor of the RUB corporate universe on TQCB.
 - Live bid/offer/last from **QUIK through QuikPy** on ports 34132/34133.
-- Probes desk libraries (`vtb_qr`, `rubik_api`, `calypso_framework`).
-- Newer `analytics/` code adds fail-closed APIM capture with offline replay, and a Calypso ProductBond cache.
+- Probes desk libraries (three proprietary desk packages).
+- Newer `analytics/` code adds fail-closed APIM capture with offline replay, and a desk-system bond-product cache.
 
 **Endpoints.**
 - Public ISS `/securities/{isin}.json` (`adapters/moex.py:MoexAdapter.lookup`).
@@ -160,11 +160,11 @@ The legacy APIM client (`constants.py:6`, `https://apim.moex.com/iss`) has:
 - APIM `https://apim.moex.com/iss/engines/stock/markets/bonds/boards/TQCB/{securities,trades}.json` (`tools/windows_acceptance/run_windows_acceptance.py:_apim_block` L184 and `live_apim_full_scan` L249). This script hits live endpoints.
 - QUIK: `get_info_param(TRADEDATE/SERVERTIME)` and `get_param_ex(class,sec,BID/OFFER/LAST/VALTODAY)` (`adapters/quik.py`, `quik_session.py`). A custom Lua `get_ofz_trades_bulk` does a chunked `all_trades` scan with an `after_trade_num` cursor (`quikpy-lua-fixed/lua/ofz_bulk.lua`).
 - Cbonds `https://ws.cbonds.info/services/json` (`get_emissions`, `get_emission_ratings_new`) are **placeholders only, with no live calls** (`adapters/cbonds.py`).
-- Calypso `get_QR_Bond_Product(isin)`: singleton calls only; comma batching is broken (`analytics/calypso_cache.py` L418).
+- The desk system's bond-product lookup: singleton calls only; comma batching is broken (`analytics/<desk>_cache.py` L418).
 
 **Auth.**
 - `MOEX_API_KEY`
-- `CALYPSO_LOGIN`, `CALYPSO_PASSWORD`. `config.py` reads `CALYPSO_USER` instead, which is inconsistent.
+- Desk-system login/password variables; `config.py` reads a differently named login variable, which is inconsistent.
 - `CBONDS_LOGIN`, `CBONDS_PASSWORD`, `CBONDS_BASE_URL`
 - `QUIKPY_PATH`, `QUIK_REQUESTS_PORT`, `QUIK_CALLBACKS_PORT`, `QUIK_STATUS_TIMEOUT_SECONDS`, `QUIK_SNAPSHOT_TIMEOUT_SECONDS`
 - `CORP_MONITOR_DB`, `CORP_MONITOR_HOST`, `CORP_MONITOR_PORT`, `CORP_MONITOR_PYTHON`
@@ -178,7 +178,7 @@ The legacy APIM client (`constants.py:6`, `https://apim.moex.com/iss`) has:
 - Exponential backoff; 4xx fails fast except 408 and 429.
 - Fail-closed APIM payload validation with raw-byte SHA-256 (`analytics/universe.py:validate_apim_response`).
 - Append-only analytics store with migrations and secret rejection (`analytics/persistence.py`).
-- Calypso positive/negative cache with 7-day revalidation.
+- Desk-system positive/negative cache with 7-day revalidation.
 
 **Quality.**
 - About 20 offline test files.
@@ -211,7 +211,7 @@ FX comes from `IntradayFxRepository.get_reference(pair_code="CNY/RUB", …)` in 
 **Quality.**
 - Strict mypy, 8 offline tests.
 - Bad rows are skipped silently.
-- `/home/tako/...` paths in scripts.
+- `<home>/...` paths in scripts.
 - The backfill uses `date -d '1 day ago'`, with no holiday awareness.
 
 ### 1.5 currency-bond-monitor (v0.4.2)
@@ -306,7 +306,7 @@ RUONIA comes via `moex_market_data.cbr.CbrClient.ruonia_history` from the moex-m
 **Techniques worth reusing.**
 - **Cursor-first pagination:** fetches `iss.only=history.cursor` first, then all pages in parallel with `ThreadPoolExecutor(max_workers=10)` (`client.py:103-129`, verified).
 - Retry on 429/5xx.
-- `JsonCache` at `~/.cache/lima/moex-bond-turnover/{date}/{board}.json` with atomic writes; empty days are re-fetched.
+- `JsonCache` at `<cache-dir>/moex-bond-turnover/{date}/{board}.json` with atomic writes; empty days are re-fetched.
 - CBR as-of lookup with a 7-day lookback.
 - `HistoryProvider` and `RateLoader` protocols.
 
@@ -338,10 +338,10 @@ It vendors `implied_key_rates`, depends on moex-live-bonds and rub-fixed-income-
 | Holiday list | static 2026 production calendar from `government.ru/docs/all/161028/` | `ofz_workbench/calendar_data.py:18-37`; raises for other years |
 
 **Auth.**
-- `RATESCALC_USERNAME`, `RATESCALC_PASSWORD`, `RATESCALC_BASE_URL`, `RATESCALC_PROXY_URL`, `RATESCALC_ENV_FILE` (default file `~/.config/lima/secrets/ratescalc.env`)
+- `RATESCALC_USERNAME`, `RATESCALC_PASSWORD`, `RATESCALC_BASE_URL`, `RATESCALC_PROXY_URL`, `RATESCALC_ENV_FILE` (default file `<secrets-dir>/ratescalc.env`)
 - `MOEX_API_KEY`
 - Passport credentials file
-- Proxy auto-set to 127.0.0.1:3128
+- Proxy auto-set to a loopback port
 
 **Instruments.** OFZ-PD (static, cash flows, quotes), key rate and CBR meetings, **RUONIA OIS curve, KRS curve**.
 
@@ -418,7 +418,7 @@ The same package is copied into ofz-swaps-v2 and ofz-rates-app.
 - The catalogue DB.
 
 **Auth.**
-- `CALYPSO_LOGIN`, `CALYPSO_PASSWORD` (QR script only).
+- Desk-system login/password variables (desk script only).
 - Passport credentials file.
 - `moex.py:30 _api_key` is dead code.
 
@@ -514,7 +514,7 @@ The same package is copied into ofz-swaps-v2 and ofz-rates-app.
 **Endpoints, package.**
 - `GET {mds}/v1/curve-worlds/{recipe_id}/resolve?decision_time=&knowledge_policy=as_known_then` (`current_comparison.py:MarketDataStoreCurveWorldClient.resolve` L120-184).
   - Loopback only. HTTP 200/404/409 map to available/unavailable/stale.
-  - Recipes: `ratescalcs_ruonia_mid_v2`, `rubik_ruonia_model_v1`, `andromeda_ruonia_mid_v2`.
+  - Recipes: `ratescalcs_ruonia_mid_v2`, `<desk>_ruonia_model_v1`, `andromeda_ruonia_mid_v2`.
 - **This is an existing consumer contract for the hub.** `LoopbackMarketDataCurrentSource.resolve` always raises `missing_current_inputs` for basket quotes, futures quote, repo, borrow and fixing path. The hub must supply these.
 
 **Endpoints, scripts.**
@@ -532,20 +532,20 @@ The same package is copied into ofz-swaps-v2 and ofz-rates-app.
 | Repo boards, GC pool | `/engines/stock/markets/ccp/boards/{EQRP,EQWP,EQMP,EQTP}/...`, `/engines/stock/markets/gcc/boards/{GCRP,GCOW,GCOM,GCTM}/securities/RU000A0JW4Z1.json`, `/history/.../ccp/securities/{29 OFZ}.json` | `d004/collect_evidence.py:fetch_raw` L44, `fetch_history` L75 (iss vs apim, schema-drift guard) |
 | Index weights | `statistics/engines/stock/markets/index/analytics/RGBI.json?date=` | `d002/analyze_replication.py` |
 | Fixing window | 1-minute candles 15:00-16:00 | `d011/collect_and_analyze.py` |
-| Bond cash flows | bondization, `limit=1000`, no paging | `docs/analysis/qr-reconciliation/rgbi_qr_reconcile.py:moex_cashflows` L122 |
-| Desk curves (Windows only) | Rubik `RBK_ObjectsLoad(date, publication, "RATESCURVE", "RUONIA"\|"RUB_KEY_RATE")` | `d016/export_rubik_curves_windows.py:178` |
+| Bond cash flows | bondization, `limit=1000`, no paging | `docs/analysis/<desk>-reconciliation/rgbi_<desk>_reconcile.py:moex_cashflows` L122 |
+| Desk curves (Windows only) | desk curve-system loader call for the RUONIA and RUB_KEY_RATE curves | `d016/export_<desk>_curves_windows.py:178` |
 | APIM order-book entitlement | probes | `d005`, `d012` |
 | Interfax EFIR, QUIK Lua | documentation downloads only | `d012/collect_sources.py` |
 
 **Auth.**
-- `CALYPSO_LOGIN`, `CALYPSO_PASSWORD`, `OTEL_*`.
-- APIM token from the file `~/.config/lima/secrets/moex-api-key`, mode 0600 checked, sent as a Bearer header.
+- Desk-system login/password variables, `OTEL_*`.
+- APIM token from the file `<secrets-dir>/moex-api-key`, mode 0600 checked, sent as a Bearer header.
 
 **Instruments.**
 - OFZ (29 RGBI constituents), RGBI, RB futures.
 - **OFZ repo (EQRP/EQWP/EQMP/EQTP) and GC repo (GCRP/GCOW/GCOM/GCTM)**.
 - RUSFAR ON and term, RUONIA, key rate.
-- RUONIA and key-rate curves (Rubik).
+- RUONIA and key-rate curves (desk curve system).
 - Rates-futures metadata (MF*, RF*, RR*).
 
 **Techniques worth reusing.**
@@ -575,7 +575,7 @@ The same package is copied into ofz-swaps-v2 and ofz-rates-app.
 - Dukascopy: `https://datafeed.dukascopy.com/datafeed/USDCNH/{YYYY}/{MM-1:02d}/{DD}/{HH}h_ticks.bi5` (`dukascopy_ticks_for_hour` L112-156).
 - CBR: `https://www.cbr.ru/scripts/XML_dynamic.asp?...&VAL_NM_RQ={R01235,R01375}` (`cbr_series` L187-203).
 
-**Auth.** Token file `~/.config/lima/secrets/moex-api-key`; file mode not checked.
+**Auth.** Token file `<secrets-dir>/moex-api-key`; file mode not checked.
 
 **Techniques worth reusing.**
 - AlgoPack tradestats paging in month chunks.
@@ -599,7 +599,7 @@ Exposed as a CLI and an MCP server.
 
 **Endpoints.** `https://cbonds.ru/` search, then `https://cbonds.ru/bonds/<id>/` (`gateway.py:AgentBrowserGateway.fetch` L71-102). No REST API is used.
 
-**Auth.** `CBONDS_CACHE_ROOT`. The session file is hard-coded to `/home/tako/.local/share/lima/cbonds/session.json`.
+**Auth.** `CBONDS_CACHE_ROOT`. The session file is hard-coded to `<data-dir>/cbonds/session.json`.
 
 **Techniques worth reusing.**
 - `security.py:validate_isin` (Luhn checksum).
@@ -624,7 +624,7 @@ Exposed as a CLI and an MCP server.
 
 **Auth.**
 - No env vars. Credentials are entered with getpass and never persisted.
-- Storage state at `~/.config/lima/secrets/andromeda/storage-state.json`.
+- Storage state at `<secrets-dir>/andromeda/storage-state.json`.
 
 **Techniques worth reusing.**
 - Playwright `BrowserAdapter` with jittered retries and failure screenshots.
@@ -642,9 +642,9 @@ Exposed as a CLI and an MCP server.
 - **FX-futures risk** (`fx_futures.py:40 FxFuturesContract`, `:86 FxFuturesRiskRequest`, `:237 FxFuturesRiskEngine`, verified);
 - DV01/KRD risk.
 
-**Endpoints.** None. `tools/qr_bond_reconciliation_probe.py` is a desk-only probe.
+**Endpoints.** None. `tools/<desk>_bond_reconciliation_probe.py` is a desk-only probe.
 
-**Auth.** `CALYPSO_LOGIN` and `CALYPSO_PASSWORD`, used by the probe only.
+**Auth.** Desk-system login/password variables, used by the probe only.
 
 **Why it matters to the hub.**
 - `dates.py:32 BusinessCalendar` (holidays and working days frozensets plus a version) and `conventions.py:118 calendar_fingerprint` are the canonical calendar type, but **they ship no data**. `docs/BACKLOG.md` P0 #1 asks the data project to own the official versioned MOEX/CBR calendar.
@@ -829,7 +829,7 @@ Ranks are 1 = lift first. Paths are `repo: file[:symbol]`.
 | 13 | **CBR official FX** | moex-bond-turnover `rates.py:fetch_cbr_rate_matrix` (`XML_dynamic.asp`, cached, 7-day as-of) | Fix: read `Nominal`/`VunitRate` (usdrub-proxy-research guesses the CNY unit) |
 | 14 | **FX spot (CETS)** | moex-live-bonds `realtime.py:currency_snapshot` | market-snapshot-reporter `currency_quote` (public ISS) |
 | 15 | **AlgoPack (tradestats / candles)** | usdrub-proxy-research `research.py:moex_rows` (`/iss/datashop/algopack/{fx,fo}/tradestats`) | ofz-swaps-v2 / ofz-analytics `moexalgo` candles |
-| 16 | **RUB swap curves (RUONIA OIS, KRS)** | ofz-swaps-v2 `ofz_workbench/ratescalcs.py:RatescalcsClient` | ofz-rates-app `otc_monitor_sync.py` (validation rules for OTC-Monitor snapshots); implied-key-rates `parser.py` (pasted quotes); rgbi `d016/export_rubik_curves_windows.py` (desk) |
+| 16 | **RUB swap curves (RUONIA OIS, KRS)** | ofz-swaps-v2 `ofz_workbench/ratescalcs.py:RatescalcsClient` | ofz-rates-app `otc_monitor_sync.py` (validation rules for OTC-Monitor snapshots); implied-key-rates `parser.py` (pasted quotes); rgbi `d016/export_<desk>_curves_windows.py` (desk) |
 | 17 | **Point-in-time curve resolution API** | rgbi `src/rgbi_monitor/current_comparison.py` (`/v1/curve-worlds/{id}/resolve`, as_known_then) | currency-bond-monitor `curve_loader.py` (CurveWorldService, 4-day staleness) |
 | 18 | **QUIK bridge** | corporate-bond-monitor `src/corp_monitor/quik_session.py:_run_isolated` | ofz-tracker `backend/quik_trades.py` + `QUIK/lua/ofz_bulk.lua` (bulk all_trades export) |
 | 19 | **Trading calendar (structure)** | rgbi `src/rgbi_monitor/calendars.py:OfficialCalendar` + rub-fixed-income-core `dates.py:BusinessCalendar` | **No data source anywhere**; the hub must build one (see section 3) |
@@ -878,7 +878,7 @@ Ranks are 1 = lift first. Paths are `repo: file[:symbol]`.
 | RUB RUONIA OIS, Ratescalcs | ofz-swaps-v2 `ofz_workbench/ratescalcs.py:154` (`/cnyfuturesyields/key-rate-editor/ois`) |
 | RUB key-rate swap (IRS vs key rate), Ratescalcs | ofz-swaps-v2 `ofz_workbench/ratescalcs.py:155` (`/cnyfuturesyields/key-rate-editor/krs`) |
 | RUONIA OIS / KRS from OTC-Monitor and Andromeda (market-data-store DB) | ofz-rates-app `backend/services/otc_monitor_sync.py:86`, `scripts/ofz26249_ruonia_fwd_history.py:89` |
-| Rubik RUONIA and RUB_KEY_RATE (desk) | rgbi `docs/wayfinder/.../d016/export_rubik_curves_windows.py:31-46,178,204` |
+| desk-system RUONIA and RUB_KEY_RATE (desk) | rgbi `docs/wayfinder/.../d016/export_<desk>_curves_windows.py:31-46,178,204` |
 | SPFI `/iss/sdfi/curves.json` (RUB-OIS-RUSFON, RUB-OIS-RFOQTE, RUB-DSC-CSARUB) | rgbi `d003/analyze_basis.py:413`. Public access is metadata only; values need entitlement. |
 | Pasted OIS quotes | implied-key-rates `parser.py` (and copies) |
 | KRS / OIS pricing and bootstrap maths | rub-fixed-income-core `key_rate.py`, `discount.py:179`; ofz-rates-app `keyrate_math.py:19` |
@@ -916,9 +916,9 @@ Ranks are 1 = lift first. Paths are `repo: file[:symbol]`.
   - The `history.cursor` loop has 4+ copies.
   - The bondization fetch has 4 copies, none of them paginated.
   - The CBR key-rate scraper has 3 copies.
-  - The proxy auto-detect block (127.0.0.1:3128 → `HTTP(S)_PROXY` at import) is in about 12 files.
+  - The proxy auto-detect block (a loopback proxy port → `HTTP(S)_PROXY` at import) is in about 12 files.
 - **Spoofed User-Agent** "OpenAI File Downloader, XaiImageApiFetch/1.0" in moex-live-bonds, moex-bond-turnover, currency-bond-monitor, ofz-market-figures-reporter, rgbi and russia-inflation-nowcast. Replace it with an honest hub UA.
-- **Sibling-file coupling:** at least 8 repos open `../market-data-store/data/market-data.sqlite3` or `../moex-market-data-mcp/data/bond_catalog.sqlite3` directly, often with `/home/tako/lima-workspace` absolute paths. The hub should expose APIs instead and keep those schemas behind it.
+- **Sibling-file coupling:** at least 8 repos open `../market-data-store/data/market-data.sqlite3` or `../moex-market-data-mcp/data/bond_catalog.sqlite3` directly, often with `<workspace>` absolute paths. The hub should expose APIs instead and keep those schemas behind it.
 - **Pagination pitfalls:**
   - Live board endpoints ignore `start`/`limit`, so the legacy `ofz_analytics` loops can run forever.
   - ofz-tracker `historical_data.py` does not paginate TQOB history.

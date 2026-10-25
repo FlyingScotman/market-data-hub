@@ -92,7 +92,7 @@ e-disclosure (анти-бот 403) и НРД (ЦКИ — платный серв
    - `git push origin v0.4.0` — отправить тег; это запускает `release.yml` (ci → build → sign
      с одобрением в окружении `release` → verify → publish).
 3. В Actions одобрить `sign`, дождаться GitHub Release с тремя файлами.
-4. Консоль <https://marketdatahub.cc> → **Updates** → 0.4.0 → «Review and install». Updater
+4. Консоль <https://hub.example.com> → **Updates** → 0.4.0 → «Review and install». Updater
    проверит подпись, сделает дамп, остановит воркер, применит миграции, перезапустит сервисы и
    проверит `/health/ready`; при ошибке откатится сам.
 
@@ -168,7 +168,7 @@ dc() { docker compose -f /opt/mdhub/current/deploy/docker-compose.yml \
 6. **Проверка через API** (токен в переменной окружения, не в команде):
 
    ```bash
-   H="Authorization: Bearer $MDHUB_TOKEN"; B=https://marketdatahub.cc
+   H="Authorization: Bearer $MDHUB_TOKEN"; B=https://hub.example.com
    curl -sS "$B/health/ready"
    curl -sS -H "$H" "$B/v1/bonds/RU000A10F9F8" | python3 -m json.tool | grep -A12 '"ratings"'
    curl -sS -H "$H" "$B/v1/coverage" | python3 -m json.tool | grep -A6 '"ratings_'

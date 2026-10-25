@@ -1,6 +1,6 @@
 # 02 — Bond static (reference data) audit: moex-market-data-mcp and its siblings
 
-As of 2026-10-15. Audited code: `ref/moex-market-data-mcp` at commit `326b1f5` (merge of `6a95e62`, "Publish bond catalogs atomically and retire deleted events"). Audited DB snapshot: `/Users/badtako/Code/python/market-data-server/data/incoming/bc/bond_catalog/bond_catalog.sqlite3`, exported 2026-10-15T16:17Z; the last catalog run in it is `20261012T033027Z`. The DB was opened read-only only (`sqlite3 -readonly` / `?mode=ro`).
+As of 2026-10-15. Audited code: `ref/moex-market-data-mcp` at commit `326b1f5` (merge of `6a95e62`, "Publish bond catalogs atomically and retire deleted events"). Audited DB snapshot: `<workspace>/market-data-server/data/incoming/bc/bond_catalog/bond_catalog.sqlite3`, exported 2026-10-15T16:17Z; the last catalog run in it is `20261012T033027Z`. The DB was opened read-only only (`sqlite3 -readonly` / `?mode=ro`).
 
 The live comparison used public MOEX ISS, fetched on 2026-10-15 at about 19:28 local time:
 - `/iss/engines/stock/markets/bonds/securities.json?iss.only=securities`: 3,481 board rows, 3,172 SECIDs.
@@ -47,7 +47,7 @@ Client: `src/moex_market_data/catalog_client.py`.
 - `BASE_URL = https://iss.moex.com/iss` (`:9`).
 - 5 attempts with exponential backoff on 429/5xx (`:45-65`).
 - Concurrency semaphore; the weekly job runs with 5.
-- User-Agent `Lima-Market-Data/0.9` (`:36`).
+- A custom tool User-Agent (`:36`).
 
 | # | Endpoint | Code | What it provides |
 |---|---|---|---|
@@ -64,7 +64,7 @@ Not used for static:
 - `/iss/securities/{secid}/bondization.json`, the per-issue form, which gives the same data as #5;
 - MOEX CCI ratings: a probe returned `X-MicexPassport-Marker: denied` (`docs/BOND_CATALOG_2026-08-01.md` §Ratings);
 - the NSD API;
-- AlgoPack (`algopack.py`; its key is read from the file `~/.config/lima/secrets/moex-api-key`, `algopack.py:13,33`, not from an env var).
+- AlgoPack (`algopack.py`; its key is read from the file `<secrets-dir>/moex-api-key`, `algopack.py:13,33`, not from an env var).
 
 ### 1.2 Cbonds licensed JSON API
 
@@ -92,12 +92,12 @@ Not used for static:
 
 | Secret | Where | Format |
 |---|---|---|
-| `CBONDS_LOGIN`, `CBONDS_PASSWORD` | Keys inside the file `~/.config/lima/secrets/cbonds.env` (`cbonds.py:10,25-48`). The file must have mode 0600 and is **not read from the process env**. | Sent in the request body `auth{login,password}` |
-| MOEX AlgoPack / APIM key | File `~/.config/lima/secrets/moex-api-key` (`algopack.py:13,33-47`). Siblings use the env var **`MOEX_API_KEY`** (`moex-live-bonds/moex_live_bonds/config.py:11-35`, `ofz-analytics/.../market_data.py:197`). | Bearer |
-| MOEX Passport (realtime) | `~/.config/lima/secrets/moex-realtime.json`, `moex-bond-orderbook.json` (moex-live-bonds `realtime.py:14-15`) | Not needed for static |
-| Network | `ALL_PROXY=socks5h://127.0.0.1:1080`, `SSL_CERT_FILE=/home/tako/.config/lima/ca/moex-ca-bundle.pem` hard-coded in `scripts/run_bond_catalog_weekly.py:39-43` | Host-specific |
+| `CBONDS_LOGIN`, `CBONDS_PASSWORD` | Keys inside the file `<secrets-dir>/cbonds.env` (`cbonds.py:10,25-48`). The file must have mode 0600 and is **not read from the process env**. | Sent in the request body `auth{login,password}` |
+| MOEX AlgoPack / APIM key | File `<secrets-dir>/moex-api-key` (`algopack.py:13,33-47`). Siblings use the env var **`MOEX_API_KEY`** (`moex-live-bonds/moex_live_bonds/config.py:11-35`, `ofz-analytics/.../market_data.py:197`). | Bearer |
+| MOEX Passport (realtime) | `<secrets-dir>/moex-realtime.json`, `moex-bond-orderbook.json` (moex-live-bonds `realtime.py:14-15`) | Not needed for static |
+| Network | `ALL_PROXY` (loopback SOCKS proxy) and `SSL_CERT_FILE` (host CA bundle path) hard-coded in `scripts/run_bond_catalog_weekly.py:39-43` | Host-specific |
 
-Other repos use these env-var names: `CBONDS_LOGIN`, `CBONDS_PASSWORD`, `CBONDS_BASE_URL`, `CALYPSO_USER`, `CALYPSO_PASSWORD` (corporate-bond-monitor `config.py:91-96`); `CORP_MONITOR_DB`; `CURRENCY_BOND_SCHEDULE_CACHE`.
+Other repos use these env-var names: `CBONDS_LOGIN`, `CBONDS_PASSWORD`, `CBONDS_BASE_URL`, desk-system login/password variables (corporate-bond-monitor `config.py:91-96`); `CORP_MONITOR_DB`; `CURRENCY_BOND_SCHEDULE_CACHE`.
 
 ### 1.4 Refresh logic
 
@@ -177,7 +177,7 @@ Floater pricing helpers already exist in `cashflow.py`: `arithmetic_average_coup
 |---|---|---|---|
 | cbonds-research-connector | Scrapes the **cbonds.ru website** via the `agent-browser` CLI using a saved browser session (`src/cbonds_connector/gateway.py:71-102`); no JSON API. Fields: issuer, sector/industry, volumes, coupon type, benchmark, margin, **coupon formula text excerpt**, day count, **business-day convention**, perpetual flag, call dates, offer window/price, SPPI, prospectus PDFs (`models.py:34-61`, `parser.py:8-86`). | Content-addressed JSON cache; on demand per ISIN; at most 1 call per 5 s (`service.py:54-88`) | Only niche fields: business-day convention, SPPI, formula text and documents. Fragile: keeps only the first cash-flow row (`parser.py:66-86`); no amortization. |
 | moex-live-bonds | Board rows from `/engines/stock/markets/bonds/boards/{board}/securities.json`, plus `ndm` routing for PSOB/PTOB/OTCB (`realtime.py:18,225-300`); ISIN→SECID via `/securities.json?q=` (`client.py:109-139`). Auth `MOEX_API_KEY` (APIM) or Passport JSON files. | None | No; it passes market-board static (LOTSIZE, SETTLEDATE, FACEVALUEONSETTLEDATE) through without storing it. |
-| corporate-bond-monitor | `/securities/{isin}.json` and TQCB board securities (`src/corp_monitor/adapters/moex.py:62-110`); **reads this catalog** (`qr_static_comparison.py:255-300`, `tools/qr_static_comparison/export_server_static.py:14-32`); Calypso `ProductBond` cache (`analytics/calypso_cache.py`). Cbonds is only a probe. | SQLite `instruments`; Calypso positive/negative cache with a 7-day TTL | Its useful contribution is parity evidence: Calypso vs MOEX-derived cash flows have a median 0 bp, max 0.67 bp, on 22 ISINs (`docs/decisions/2026-08-10-bond-static-and-loading-policy.md`). It also has an ACT/365 / bullet-eligibility inference (`qr_static_comparison.py:100-145`). |
+| corporate-bond-monitor | `/securities/{isin}.json` and TQCB board securities (`src/corp_monitor/adapters/moex.py:62-110`); **reads this catalog** (`<desk>_static_comparison.py:255-300`, `tools/<desk>_static_comparison/export_server_static.py:14-32`); desk-system bond-product cache (`analytics/<desk>_cache.py`). Cbonds is only a probe. | SQLite `instruments`; Desk-system positive/negative cache with a 7-day TTL | Its useful contribution is parity evidence: desk-system vs MOEX-derived cash flows have a median 0 bp, max 0.67 bp, on 22 ISINs (`docs/decisions/2026-08-10-bond-static-and-loading-policy.md`). It also has an ACT/365 / bullet-eligibility inference (`<desk>_static_comparison.py:100-145`). |
 | currency-bond-monitor | **Reads this catalog** `issues` (`src/currency_bond_monitor/catalog.py:96-124`); per-SECID `/statistics/.../bondization/{secid}.json` (`schedule_source.py:52-71`); live FACEVALUEONSETTLEDATE, SETTLEDATE, CURRENCYID, CROSSRATE and LOTSIZE (`levels.py:96-185`) | Schedule cache | Better offer handling: offers are verified against bondization, holder puts are identified by their exercise window, and offer principal = face × price (`schedules.py:73-111`). **Bug:** it filters on `bond_type='Валютные облигации'` (`catalog.py:57,84,123`). In the catalog that label exists only on 36 archived rows (0 traded); the active label is `'Валютная облигация'` (197 traded). It also uses `facevalue` as the amortized nominal (`catalog.py:110`). |
 | ofz-analytics | TQOB board securities only (`ofz_analytics/static_data.py:28-172`) | Streamlit cache, 1 h | No. It builds a synthetic schedule from COUPONPERIOD (`models.py:61-90`), and its OFZ-AD/IN exclusion does not work as the comment says (`static_data.py:85-96`). |
 
@@ -185,7 +185,7 @@ Floater pricing helpers already exist in `cashflow.py`: `arithmetic_average_coup
 1. Board-level LOTSIZE, SETTLEDATE, FACEVALUEONSETTLEDATE and CURRENCYID (currency-bond-monitor `levels.py:153-185`).
 2. Offer validation and classification (currency-bond-monitor `schedules.py:73-111`).
 3. Business-day convention and formula-text capture (cbonds-research-connector).
-4. Calypso parity as a QA oracle (corporate-bond-monitor).
+4. Desk-system parity as a QA oracle (corporate-bond-monitor).
 
 ---
 
@@ -402,7 +402,7 @@ Fields at a constant 100% for all segments: face value + unit, initial face, iss
 7. The pilot manifest has a mistyped SECID and placeholder IDs (§1.4). Nothing validates that manifest SECIDs exist.
 8. The production DB is on the pre-10-14 schema: 28 stale events, and no `is_deleted`.
 9. `_number(a or b)` treats 0 as missing (`catalog.py:126-149`).
-10. Infrastructure is hard-coded: SOCKS proxy, `/home/tako/...` CA path, absolute DB path in `scripts/check_formula_fallbacks.py:14`.
+10. Infrastructure is hard-coded: SOCKS proxy, `<home>/...` CA path, absolute DB path in `scripts/check_formula_fallbacks.py:14`.
 11. Lock drift: `uv.lock` pins the editable `../rub-fixed-income-core` at 0.2.1, but the sibling is 0.8.1, so `uv run` rewrites the lock. `source_snapshots.py:13` imports `rub_fixed_income`.
 
 **Tests:**
@@ -496,5 +496,5 @@ Fields at a constant 100% for all segments: face value + unit, initial face, iss
     - Σ future amortization = current face;
     - coupon amount ≈ face × rate × day-count;
     - offer-row consistency with `bond_subtype`;
-    - Calypso/QR parity samples from corporate-bond-monitor as a regression oracle.
+    - Desk-system parity samples from corporate-bond-monitor as a regression oracle.
 13. **Downstream fix:** the currency-bond-monitor filter on `'Валютные облигации'` (`catalog.py:57,84,123`) should use `faceunit` / `FACEUNIT` ≠ `SUR` instead of the label.
