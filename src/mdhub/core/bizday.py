@@ -22,7 +22,9 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Mapping
 from datetime import date
+from types import MappingProxyType
 from typing import Final
 
 import psycopg
@@ -31,7 +33,15 @@ from psycopg.rows import tuple_row
 from mdhub.core.timeutil import is_weekday
 from mdhub.db.pool import Database
 
-__all__ = ["CALENDARS", "DEFAULT_CALENDAR", "CalendarPredicate", "DbCalendar", "weekday_calendar"]
+__all__ = [
+    "CALENDARS",
+    "CALENDAR_FALLBACK",
+    "DEFAULT_CALENDAR",
+    "CalendarPredicate",
+    "DbCalendar",
+    "calendar_chain",
+    "weekday_calendar",
+]
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +69,27 @@ brief H17): ``MOEX_SPFI`` (MOEX standardised derivatives market trading days), `
 calculation days) - see :mod:`mdhub.loaders.calendar`."""
 DEFAULT_CALENDAR: Final = "MOEX_STOCK"
 
+CALENDAR_FALLBACK: Final[Mapping[str, str]] = MappingProxyType(
+    {"MOEX_SPFI": "MOEX_FORTS", "CBR_RUONIA": "RU_PRODUCTION", "MOEX_RUSFAR": "MOEX_STOCK"}
+)
+"""Base calendar of each derived calendar (contract 1.6) for the days the derived calendar has
+no row: the derived calendars start in 2019 (``mdhub.loaders.calendar.DERIVED_START``) and end
+where their bases' full years end, while the fixing datasets gated by them (``cbr_ruonia`` from
+2010, ``indices_rusfar*`` from 2014) and the base calendars reach further. Before this fallback
+those days were gated by the base calendar; without it they would fall to Monday-Friday and open
+gaps on every old holiday. Only the hub's own predicates use it (``DbCalendar``,
+:func:`mdhub.core.gaps.db_business_days`, the coverage report): ``/v1/calendar`` and the static
+snapshot never report a day the calendar does not hold."""
+
+
+def calendar_chain(calendar: str) -> tuple[str, ...]:
+    """``calendar`` followed by its fallback calendars (:data:`CALENDAR_FALLBACK`): the first one
+    with a row for a day decides it, Monday-Friday when none has one."""
+    chain = [calendar]
+    while (nxt := CALENDAR_FALLBACK.get(chain[-1])) is not None and nxt not in chain:
+        chain.append(nxt)
+    return tuple(chain)
+
 
 class CalendarPredicate:
     """Callable ``(day, calendar) -> bool``; base implementation = weekday fallback."""
@@ -81,7 +112,8 @@ class DbCalendar(CalendarPredicate):
     (``ref.calendar_source_rank``: observed > MOEX ISS calendar > curated > rule >
     provisional ``*_unverified`` - ``curated_unverified`` and the derived calendars'
     ``rule_*_unverified`` -, ``known_at`` breaks ties; same rule as ``ref.calendar_effective``);
-    falls back to weekdays.
+    a day the calendar has no row for is taken from its base calendar
+    (:data:`CALENDAR_FALLBACK`, derived calendars only), then falls back to weekdays.
 
     Results are cached per ``(calendar, day)`` for ``ttl`` seconds. Database errors (table
     missing, connection down) fall back to weekdays with a warning - gating must never stop
@@ -146,14 +178,16 @@ class DbCalendar(CalendarPredicate):
                 exists = cur.execute("SELECT to_regclass('ref.calendar_day')").fetchone()
                 if not exists or exists[0] is None:
                     return None
+                chain = list(calendar_chain(calendar))
                 row = cur.execute(
                     """
                     SELECT is_business_day FROM ref.calendar_day
-                    WHERE calendar = %s AND day = %s AND NOT is_deleted
-                    ORDER BY ref.calendar_source_rank(source), known_at DESC NULLS LAST
+                    WHERE calendar = ANY(%s) AND day = %s AND NOT is_deleted
+                    ORDER BY array_position(%s, calendar), ref.calendar_source_rank(source),
+                             known_at DESC NULLS LAST
                     LIMIT 1
                     """,
-                    (calendar, day),
+                    (chain, day, chain),
                 ).fetchone()
         except psycopg.Error as exc:
             log.warning("calendar lookup failed (%s); using weekday fallback", exc)

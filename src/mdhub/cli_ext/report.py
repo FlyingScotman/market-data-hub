@@ -42,7 +42,7 @@ from psycopg import sql
 from psycopg.rows import dict_row, tuple_row
 
 from mdhub.config import ConfigError, Settings
-from mdhub.core.bizday import DEFAULT_CALENDAR, CalendarPredicate
+from mdhub.core.bizday import DEFAULT_CALENDAR, CalendarPredicate, calendar_chain
 from mdhub.core.timeutil import is_weekday, msk_today
 from mdhub.datasets import DatasetSpec, all_datasets
 from mdhub.jobs import discover_jobs
@@ -83,7 +83,8 @@ Conn = psycopg.Connection[Any]
 
 class EffectiveCalendar(CalendarPredicate):
     """``ref.calendar_effective`` loaded once (the precedence of :class:`DbCalendar`);
-    days without a row fall back to Monday-Friday."""
+    days without a row fall back to the base calendar of a derived one
+    (:data:`~mdhub.core.bizday.CALENDAR_FALLBACK`), then to Monday-Friday."""
 
     def __init__(self, days: dict[tuple[str, date], bool]) -> None:
         self._days = days
@@ -99,8 +100,11 @@ class EffectiveCalendar(CalendarPredicate):
         return cls({(str(c), d): bool(b) for c, d, b in rows if b is not None})
 
     def __call__(self, day: date, calendar: str = DEFAULT_CALENDAR) -> bool:
-        value = self._days.get((calendar, day))
-        return is_weekday(day) if value is None else value
+        for cal in calendar_chain(calendar):
+            value = self._days.get((cal, day))
+            if value is not None:
+                return value
+        return is_weekday(day)
 
 
 # ----------------------------------------------------------------------------- datasets

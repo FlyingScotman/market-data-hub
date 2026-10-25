@@ -44,6 +44,14 @@ from mdhub.sources.moex_market import (
 __all__ = ["load_index_day"]
 
 CALENDAR: Final = "MOEX_STOCK"
+RUSFAR_CALENDAR: Final = "MOEX_RUSFAR"
+"""Gap calendar of ``indices_rusfar`` / ``indices_rusfarrt``: RUSFAR calculation days
+(:func:`mdhub.loaders.calendar.rusfar_calculation_days`, contract 1.6) - no value on MOEX trading
+non-working days, trading Saturdays nor the last trading day of the year. RUSFAR and RUSFARRT
+follow it day for day 2019-2026 (production check, market-data-hub#79); the term and CNY series
+of the groups have fewer gaps on it than on ``MOEX_STOCK``. ``MOEX_STOCK`` before 2019
+(:data:`mdhub.core.bizday.CALENDAR_FALLBACK`). Loading stays on ``MOEX_STOCK``
+(:data:`CALENDAR`): one ISS read per trading day serves every index."""
 KEY: Final = ["trade_date", "secid"]
 SOURCE: Final = "moex_iss"
 DATASET_ALL: Final = "indices_all"
@@ -66,17 +74,17 @@ register_dataset(
         where="basis = 'history'",
     )
 )
-for _group, _secids in (
-    ("rusfar", INDEX_GROUPS["rusfar"]),
-    ("rusfarrt", INDEX_GROUPS["rusfarrt"]),
-    ("bonds", tuple(s for s in INDEX_GROUPS["bonds"] if s != "MOEXREPO")),
+for _group, _secids, _calendar in (
+    ("rusfar", INDEX_GROUPS["rusfar"], RUSFAR_CALENDAR),
+    ("rusfarrt", INDEX_GROUPS["rusfarrt"], RUSFAR_CALENDAR),
+    ("bonds", tuple(s for s in INDEX_GROUPS["bonds"] if s != "MOEXREPO"), CALENDAR),
 ):
     register_dataset(
         DatasetSpec(
             name=f"indices_{_group}",
             table="md.index_eod",
             date_column="trade_date",
-            calendar=CALENDAR,
+            calendar=_calendar,
             frequency="business_daily",
             max_lag_days=1,
             backfill_job="indices_eod",

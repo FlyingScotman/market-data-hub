@@ -709,7 +709,9 @@ def test_ru_production_is_the_official_calendar_and_missing_ruonia_is_a_gap(
     business day without a fixing became a holiday - on production the last working day of every
     year 2019-2025 (e.g. Tue 2025-12-30) and the 2020 non-working days. The curated official
     calendar now covers past years, the observed rows are retired, RUONIA only cross-checks,
-    and the missing fixing is a ``cbr_ruonia`` gap."""
+    and the missing fixing is reported by the cross-check. Since market-data-hub#79 the gap scan of
+    ``cbr_ruonia`` uses ``CBR_RUONIA`` (no RUONIA for the year-end): no gap on that day, a
+    missing fixing on a publication day still is one."""
     monkeypatch.setattr("mdhub.jobs.msk_today", lambda: date(2026, 1, 20))
     # production state of 0.2.0: RUONIA observation rows with 2025-12-30 as a "holiday"
     holidays = {date(2025, 12, 30), date(2025, 12, 31)} | {date(2026, 1, d) for d in range(1, 10)}
@@ -760,8 +762,13 @@ def test_ru_production_is_the_official_calendar_and_missing_ruonia_is_a_gap(
     assert "2025-12-30" in check["business_days_without_ruonia"]
     assert check["ruonia_on_non_business_days"] == []
 
+    assert dbcal(date(2025, 12, 30), "CBR_RUONIA") is False
+    conn.execute("DELETE FROM md.fixing WHERE fixing_date = '2025-12-29'")
+    conn.commit()
     scan = scan_dataset(conn, get_dataset("cbr_ruonia"), today=date(2026, 1, 20), calendar=dbcal)
-    assert date(2025, 12, 30) in {g.day for g in scan.gaps}
+    gaps = {g.day for g in scan.gaps}
+    assert date(2025, 12, 30) not in gaps
+    assert date(2025, 12, 29) in gaps
 
 
 # ------------------------------------------- foreign settlement calendars (contract 1.5, H4)
