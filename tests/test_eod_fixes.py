@@ -8,7 +8,7 @@ from __future__ import annotations
 import gzip
 import json
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any
@@ -329,12 +329,17 @@ def _hold(db_url: str, lock: str) -> psycopg.Connection[Any]:
 
 
 def test_manual_eod_rebuild_does_not_block_scheduled_intraday_cuts(
-    seeded: Conn, db_url: str, db: Database, settings: Settings
+    seeded: Conn,
+    db_url: str,
+    db: Database,
+    settings: Settings,
+    today_is: Callable[[date], None],
 ) -> None:
     """Production 20.10 16:30-19:00 MSK: ~170 ``mdhub run snapshot_market -p mode=eod_final -p
     day=...`` runs held ``mdhub.job:snapshot_market`` and every intraday fire was recorded
     ``skipped: lock_busy``. A rebuild now holds its own lock class; the scheduled intraday cut
     and the scheduled EOD cut still run."""
+    today_is(date(2026, 10, 23))  # a Friday: scheduled cuts fire on business days only
     rebuild = market_lock({"mode": "eod_final", "day": date(2026, 1, 15)})
     assert rebuild == "snapshot_market:rebuild"
     holder = _hold(db_url, rebuild)
@@ -361,6 +366,29 @@ def test_manual_eod_rebuild_does_not_block_scheduled_intraday_cuts(
     assert market_lock({"mode": "intraday"}) == "snapshot_market:intraday"
     assert market_lock({"mode": "eod_final", "days_back": [1]}) == "snapshot_market:eod"
     assert market_lock({"mode": "intraday", "known_at": utc_now()}) == "snapshot_market:rebuild"
+
+
+@pytest.mark.parametrize("mode", ["intraday", "eod_preliminary"])
+def test_snapshot_market_on_a_non_business_day_is_skipped(
+    seeded: Conn, db: Database, settings: Settings, today_is: Callable[[date], None], mode: str
+) -> None:
+    """Issue #88: a ``days_back=[0]`` cut (the intraday / ``eod_preliminary`` default) run on a
+    weekend - e.g. a manual ``mdhub run snapshot_market`` - resolves no business date. It ends
+    ``skipped`` with the reason and publishes nothing, instead of failing with ``IndexError``."""
+    today_is(date(2026, 10, 25))  # a Sunday
+    before = seeded.execute("SELECT count(*) AS n FROM ops.published_snapshot").fetchone()
+    out = run_job("snapshot_market", {"mode": mode, "days_back": [0]}, settings=settings, db=db)
+    assert out.status == "skipped", out
+    assert out.result == {}
+    run = seeded.execute(
+        "SELECT status, error FROM ops.job_run WHERE id = %s", (out.run_id,)
+    ).fetchone()
+    assert run is not None
+    assert run["status"] == "skipped"
+    assert "2026-10-25 is not a MOEX_STOCK business day" in run["error"]
+    after = seeded.execute("SELECT count(*) AS n FROM ops.published_snapshot").fetchone()
+    assert before is not None and after is not None
+    assert after["n"] == before["n"]
 
 
 def test_intraday_rules_wait_inside_their_slot_and_open_a_gap_when_missed() -> None:
