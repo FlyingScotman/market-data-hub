@@ -70,7 +70,7 @@ Portal недоступны из среды разработки, записан
      (ждёт одобрения в окружении `release`) → verify → publish.
 3. В Actions одобрить шаг `sign`. Дождаться GitHub Release с тремя файлами (`.tar.gz`,
    `.SHA256SUMS`, `.SHA256SUMS.minisig`).
-4. В консоли <https://marketdatahub.cc> → **Updates** → релиз 0.2.0 → «Review and install».
+4. В консоли <https://hub.example.com> → **Updates** → релиз 0.2.0 → «Review and install».
    Updater проверит подпись и манифест, сделает дамп, соберёт образ, остановит воркер (drain),
    применит миграции, перезапустит worker/api/admin и проверит `/health/ready`, heartbeat и
    `/v1/coverage`; при ошибке откатится сам.
@@ -135,7 +135,7 @@ Portal недоступны из среды разработки, записан
 4. **Проверка API** (с Mac или VPS; токен в переменной окружения, не в команде):
 
    ```bash
-   H="Authorization: Bearer $MDHUB_TOKEN"; B=https://marketdatahub.cc
+   H="Authorization: Bearer $MDHUB_TOKEN"; B=https://hub.example.com
    curl -sS "$B/health/ready"
    curl -sS -H "$H" "$B/v1/history/index" | head -c 800; echo
    curl -sS -H "$H" --compressed -D - -o /dev/null \

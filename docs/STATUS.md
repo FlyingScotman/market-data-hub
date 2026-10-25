@@ -31,7 +31,7 @@
 
 ## Decisions (owner)
 - GitHub: FlyingScotman/market-data-hub (public). Release defaults point to this repository;
-  GitHub release artifacts contain code only. Production HTTPS is marketdatahub.cc behind host nginx.
+  GitHub release artifacts contain code only. Production HTTPS runs behind host nginx.
 - DB: PostgreSQL 16. Tests use pgserver (no Docker on this Mac).
 - TDM export: md_fx candidate (MOEX 19:00 indicative) is opt-in (`--fx-candidate`), so a TDM
   folder load can't overwrite the internal FX mark.

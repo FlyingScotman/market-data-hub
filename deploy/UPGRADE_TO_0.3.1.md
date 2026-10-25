@@ -49,7 +49,7 @@ git push origin v0.3.1
 - `git push origin v0.3.1` — отправить тег; это запускает `release.yml` (ci → build → sign с
   одобрением в окружении `release` → verify → publish).
 
-Затем в консоли <https://marketdatahub.cc> → **Updates** → 0.3.1 → «Review and install».
+Затем в консоли <https://hub.example.com> → **Updates** → 0.3.1 → «Review and install».
 Ручной шаг с `hostmon` (был только для перехода с 0.1.3) не нужен.
 
 ## После установки
@@ -123,7 +123,7 @@ dc run --rm --no-deps worker mdhub run snapshot_rebuild -p date_from=2026-09-04 
 **5. Проверка** (токен в переменной окружения, не в команде):
 
 ```bash
-H="Authorization: Bearer $MDHUB_TOKEN"; B=https://marketdatahub.cc
+H="Authorization: Bearer $MDHUB_TOKEN"; B=https://hub.example.com
 curl -sS "$B/health/ready"
 curl -sS -H "$H" "$B/v1/runs?job=bonds_eod&limit=3"
 curl -sS -H "$H" "$B/v1/history/curves/ruonia_ois?from=2026-10-20&to=2026-10-20&source=otc_monitor&fields=quote_set_id,source_ts,quote_basis"

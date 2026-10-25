@@ -1,5 +1,5 @@
-# Host nginx terminates HTTPS for marketdatahub.cc. Container ports stay on loopback.
-# Set MDHUB_ADMIN_DOMAIN=marketdatahub.cc and MDHUB_ADMIN_ORIGIN=https://marketdatahub.cc.
+# Host nginx terminates HTTPS for hub.example.com. Container ports stay on loopback.
+# Set MDHUB_ADMIN_DOMAIN=hub.example.com and MDHUB_ADMIN_ORIGIN=https://hub.example.com.
 services:
   admin:
     # Enrollment URLs contain secrets; nginx logs only safe request metadata.
@@ -25,8 +25,9 @@ services:
       MDHUB_UPDATE_COMPOSE_OVERRIDE: "/opt/mdhub/shared/compose.local.yaml"
     # The shared env is a symlink into this protected directory. Atomic tag updates
     # require the directory, rather than a single-file mount, at the same host path.
+    # Replace /etc/mdhub/secrets with the directory your shared .env symlink points into.
     volumes:
-      - /root/.config/lima/secrets/market-data-hub:/root/.config/lima/secrets/market-data-hub
+      - /etc/mdhub/secrets:/etc/mdhub/secrets
 
 networks:
   default:

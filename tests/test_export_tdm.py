@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -33,7 +34,10 @@ from mdhub.export.tdm import (
 from mdhub.sources.moex_market import kbd_yield_pct
 from test_api_seed import KBD_PARAMS, seed
 
-TDM_REPO = Path("/Users/badtako/Code/python/trading_desk_monitor")
+# A local trading-desk-monitor checkout: $MDHUB_TDM_REPO, else a sibling of this repository.
+TDM_REPO = Path(
+    os.environ.get("MDHUB_TDM_REPO") or Path(__file__).resolve().parents[2] / "trading-desk-monitor"
+)
 TDM_COMMIT = "a6ba30b"  # contract 1.3
 
 
