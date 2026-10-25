@@ -234,11 +234,20 @@ def snapshot_market(
     ka = _known_at(known_at)
     if day is None:
         today = ka.astimezone(MSK).date() if known_at is not None else ctx.today()
-        day = ctx.business_dates(
+        dates = ctx.business_dates(
             days_back if days_back is not None else MARKET_MODES[mode],
             today=today,
             calendar=BOND_CALENDAR,
-        )[0]
+        )
+        if not dates:
+            # offset 0 on a weekend / holiday (a manual run, a replay with known_at=): there
+            # is no business date to cut, like the loaders' "no business dates to load"
+            ctx.run.mark_skipped(
+                f"no business date to cut: {today.isoformat()} is not a {BOND_CALENDAR} "
+                "business day"
+            )
+            return {}
+        day = dates[0]
     missing: list[InputRule] = []
     waited = 0
     run_day = ka.astimezone(MSK).date() if known_at is not None else ctx.today()
