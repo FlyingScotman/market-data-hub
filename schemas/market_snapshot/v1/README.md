@@ -22,6 +22,9 @@ an older version fails its conformance tests instead of silently ignoring it.
 never removes, renames or changes the meaning or unit of an existing field. A consumer that
 reads `1.x` and ignores unknown additive fields stays correct; a new major (`2.0`) is refused.
 
+First hub release with each version: 1.0 = 0.1.3, 1.1 = 0.1.7, 1.2 = 0.2.0, 1.3 = 0.3.2,
+1.4 = 0.3.4, 1.5 = 0.4.0 (in production since 2026-10-23); 1.6 is in `main`, planned for 0.5.0.
+
 | Version | Change (all additive) |
 |---|---|
 | 1.0 | initial contract |

@@ -1,8 +1,8 @@
 # System context: where the hub fits
 
-As of 22 October 2026, checked against `main` @ `d71d984` (release v0.3.2). This file replaces the 16 October version, which predated the amendment of system ADR-001 on 18 October (one hub on the VPS, no inside instance, several consumers).
+As of 25 October 2026, checked against `main` @ `52e901b` (contract `market_snapshot/1.6`, not yet released) and release v0.4.0 (contract 1.5, in production since 23 October). Earlier versions of this file: 16 October (before the amendment of system ADR-001 on 18 October: one hub on the VPS, no inside instance, several consumers) and 22 October (v0.3.2).
 
-market-data-hub is the **market and static data service** of the Trading Desk Monitor, a RUB fixed-income desk analytics system, and of the owner's other tools. The system architecture lives in the repository **trading-desk-monitor** (GitHub `FlyingScotman/trading-desk-monitor`), folder `docs/architecture/`: start with its `README.md` (component map, interface catalogue, reading order). Monitor documents sometimes call this repository `market-data-server`. This file summarises what the system expects from the hub; [DESIGN.md](DESIGN.md) stays authoritative for the hub's internals, and [ROADMAP.md](../ROADMAP.md) for open work.
+market-data-hub is the **market and static data service** of the Trading Desk Monitor, a RUB fixed-income desk analytics system, and of the owner's other tools. The system architecture lives in the repository **trading-desk-monitor** (GitHub `FlyingScotman/trading-desk-monitor`), folder `docs/architecture/`: start with its `README.md` (component map, interface catalogue, reading order). Monitor documents sometimes call this repository `market-data-server`. This file summarises what the system expects from the hub; [DESIGN.md](DESIGN.md) stays authoritative for the hub's internals, and [GitHub Issues](https://github.com/FlyingScotman/market-data-hub/issues) for open work ([AGENTS.md](../AGENTS.md); [ROADMAP.md](../ROADMAP.md) is frozen history since 23 October).
 
 ## Components
 
@@ -30,7 +30,7 @@ Named bearer tokens per consumer ([ADMIN_DESIGN.md](ADMIN_DESIGN.md) §3.3, `src
 
 | Interface | State in `main` | Reference |
 |---|---|---|
-| **Market Snapshot Contract** `market_snapshot/1.x`, owned by the hub | **1.3**. 1.1: static terms for the desk (WEB-13). 1.2: MOEX linker / WAP analytics, `Fixing.hub_ingested_at`, explicit RUSFAR units (WEB-15). 1.3: cross-rate kinds, €STR / SOFR / CPI y/y, proxy curves labelled `proxy_*`, not OIS (WEB-16); agency ratings, replacement-bond flag, `issue_size_moex`, curated-terms evidence (WEB-18). Consumers read any 1.x; a new dataset bumps the minor version | `schemas/market_snapshot/v1/` (README, schemas, golden fixtures rebuilt byte for byte in CI) |
+| **Market Snapshot Contract** `market_snapshot/1.x`, owned by the hub | **1.6** in `main`; production (v0.4.0) publishes **1.5**. 1.1: static terms for the desk (WEB-13). 1.2: MOEX linker / WAP analytics, `Fixing.hub_ingested_at`, explicit RUSFAR units (WEB-15). 1.3: cross-rate kinds, €STR / SOFR / CPI y/y, proxy curves labelled `proxy_*`, not OIS (WEB-16); agency ratings, replacement-bond flag, `issue_size_moex`, curated-terms evidence (WEB-18). 1.4: terms of floaters on the MOEX KBD and the hub's reproduction of their coupons. 1.5 (desk package P6, brief H10–H13): FX value dates and settlement calendars, `fx_swaps`, `futures_prices` / `futures_prices_intraday`, `cpi`, declared RUONIA unpublished days, SARON, calendars `CN_INTERBANK` / `US_FED` / `CH_ZURICH`. 1.6 (brief H17, #38): calendars `MOEX_SPFI`, `CBR_RUONIA`, `MOEX_RUSFAR`. Consumers read any 1.x; a new dataset bumps the minor version. Which hub release introduced which version: the schemas README | `schemas/market_snapshot/v1/` (README, schemas, golden fixtures rebuilt byte for byte in CI) |
 | **Immutable snapshots** | Static and market kinds; ID = sha256 of the canonical bundle; manifest with sources, counts, coverage, stale flags, `supersedes`, `excluded` with reasons. Jobs: `snapshot_static` daily 07:45 MSK; `snapshot_market` `eod_preliminary` 19:45 for D, `eod_final` 08:00 for D-1, `intraday` every 30 min 10:00–19:00. Defaults are set by `MDHUB_SNAPSHOT_*`; system DEC04 is partly answered (FX at the MOEX 19:00 rate; bonds and curves at the hub cuts as published). Intraday snapshots are kept 30 days, static and EOD forever; a backfill that changes a day's inputs publishes a correction through `supersedes` (WEB-15) | `ops.published_snapshot`, `src/mdhub/snapshot/`, [DESIGN.md](DESIGN.md) §11 |
 | **Snapshot endpoints** | `GET /v1/snapshots`, `/v1/snapshots/{id}/manifest`, `/v1/snapshots/{id}/bundle` (gzip, `ETag` = id) | `src/mdhub/api/routes/snapshots.py` |
 | **History API** | `/v1/history/{index,bonds,curves/{dataset},zcyc,fixings,fx}`: columnar JSON, cursors, ETag/304, gzip, `known_at` replay. Reads the VPS database directly; not part of the snapshot path | [HISTORY_API.md](HISTORY_API.md) |
@@ -40,26 +40,26 @@ Named bearer tokens per consumer ([ADMIN_DESIGN.md](ADMIN_DESIGN.md) §3.3, `src
 
 Principles that stay: **publish facts, not conventions** (dataset and tenor codes, units, coupon status and every price basis as stored; day counts, spot lags and the curve-spec registry belong to core, and the backend maps `dataset` to a core spec ID); **as-known-at readers** for static data over `ops.row_history`, with versioned instead of hard deletes, so past snapshots replay; **coverage labelling instead of exclusion** (unknown coupon types and perpetuals are published with labels; a market snapshot quotes only the instruments of its static snapshot; floater benchmarks are published verbatim with their formula status).
 
-**Release state.** Production was last verified at 0.2.0 (21 October, [ROADMAP.md](../ROADMAP.md)). `main` is release v0.3.2 (22 October), which contains WEB-16, WEB-17 and WEB-18; installing it is the owner's step and is not recorded here.
+**Release state.** Production runs **v0.4.0** (commit `dcfda95`, contract 1.5, 45 migrations), installed by the owner on 23 October through Updates; the evidence is in #35 and #20. Earlier installs: 0.2.0 (21 October), 0.3.3 and 0.3.4 (22 October). `main` adds contract 1.6 (migration `0429_fixing_calendars`, 46 migrations) and the RA Expert request budget; it ships as 0.5.0 ([deploy/UPGRADE_TO_0.5.0.md](../deploy/UPGRADE_TO_0.5.0.md), #83). Tagging and installing are the owner's steps; sessions have read-only access to production.
 
-## The system's work list, as of 22 October
+## The system's work list, as of 25 October
 
 The 16 October list (items 1–10) stands as follows:
 
 | # | Item | Status |
 |---|---|---|
-| 1–6 | Snapshot contract, facts not conventions, as-known-at readers, immutable snapshots, endpoints, coverage labelling | Done; in production since 0.1.3 / 0.2.0 |
+| 1–6 | Snapshot contract, facts not conventions, as-known-at readers, immutable snapshots, endpoints, coverage labelling | Done; in production since 0.1.3 / 0.2.0, contract 1.5 since 0.4.0 |
 | 7 | Replica mode for two-host operation | **Dropped** (ADR-001 amended 18 October): the backend's cache and drop folder replace it |
 | 8 | Windows support for an inside part | **Dropped** (no inside instance) |
-| 9 | Alerting and backups | Open: gaps are visible in `/v1/gaps`, but there is no alert channel (review P0-4); backups stay on the VPS until WEB-6 (off-host copy) |
-| 10 | Intraday data; foreign and CPI series | Intraday market cuts done (every 30 min); €STR, SOFR and CPI y/y done in WEB-16. The remaining derivatives inputs are tracked in [ROADMAP.md](../ROADMAP.md), section "TDM H10–H15, SARON, H17" |
+| 9 | Alerting and backups | Open: gaps are visible in `/v1/gaps`, but there is no alert channel (#62, review P0-4) and no off-host probe (#85); backups stay on the VPS until an off-host copy exists (#13, WEB-6) |
+| 10 | Intraday data; foreign and CPI series | Intraday market cuts done (every 30 min); €STR, SOFR and CPI y/y done in WEB-16; futures prices, FX value dates and swaps, CPI m/m and y/y from 2015, SARON in 1.5 (v0.4.0); swap and fixing calendars in 1.6 (`main`). Open: CPI index levels and past publication dates (#39), SARON in production (#37, #84), CDS (no licensed source, #60). Epic: #28 |
 
-The desk's brief to the hub is `trading-desk-monitor/docs/architecture/briefs/HUB.md` (items H0–H26; H6 is this rewrite). Items the hub accepts are tracked in [ROADMAP.md](../ROADMAP.md). On the desk's critical path now (monitor ROADMAP revision 4, wave A package P6): H11 futures prices and H13 FX value dates, swap points and CETS FX swaps in the snapshot, then H12 RUONIA unpublished days, H10 CPI levels, SARON and H17 publication calendars, as contract `market_snapshot/1.5`.
+The desk's brief to the hub is `trading-desk-monitor/docs/architecture/briefs/HUB.md` (items H0–H26; H6 is this file). Items the hub accepts are tracked as hub issues under the epics #28–#34 (the program root is FlyingScotman/trading-desk-monitor#5). Wave A package P6 of the monitor (H10–H13) shipped as contract 1.5 in v0.4.0; H17 is contract 1.6 in `main`, waiting for release 0.5.0 (#83).
 
 ## Relevant system documents
 
 All paths are in `trading-desk-monitor/docs/architecture/`:
-- `README.md`: the component map and the interface catalogue (it has the 1.2 contract entry; 1.3 is missing, and its hub rows still describe the snapshot layer as not deployed).
+- `README.md`: the component map and the interface catalogue. On 25 October its hub rows still described production 0.2.0 and contract 1.3; the monitor repository owns that update.
 - `adr/ADR-001-hosting-topology.md`: one VPS hub for every consumer; the backend's snapshot cache.
 - `adr/ADR-002-materialized-market-snapshots.md`: snapshot rules.
 - `02_MARKET_DATA_AND_CORE_CONTRACT.md`: the contract outline.

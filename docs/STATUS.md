@@ -2,9 +2,11 @@
 
 > **2026-10-23:** open work is tracked in [GitHub Issues](https://github.com/FlyingScotman/market-data-hub/issues); see [AGENTS.md](../AGENTS.md). This file is history only.
 
-> Historical checkpoints below. For the current deployment state and actionable open work,
-> use [ROADMAP.md](../ROADMAP.md), updated 19 October 2026. Earlier "Remaining steps" and
-> source-access assumptions below may have been superseded; recheck before acting.
+> Historical checkpoints below, last one 21 October 2026 (release state then: 0.2.0 in production).
+> Current state as of 25 October: production runs v0.4.0 (contract `market_snapshot/1.5`), `main`
+> carries contract 1.6 for release 0.5.0 — see [SYSTEM_CONTEXT.md](SYSTEM_CONTEXT.md) and
+> FlyingScotman/market-data-hub#20. "Remaining steps" and source-access assumptions below are
+> superseded; recheck before acting.
 
 > **2026-10-21 (WEB-18):** credit ratings from the agencies' public disclosure (НКР, НРА, Эксперт РА; job
 > `ratings_agencies`), agency-industry sectors, curated issue terms with evidence (job `bond_terms_curated`),

@@ -1,6 +1,7 @@
 # market-data-hub — design
 
-Status: v0.1 design, 2026-10-15. Owner: FiveLimaGolf. Target: a single VPS that is the
+Status: living design, first written 2026-10-15 (v0.1) and kept current with `main` (contract
+`market_snapshot/1.6`, 46 migrations; production v0.4.0 = contract 1.5). Owner: FiveLimaGolf. Target: a single VPS that is the
 market data hub for the trading desk backend (trading_desk_monitor + rub-fixed-income-core).
 
 Inputs to this design (audits, 2026-10-15): market-data-store (curves/FX/fixings loaders),
@@ -336,8 +337,8 @@ needs `Authorization: Bearer <token>`, including the OpenAPI document `/v1/opena
   503.
 - **`MDHUB_API_TOKENS`** keeps working unchanged (all scopes): entries are `token` (shown as
   `env:1`, `env:2`, … by position) or `name=token`. Checked first, against every entry.
-- **Scopes:** `read` = all of `/v1`; `snapshots` = `/v1/snapshots*` only (inside replica); `export`
-  = `/v1/export/*` only (TDM CSV); `/v1/openapi.json` accepts any scope. Missing scope → 403.
+- **Scopes:** `read` = all of `/v1`; `snapshots` = `/v1/snapshots*` only (snapshot consumers
+  such as the desk backend's cache); `export` = `/v1/export/*` only (TDM CSV); `/v1/openapi.json` accepts any scope. Missing scope → 403.
 - **Request log:** every request except `/health/*` goes to `ops.api_request` (§4) with the token
   name and id (never the token), client IP (uvicorn `--proxy-headers`), route template, redacted
   query, status, duration, size, request id and user agent; `admin.api_token.last_used_at/_ip`
