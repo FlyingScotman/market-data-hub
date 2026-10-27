@@ -10,3 +10,6 @@ dist/
 .ruff_cache/
 .mypy_cache/
 .handoff/
+
+# Local CodeGraph index
+.codegraph/
