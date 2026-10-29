@@ -651,8 +651,8 @@ def _poll_trades(
 ) -> None:
     """New trades of the rates contracts after the last TRADENO stored from this feed in the
     last 4 days (``tradeno=N&next_trade=1``; the whole current session when none is stored).
-    APIM when it served the rates marketdata this run, else public ISS (15-min delayed). A contract whose read fails is
-    logged and the run marked partial; the others are still stored."""
+    APIM when it served the rates marketdata this run, else public ISS (15-min delayed). A
+    contract whose read fails is logged and the run marked partial; the others are stored."""
     source = "moex_apim" if apim else "moex_iss"
     # Trade SYSTIME is the exchange's time of the trade (~TRADETIME) on both feeds, so the lag
     # cannot tell the feeds apart: APIM (entitled: it answered JSON, not the "subscribers only"
