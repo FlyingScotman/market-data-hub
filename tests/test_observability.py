@@ -28,7 +28,7 @@ from mdhub.schedule import KNOWN_JOBS, RULES
 Conn = psycopg.Connection[DictRow]
 NOT_LOADERS = {
     "quality", "backfill_worker", "maintenance", "source_probe", "snapshot_static",
-    "snapshot_market", "bond_terms_curated", "zcyc_floater_fit",
+    "snapshot_market", "bond_terms_curated", "zcyc_floater_fit", "bond_close_quote",
 }  # fmt: skip
 
 

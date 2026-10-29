@@ -747,6 +747,8 @@ FUTURES_INTRADAY_VALUE_COLUMNS: Final = (
     "vol_today",
     "val_today",
     "swap_rate",
+    "bid_depth",
+    "offer_depth",
 )
 
 
@@ -789,6 +791,10 @@ def parse_futures_marketdata(
                 "vol_today": to_decimal(r["VOLTODAY"], field="VOLTODAY"),
                 "val_today": to_decimal(r["VALTODAY"], field="VALTODAY"),
                 "swap_rate": to_decimal(r["SWAPRATE"], field="SWAPRATE"),
+                # best-level volumes: published by the realtime feed only (absent or null on
+                # public ISS)
+                "bid_depth": to_decimal(r.get("BIDDEPTH"), field="BIDDEPTH"),
+                "offer_depth": to_decimal(r.get("OFFERDEPTH"), field="OFFERDEPTH"),
                 "bid_rub_per_unit": normalize_price(bid, factor),
                 "offer_rub_per_unit": normalize_price(offer, factor),
                 "last_rub_per_unit": normalize_price(last, factor),

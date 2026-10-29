@@ -1,4 +1,4 @@
-"""FORTS (FX) futures loaders: EOD history, realtime marketdata, AlgoPack 5-minute datasets.
+"""FORTS futures loaders: EOD history, realtime marketdata (FX + rates contracts), AlgoPack.
 
 Jobs (names fixed by :data:`mdhub.schedule.KNOWN_JOBS`):
 
@@ -7,10 +7,13 @@ Jobs (names fixed by :data:`mdhub.schedule.KNOWN_JOBS`):
   other consumers). Calendar spreads are skipped. Refreshes ``ref.futures_contract`` from the
   RFUD listing; expired contracts met in history are added (FX ones with dates from
   ``/securities/{secid}.json``).
-* ``futures_intraday`` - ``md.futures_intraday`` for every listed FX future via APIM realtime
-  marketdata; on any APIM failure (no key, 401, ``EntitlementError``, transport) falls back
-  to public ISS (15-min delayed, ``source_variant='iss_public'``) and marks the run partial.
-  Change-only.
+* ``futures_intraday`` - ``md.futures_intraday`` for every listed FX future and every listed
+  contract of the rates assets (``MDHUB_FUTURES_RATES_ASSETS``, default RGBI dated ``RB*``,
+  perpetual ``RGBIF``, ``KEYRATE``, ``RUONIA``) via APIM realtime marketdata; on any APIM
+  failure (no key, 401, ``EntitlementError``, transport) - or for the contracts an APIM answer
+  lacks - falls back to public ISS (15-min delayed, ``source_variant='iss_public'``) and marks
+  the run partial. Change-only. Rates contracts are stored raw (no ``*_rub_per_unit``). Then
+  the new trades of the rates contracts -> ``md.futures_trade`` (:func:`_poll_trades`).
 * ``algopack_fx_futures`` - AlgoPack FO tradestats and FUTOI for FX futures (order-book
   obstats are not collected: owner decision, dropped by migration 0423). Without dates
   (scheduled polls, business days and weekend sessions): incremental polls read the latest bar
@@ -38,7 +41,7 @@ same session (intraday / the current session's AlgoPack bars), else NULL.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from datetime import time as dt_time
@@ -81,6 +84,7 @@ from mdhub.sources.moex_fx import (
     PARSER_VERSION,
     RFUD_SECURITIES,
     SECURITY_DESCRIPTION,
+    classify_latency,
     fx_asset,
     normalize_price,
     parse_forts_history,
@@ -89,6 +93,8 @@ from mdhub.sources.moex_fx import (
     parse_security_description,
     price_factor,
 )
+from mdhub.sources.moex_intraday import FORTS_TRADES, TRADES_PAGE_HINT, parse_forts_trades
+from mdhub.sources.moex_intraday import PARSER_VERSION as INTRADAY_PARSER_VERSION
 
 __all__ = [
     "ALGOPACK_HISTORY_ENDPOINTS",
@@ -460,12 +466,31 @@ def _fx_listed(specs: Mapping[str, ContractSpec], today: date) -> list[str]:
     )
 
 
-@job("futures_intraday", "FX futures marketdata (APIM realtime, ISS fallback), change-only")
+def _rates_listed(
+    specs: Mapping[str, ContractSpec], today: date, assets: frozenset[str]
+) -> list[str]:
+    """Listed contracts of the rates assets (``MDHUB_FUTURES_RATES_ASSETS``: RGBI dated
+    ``RB*``, perpetual ``RGBIF``, ``KEYRATE``, ``RUONIA``), not yet expired."""
+    return sorted(
+        s.secid
+        for s in specs.values()
+        if s.asset_code in assets
+        and s.last_seen is not None
+        and s.last_seen >= today
+        and (s.last_trade_date is None or s.last_trade_date >= today)
+    )
+
+
+@job(
+    "futures_intraday",
+    "FORTS marketdata of FX and rates futures + rates trades (APIM realtime, ISS fallback)",
+)
 def futures_intraday(ctx: JobContext) -> None:
     run_id = ctx.run.id
     today = ctx.today()
     key = ctx.settings.moex_api_key.get_secret_value() if ctx.settings.moex_api_key else ""
     fallback_reason: str | None = None if key else "MOEX_API_KEY not set"
+    rates_assets = ctx.settings.futures_rates_asset_set()
 
     def fetch(apim: bool, path: str, params: dict[str, Any]) -> Any:
         if apim:
@@ -474,11 +499,14 @@ def futures_intraday(ctx: JobContext) -> None:
         with ctx.http(base_url=ISS_BASE_URL) as http:
             return http.get_json(path, params=params)
 
+    def listed(specs: Mapping[str, ContractSpec]) -> tuple[list[str], list[str]]:
+        return _fx_listed(specs, today), _rates_listed(specs, today, rates_assets)
+
     with ctx.connection() as conn:
         specs = load_specs(conn)
-    secids = _fx_listed(specs, today)
-    if not secids:
-        # Daily bootstrap: today's FX listing from the RFUD board (static data, public ISS).
+    fx_secids, rates_secids = listed(specs)
+    if not fx_secids:
+        # Daily bootstrap: today's listing from the RFUD board (static data, public ISS).
         res = fetch(False, RFUD_SECURITIES, {"iss.meta": "off", "iss.only": "securities"})
         with ctx.connection() as conn:
             cap = record_capture(
@@ -494,41 +522,81 @@ def futures_intraday(ctx: JobContext) -> None:
                 )
             )
             specs = load_specs(conn)
-        secids = _fx_listed(specs, today)
-    if not secids:
+        fx_secids, rates_secids = listed(specs)
+    if not fx_secids:
         raise IssFormatError("no FX futures listed on RFUD")
+    secids = sorted({*fx_secids, *rates_secids})
 
     params = {
         "iss.meta": "off",
         "iss.only": "securities,marketdata",
         "securities": ",".join(secids),
     }
-    variant, source = "apim_marketdata", "moex_apim"
-    res = None
+    answers: list[tuple[str, str, Any]] = []  # (source, variant, response)
+    missing: set[str] = set(secids)
     if key:
         try:
             res = fetch(True, FORTS_SECURITIES, params)
+            answers.append(("moex_apim", "apim_marketdata", res))
+            lacking = missing - _answered(res.data)
+            # An FX contract missing from the answer is only logged (as before); a rates
+            # contract APIM does not serve (entitlement not verified for them) is read from ISS.
+            missing = lacking & set(rates_secids)
+            if lacking - missing:
+                ctx.logger.warning("FORTS APIM marketdata lacks %s", sorted(lacking - missing))
+            if missing:
+                fallback_reason = f"APIM answer lacks {sorted(missing)}"
         except HttpError as exc:  # EntitlementError, 401, transport, ...
             fallback_reason = f"APIM {type(exc).__name__}"
-    if res is None:
-        variant, source = "iss_public", "moex_iss"
-        res = fetch(False, FORTS_SECURITIES, params)
+    if missing:
+        # whole request (no key / APIM failed) or the rates contracts APIM did not serve
+        res = fetch(False, FORTS_SECURITIES, {**params, "securities": ",".join(sorted(missing))})
+        answers.append(("moex_iss", "iss_public", res))
         ctx.run.mark_partial(f"{fallback_reason}; stored delayed public ISS")
+        still = missing - _answered(res.data)
+        if still:
+            ctx.logger.warning("FORTS marketdata lacks %s", sorted(still))
 
+    for source, variant, res in answers:
+        _store_marketdata(ctx, source, variant, res, rates_assets)
+    if rates_secids:
+        # trades through APIM only when APIM served the rates contracts' marketdata
+        apim_rates = bool(answers) and answers[0][0] == "moex_apim" and not missing
+        _poll_trades(ctx, rates_secids, apim=apim_rates, fetch=fetch)
+
+
+def _answered(payload: Mapping[str, Any]) -> set[str]:
+    return {str(r["SECID"]) for r in parse_block(payload, "marketdata", required=("SECID",))}
+
+
+def _store_marketdata(
+    ctx: JobContext, source: str, variant: str, res: Any, rates_assets: frozenset[str]
+) -> None:
+    run_id = ctx.run.id
     contracts = parse_futures_securities(res.data)
     factors = {
         c["secid"]: price_factor(c["step_price"], c["min_step"], c["lot_volume"])
         for c in contracts
         if c["is_fx"]
     }
+    # rates contracts: stored raw (no RUB-per-unit normalization)
+    factors.update(
+        {c["secid"]: None for c in contracts if not c["is_fx"] and c["asset_code"] in rates_assets}
+    )
     # FORTS trades in weekend sessions: a Monday pre-open snapshot carries Sunday's last
     # trade, so quotes older than SYSTIME are dated on the previous *trading* day.
     rows, latency = parse_futures_marketdata(
         res.data, factors, is_trading_day=lambda d: ctx.is_trading_day(d, FORTS_CALENDAR)
     )
-    missing = set(secids) - {c["secid"] for c in contracts}
-    if missing:
-        ctx.logger.warning("FORTS marketdata lacks %s", sorted(missing))
+    # The answer's latency is decided by its freshest row; label the rates contracts on their
+    # own rows, so FX quotes never make a delayed rates quote "realtime" (conservative: a quiet
+    # rates group reads delayed).
+    fx_secids = {c["secid"] for c in contracts if c["is_fx"]}
+    rates_rows = [r for r in rows if r["secid"] not in fx_secids]
+    if rates_rows and len(rates_rows) < len(rows):
+        rates_latency = classify_latency((r["ts"], r["source_ts"]) for r in rates_rows)
+        for r in rates_rows:
+            r["latency"] = rates_latency
     for r in rows:
         r["source"] = source
         r["source_variant"] = variant
@@ -545,7 +613,9 @@ def futures_intraday(ctx: JobContext) -> None:
             source_ts=source_ts,
         )
         ctx.run.add_counts(
-            refresh_futures_contracts(conn, contracts, capture_id=cap, run_id=run_id, today=today)
+            refresh_futures_contracts(
+                conn, contracts, capture_id=cap, run_id=run_id, today=ctx.today()
+            )
         )
         changed, unchanged = only_changed(
             conn,
@@ -565,6 +635,78 @@ def futures_intraday(ctx: JobContext) -> None:
         len(changed),
         latency,
     )
+
+
+TRADE_KEY: Final = ["secid", "source", "trade_no"]
+TRADES_MAX_REQUESTS: Final = 20
+"""Incremental reads per contract and run (a whole day is one answer of a few thousand rows)."""
+
+
+def _poll_trades(
+    ctx: JobContext,
+    secids: list[str],
+    *,
+    apim: bool,
+    fetch: Callable[[bool, str, dict[str, Any]], Any],
+) -> None:
+    """New trades of the rates contracts after the last TRADENO stored from this feed in the
+    last 4 days (``tradeno=N&next_trade=1``; the whole current session when none is stored).
+    APIM when it served the rates marketdata this run, else public ISS (15-min delayed). A contract whose read fails is
+    logged and the run marked partial; the others are still stored."""
+    source = "moex_apim" if apim else "moex_iss"
+    # Trade SYSTIME is the exchange's time of the trade (~TRADETIME) on both feeds, so the lag
+    # cannot tell the feeds apart: APIM (entitled: it answered JSON, not the "subscribers only"
+    # page) is realtime, public ISS publishes trades 15 minutes late.
+    latency = "realtime" if apim else "delayed"
+    endpoint = f"intraday:futures_{'apim' if apim else 'iss'}_trades"
+    run_id = ctx.run.id
+    with ctx.connection() as conn, conn.cursor(row_factory=tuple_row) as cur:
+        cur.execute(
+            "SELECT secid, max(trade_no) FROM md.futures_trade "
+            "WHERE source = %s AND secid = ANY(%s) AND trade_ts >= now() - interval '4 days' "
+            "GROUP BY secid",
+            (source, secids),
+        )
+        last: dict[str, int] = {str(r[0]): int(r[1]) for r in cur.fetchall()}
+    failed: list[str] = []
+    stored = 0
+    for secid in secids:
+        try:
+            after = last.get(secid)
+            for _ in range(TRADES_MAX_REQUESTS):
+                params: dict[str, Any] = {"iss.meta": "off", "iss.only": "trades"}
+                if after is not None:
+                    params.update(tradeno=after, next_trade=1)
+                res = fetch(apim, FORTS_TRADES.format(secid=secid), params)
+                trades = parse_forts_trades(res.data, secid)
+                with ctx.connection() as conn:
+                    cap = record_capture(
+                        conn,
+                        run_id,
+                        source,
+                        endpoint,
+                        None,
+                        res.response,
+                        INTRADAY_PARSER_VERSION,
+                        source_ts=max((t["source_ts"] for t in trades), default=None),
+                    )
+                    for t in trades:
+                        t.update(source=source, latency=latency)
+                    _provenance(trades, cap, run_id)
+                    result = upsert_rows(
+                        conn, "md.futures_trade", trades, TRADE_KEY, [], run_id=run_id
+                    )
+                    ctx.run.add_counts(result)
+                    stored += result.inserted
+                if len(trades) < TRADES_PAGE_HINT:
+                    break
+                after = max(t["trade_no"] for t in trades)
+        except (HttpError, IssFormatError) as exc:
+            failed.append(f"{secid}: {type(exc).__name__}")
+            ctx.logger.warning("futures trades of %s failed: %s", secid, exc)
+    if failed:
+        ctx.run.mark_partial(f"trades not read: {'; '.join(failed)}")
+    ctx.logger.info("futures_intraday trades (%s): %d new", source, stored)
 
 
 # --------------------------------------------------------------- algopack_fx_futures

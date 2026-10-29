@@ -97,7 +97,13 @@ def count(conn: Conn, query: str, params: Any = None) -> int:
 
 @pytest.fixture
 def apim_settings(db_url: str) -> Settings:
-    return Settings(database_url=db_url, iss_rps=1000.0, moex_api_key=KEY)  # type: ignore[arg-type]
+    """FX contracts only (the rates contracts of futures_intraday: tests/test_rgbi_intraday.py)."""
+    return Settings(
+        database_url=db_url,
+        iss_rps=1000.0,
+        moex_api_key=KEY,  # type: ignore[arg-type]
+        futures_rates_assets="",
+    )
 
 
 def seed_ref(conn: Conn, last_seen: date = FRI) -> None:
