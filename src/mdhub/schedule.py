@@ -108,6 +108,12 @@ KNOWN_JOBS: Final = (
     "futures_intraday",
     "futures_eod",
     "algopack_fx_futures",
+    "zcyc_securities",
+    "index_intraday",
+    "index_constituents",
+    "repo_ccp_bond",
+    "repo_gc_term",
+    "bond_close_quote",
     "indices_eod",
     "zcyc",
     "cbr_daily",
@@ -307,12 +313,12 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
     "fx_indicative": (_r("10 14 * * *"), _r("10 19 * * *")),
     "futures_intraday": (
         _poll(
-            "50-59 8 * * *",
+            "* 7-22 * * *",
             days="trading",
             calendar="MOEX_FORTS",
-            note="every 1 min 08:50-23:50, business days and weekend sessions",
+            note="every 1 min 07:00-23:50 (FORTS morning session from 07:00), business days "
+            "and weekend sessions; FX + rates contracts, rates trades",
         ),
-        _poll("* 9-22 * * *", days="trading", calendar="MOEX_FORTS"),
         _poll("0-50 23 * * *", days="trading", calendar="MOEX_FORTS"),
     ),
     "futures_eod": (
@@ -326,6 +332,40 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
             calendar="MOEX_FORTS",
             note="every 5 min, +1 min offset, 07:01-23:56, business days and weekend sessions; "
             "incremental (latest bars), whole-day re-read every 30 min or on holes",
+        ),
+    ),
+    "zcyc_securities": (
+        _poll(
+            "50-59 6 * * *",
+            note="every 1 min 06:50-18:59 (stock main session), 6 polls 10 s apart per run",
+        ),
+        _poll("* 7-18 * * *"),
+    ),
+    "index_intraday": (
+        _poll("* 7-18 * * *", note="every 1 min 07:00-18:59: values + candles"),
+        _poll("*/10 19-23 * * *", note="evening session every 10 min (change-only)"),
+    ),
+    "index_constituents": (
+        _r("10 20 * * *", days_back=[0], note="after 20:05: composition of D"),
+        _r("40 7 * * *", days_back=[1], note="D-1 recheck"),
+    ),
+    "repo_ccp_bond": (
+        _poll("*/10 7-18 * * *", mode="intraday", note="every 10 min 07:00-19:00 (delayed ISS)"),
+        _poll("0 19 * * *", mode="intraday"),
+        _r("30 19 * * *", mode="eod", days_back=[0]),
+        _r("35 7 * * *", mode="final", days_back=[1], note="D-1 recheck"),
+    ),
+    "repo_gc_term": (
+        _poll("5-55/10 7-18 * * *", mode="intraday", note="every 10 min 07:05-18:55"),
+        _poll("5 19 * * *", mode="intraday"),
+        _r("35 19 * * *", mode="eod", days_back=[0]),
+        _r("40 7 * * *", mode="final", days_back=[1], note="D-1 recheck"),
+    ),
+    "bond_close_quote": (
+        _r(
+            "10 19 * * *",
+            days_back=[0],
+            note="after the 19:00 bonds_intraday poll (delayed: quotes to ~18:45)",
         ),
     ),
     "indices_eod": (

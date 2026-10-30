@@ -57,7 +57,13 @@ def count(conn: Conn, sql: str) -> int:
 
 @pytest.fixture
 def apim_settings(db_url: str) -> Settings:
-    return Settings(database_url=db_url, iss_rps=1000.0, moex_api_key=KEY)  # type: ignore[arg-type]
+    """FX contracts only (the rates contracts of futures_intraday: tests/test_rgbi_intraday.py)."""
+    return Settings(
+        database_url=db_url,
+        iss_rps=1000.0,
+        moex_api_key=KEY,  # type: ignore[arg-type]
+        futures_rates_assets="",
+    )
 
 
 def rows_of(payload: dict[str, Any], block: str) -> list[dict[str, Any]]:
@@ -325,7 +331,7 @@ def test_futures_intraday_without_key_bootstraps_ref(
     iss = respx.get(ISS_FORTS).mock(
         return_value=httpx.Response(200, json=load("forts_md_iss.json"))
     )
-    out = run("futures_intraday", {}, settings, db)
+    out = run("futures_intraday", {}, settings.model_copy(update={"futures_rates_assets": ""}), db)
     assert out.status == "partial"
     assert "MOEX_API_KEY not set" in str(
         conn.execute("SELECT error FROM ops.job_run WHERE id=%s", (out.run_id,)).fetchone()
