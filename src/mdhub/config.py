@@ -113,6 +113,11 @@ def parse_window(value: str) -> tuple[int, int]:
     return h1, h2
 
 
+def _csv(value: str) -> list[str]:
+    """``"a, b,,c"`` -> ``["a", "b", "c"]``."""
+    return [v.strip() for v in value.split(",") if v.strip()]
+
+
 def _env(name: str) -> Any:
     # Accept both the env name and the python field name (for tests / programmatic use).
     return Field(default=None, validation_alias=AliasChoices(name, name.lower()))
@@ -178,6 +183,28 @@ class Settings(BaseSettings):
     """Rolling window of the AlgoPack datasets (tradestats, FUTOI) in calendar days ending
     today (MSK): older rows and raw captures are deleted by ``maintenance mode=retention``,
     the gap scan and backfill ignore older days (:mod:`mdhub.datasets`)."""
+    futures_rates_assets: str = Field(
+        default="RGBI,RGBIF,KEYRATE,RUONIA",
+        validation_alias=AliasChoices("MDHUB_FUTURES_RATES_ASSETS", "futures_rates_assets"),
+    )
+    """Comma list of FORTS asset codes collected intraday besides the FX futures (marketdata
+    and trades; ``futures_intraday``): RGBI dated futures, the perpetual RGBIF, key rate and
+    RUONIA futures."""
+    intraday_indices: str = Field(
+        default="RGBI,RGBITR",
+        validation_alias=AliasChoices("MDHUB_INTRADAY_INDICES", "intraday_indices"),
+    )
+    """Comma list of MOEX indices polled by ``index_intraday`` (values and 1-minute candles)."""
+    constituent_indices: str = Field(
+        default="RGBI",
+        validation_alias=AliasChoices("MDHUB_CONSTITUENT_INDICES", "constituent_indices"),
+    )
+    """Comma list of MOEX indices whose composition ``index_constituents`` loads daily."""
+    bond_close_cut: str = Field(
+        default="18:45",
+        validation_alias=AliasChoices("MDHUB_BOND_CLOSE_CUT", "bond_close_cut"),
+    )
+    """MSK time (``HH:MM``) of the closing bid/ask of bonds (``bond_close_quote``)."""
     backup_dir: str = Field(
         default="/var/backups/mdhub",
         validation_alias=AliasChoices("MDHUB_BACKUP_DIR", "backup_dir"),
@@ -351,6 +378,7 @@ class Settings(BaseSettings):
         "snapshot_eod_final_time",
         "bonds_eod_prelim_deadline",
         "curve_eod_cutoff",
+        "bond_close_cut",
     )
     @classmethod
     def _valid_hhmm(cls, value: str) -> str:
@@ -444,6 +472,18 @@ class Settings(BaseSettings):
             m = _NAMED_TOKEN_RE.match(entry)
             out.append((m.group(1), m.group(2)) if m else (f"env:{i}", entry))
         return out
+
+    def futures_rates_asset_set(self) -> frozenset[str]:
+        """:attr:`futures_rates_assets` as a set of asset codes (case kept)."""
+        return frozenset(_csv(self.futures_rates_assets))
+
+    def intraday_index_list(self) -> list[str]:
+        """:attr:`intraday_indices` as a list (order kept, duplicates dropped)."""
+        return list(dict.fromkeys(_csv(self.intraday_indices)))
+
+    def constituent_index_list(self) -> list[str]:
+        """:attr:`constituent_indices` as a list (order kept, duplicates dropped)."""
+        return list(dict.fromkeys(_csv(self.constituent_indices)))
 
     def skipped_sources(self) -> frozenset[str]:
         """:attr:`skip_sources` as a set of source codes."""
