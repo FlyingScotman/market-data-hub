@@ -73,7 +73,11 @@ def test_coupon_and_offer_as_of() -> None:
     assert coupon_as_of(later, "floating", D) == {
         **later, "amount": None, "value_rub": None, "value_prc": None, "status": "unknown"
     }  # fmt: skip
-    assert coupon_as_of(later, "variable_known", D)["status"] == "unknown"
+    # variable_known: rates up to the first offer after D were set before D
+    assert coupon_as_of(later, "variable_known", D) is later
+    assert coupon_as_of(later, "variable_known", D, date(2026, 6, 1)) is later
+    assert coupon_as_of(later, "variable_known", D, date(2026, 4, 15))["status"] == "unknown"
+    assert coupon_as_of(later, "variable_known", D, date(2026, 4, 1))["value_prc"] is None
     assert coupon_as_of(later, "fixed", D) is later  # a fixed rate is a contract term
     current = {**later, "start_date": D}
     assert coupon_as_of(current, "floating", D) is current
@@ -117,10 +121,21 @@ def _history(conn: Conn) -> None:
         VALUES ('RU000A105X12', 5, '2026-01-15', '2026-04-15', 44.88, 18.0, 1000, 'RUB', 'known')
         """
     )
+    # a step-up bond: rates up to its next put offer were known on D, later ones were not
+    conn.execute("UPDATE ref.bond SET coupon_type = 'variable_known' WHERE secid = 'RU000PERP001'")
+    conn.execute(
+        """
+        INSERT INTO ref.bond_coupon (secid, coupon_no, start_date, pay_date, amount, value_prc,
+            face_value, face_unit, status) VALUES
+          ('RU000PERP001', 3, '2026-04-01', '2026-10-01', 99.73, 20.0, 1000, 'RUB', 'known'),
+          ('RU000PERP001', 4, '2026-10-01', '2027-04-01', 109.70, 22.0, 1000, 'RUB', 'known')
+        """
+    )
     conn.execute(
         """
         INSERT INTO ref.bond_offer (secid, source, offer_key, offer_date, offer_type, status,
             price) VALUES
+          ('RU000PERP001', 'moex_iss', '2026-10-01', '2026-10-01', 'put', 'scheduled', 100),
           ('RU000A105X12', 'moex_iss', '2026-05-15', '2026-05-15', 'put', 'completed', 100),
           ('RU000A105X12', 'moex_iss', '2026-02-02', '2026-02-02', 'put', 'completed', 100)
         """
@@ -175,6 +190,8 @@ def test_past_cut_binds_static_as_of_the_business_date(history: Conn, db: Databa
     assert coupons[("RU000A105X12", 8)]["rate_pct"] is None  # starts after D
     assert coupons[("RU000A105X12", 8)]["status"] == "unknown"
     assert coupons[("SU26242RMFS0", 15)]["rate_pct"] == "9.0"  # fixed: a contract term
+    assert coupons[("RU000PERP001", 3)]["rate_pct"] == "20.0"  # before the next offer
+    assert coupons[("RU000PERP001", 4)]["rate_pct"] is None  # from the offer on
     offers = {o["offer_key"]: o["status"] for o in data["offers"]}
     assert offers["2026-05-15"] == "scheduled" and offers["2026-02-02"] == "completed"
     assert [r["agency"] for r in data["ratings"]] == ["Эксперт РА"]

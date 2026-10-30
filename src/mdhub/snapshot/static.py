@@ -227,9 +227,6 @@ STATIC_BASIS_AS_OF_DATE: Final = "terms_current_values_as_of_business_date"
 (:func:`build_static` with ``historical=True``): contract terms as known now, time-varying values
 as of D (:func:`placed_by`, :func:`bond_as_of`, :func:`coupon_as_of`, :func:`offer_as_of`)."""
 
-VARIABLE_COUPON_TYPES: Final = frozenset({"floating", "variable_known"})
-"""Coupon types whose rate is set period by period (unknown before the period starts)."""
-
 
 def placed_by(b: Mapping[str, Any], day: date) -> bool:
     """Was the bond issued (or, without an issue date, trading on MOEX) on or before ``day``?
@@ -251,14 +248,23 @@ def bond_as_of(b: dict[str, Any], redemptions: list[dict[str, Any]], day: date) 
     return out
 
 
-def coupon_as_of(c: dict[str, Any], coupon_type: str | None, day: date) -> dict[str, Any]:
-    """The coupon row as of ``day``: a period of a floating / variable_known bond that starts
-    after ``day`` has no rate or amount yet (status ``unknown``)."""
-    if (
-        coupon_type not in VARIABLE_COUPON_TYPES
-        or c["start_date"] is None
-        or c["start_date"] <= day
-    ):
+def coupon_as_of(
+    c: dict[str, Any], coupon_type: str | None, day: date, next_offer: date | None = None
+) -> dict[str, Any]:
+    """The coupon row as of ``day``: no rate or amount yet (status ``unknown``) for a period
+    of a ``floating`` bond that starts after ``day``, and of a ``variable_known`` bond that
+    starts on or after ``next_offer`` (its first offer dated after ``day``; the rates up to
+    that offer were set at placement or at the previous offer; without such an offer all
+    are kept)."""
+    if c["start_date"] is None:
+        return c
+    if coupon_type == "floating":
+        reset = c["start_date"] > day
+    elif coupon_type == "variable_known":
+        reset = next_offer is not None and c["start_date"] >= next_offer
+    else:
+        return c
+    if not reset:
         return c
     return {**c, "amount": None, "value_rub": None, "value_prc": None, "status": "unknown"}
 
@@ -739,7 +745,13 @@ def build_static(
     if historical:
         day = cut.business_date
         type_of = {b["secid"]: b["coupon_type"] for b in bonds}
-        coupons = [coupon_as_of(c, type_of[c["secid"]], day) for c in coupons]
+        next_offer: dict[str, date] = {}
+        for o in offers:
+            if o["offer_date"] is not None and o["offer_date"] > day:
+                next_offer[o["secid"]] = min(o["offer_date"], next_offer.get(o["secid"], date.max))
+        coupons = [
+            coupon_as_of(c, type_of[c["secid"]], day, next_offer.get(c["secid"])) for c in coupons
+        ]
         offers = [offer_as_of(o, day) for o in offers]
         rating_rows = [
             r for r in rating_rows if r["rating_date"] is None or r["rating_date"] <= day
