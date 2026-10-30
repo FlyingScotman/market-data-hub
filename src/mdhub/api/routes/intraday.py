@@ -908,8 +908,8 @@ def latency_query() -> sql.Composed:
 def intraday_latency(request: Request) -> Response:
     """Per intraday dataset and ``latency`` label (rows of the last 4 days): ``age_s`` = now -
     the freshest observation time (quote/trade time, or candle start), and ``lag_*_s`` =
-    ``ingested_at - observation time`` over the rows written in the last hour (how late rows reach the
-    hub: ~0-60 s realtime, ~900 s delayed public ISS). Change-only tables write nothing while
+    ``ingested_at - observation time`` over rows written in the last hour (how late rows reach
+    the hub: ~0-60 s realtime, ~900 s delayed public ISS). Change-only tables write nothing while
     the market is quiet: a large ``age_s`` outside trading hours is expected."""
     with read_connection(request) as conn, conn.cursor() as cur:
         rows = cur.execute(latency_query(), {"win": LATENCY_WINDOW}).fetchall()
