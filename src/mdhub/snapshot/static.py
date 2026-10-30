@@ -220,6 +220,57 @@ PUT_SUBTYPE: Final = "До оферты (put)"
 UNDATED_DONE: Final = frozenset({"completed", "cancelled", "default", "technical_default"})
 
 
+OFFER_DONE: Final = UNDATED_DONE | {"past"}
+
+STATIC_BASIS_AS_OF_DATE: Final = "terms_current_values_as_of_business_date"
+"""``parameters.static_basis`` of a static built for a past business date D
+(:func:`build_static` with ``historical=True``): contract terms as known now, time-varying values
+as of D (:func:`placed_by`, :func:`bond_as_of`, :func:`coupon_as_of`, :func:`offer_as_of`)."""
+
+VARIABLE_COUPON_TYPES: Final = frozenset({"floating", "variable_known"})
+"""Coupon types whose rate is set period by period (unknown before the period starts)."""
+
+
+def placed_by(b: Mapping[str, Any], day: date) -> bool:
+    """Was the bond issued (or, without an issue date, trading on MOEX) on or before ``day``?
+    A bond with neither date counts as placed."""
+    first = b["issue_date"] or b.get("start_date_moex")
+    return first is None or first <= day
+
+
+def bond_as_of(b: dict[str, Any], redemptions: list[dict[str, Any]], day: date) -> dict[str, Any]:
+    """The bond row as of ``day``: ``matured`` only if it matured before ``day``; the face
+    outstanding on ``day`` from the redemption schedule (:func:`face_steps`; an indexed face
+    and a schedule that cannot be established keep the stored face)."""
+    out = dict(b)
+    if b["status"] == "matured" and b["maturity_date"] is not None and b["maturity_date"] >= day:
+        out["status"] = "active"
+    steps = None if b.get("is_face_indexed") else face_steps(b, redemptions)
+    if steps is not None:
+        out["face_value"] = [left for d, left in steps if d is None or d <= day][-1]
+    return out
+
+
+def coupon_as_of(c: dict[str, Any], coupon_type: str | None, day: date) -> dict[str, Any]:
+    """The coupon row as of ``day``: a period of a floating / variable_known bond that starts
+    after ``day`` has no rate or amount yet (status ``unknown``)."""
+    if (
+        coupon_type not in VARIABLE_COUPON_TYPES
+        or c["start_date"] is None
+        or c["start_date"] <= day
+    ):
+        return c
+    return {**c, "amount": None, "value_rub": None, "value_prc": None, "status": "unknown"}
+
+
+def offer_as_of(o: dict[str, Any], day: date) -> dict[str, Any]:
+    """The offer row as of ``day``: an offer dated after ``day`` was still ``scheduled`` then,
+    whatever happened to it later (completed, cancelled, defaulted)."""
+    if o["offer_date"] is not None and o["offer_date"] > day and o["status"] in OFFER_DONE:
+        return {**o, "status": "scheduled"}
+    return o
+
+
 def undated_offer_reason(o: Mapping[str, Any], business_date: date) -> str:
     """HS10: why an offer row has no date, as a label (the row is published as MOEX has it):
 
@@ -629,14 +680,23 @@ def build_static(
     cut: Cut,
     matured_lookback_days: int = MATURED_LOOKBACK_DAYS,
     quoted_secids: frozenset[str] = frozenset(),
+    historical: bool = False,
 ) -> Build:
-    """Build the static snapshot of ``cut`` (kind ``static``) as known at ``cut.known_at``."""
+    """Build the static snapshot of ``cut`` (kind ``static``) as known at ``cut.known_at``.
+
+    ``historical``: a static for a past business date D read as known now (market-data-hub#102):
+    contract terms (formulas, spread schedules, conventions, schedules' dates) as known at
+    ``known_at``; bonds not yet placed on D left out (unless quoted on D); status, face, coupon
+    rates and offer status as of D; ratings dated after D left out
+    (``parameters.static_basis`` = :data:`STATIC_BASIS_AS_OF_DATE`)."""
     if cut.kind != "static":
         raise ValueError("build_static needs a static cut")
     t = cut.known_at
     since = cut.business_date - timedelta(days=matured_lookback_days)
     prov = Provenance()
     bonds = _universe(conn, t, since, cut.business_date, quoted_secids)
+    if historical:
+        bonds = [b for b in bonds if b["secid"] in quoted_secids or placed_by(b, cut.business_date)]
     secids = [b["secid"] for b in bonds]
     universe = frozenset(secids)
 
@@ -676,6 +736,17 @@ def build_static(
         {"t": t},
     ).fetchall()
     calendars, cal_summary, cal_rows = calendar_objects(conn, t)
+    if historical:
+        day = cut.business_date
+        type_of = {b["secid"]: b["coupon_type"] for b in bonds}
+        coupons = [coupon_as_of(c, type_of[c["secid"]], day) for c in coupons]
+        offers = [offer_as_of(o, day) for o in offers]
+        rating_rows = [
+            r for r in rating_rows if r["rating_date"] is None or r["rating_date"] <= day
+        ]
+        issuer_rating_rows = [
+            r for r in issuer_rating_rows if r["rating_date"] is None or r["rating_date"] <= day
+        ]
 
     # ---------------------------------------------------------------- instruments
     boards_of: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -697,6 +768,8 @@ def build_static(
     redemptions_of: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for a in amort:
         redemptions_of[a["secid"]].append({"date": a["amort_date"], "value_per_bond": a["value"]})
+    if historical:
+        bonds = [bond_as_of(b, redemptions_of[b["secid"]], cut.business_date) for b in bonds]
     instruments = []
     label_counts: Counter[str] = Counter()
     for b in bonds:
@@ -946,6 +1019,7 @@ def build_static(
             else "active_or_recently_matured_or_alive",
             "matured_lookback_days": matured_lookback_days,
             "bond_calendar": BOND_CALENDAR,
+            **({"static_basis": STATIC_BASIS_AS_OF_DATE} if historical else {}),
         },
         provenance=prov,
         excluded=Excluded(),

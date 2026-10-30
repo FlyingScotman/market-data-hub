@@ -285,6 +285,7 @@ def snapshot_market(
         run_id=ctx.run.id,
         params=market_params(ctx),
         extra_stale=extra_stale,
+        historical=mode != "intraday" and not live,
     )
     if missing:
         ctx.run.mark_partial(
@@ -330,7 +331,9 @@ def snapshot_rebuild(
     """Rebuild, as known now, every published ``eod_final`` cut of the business dates in the
     range; a cut whose content is unchanged publishes nothing, a changed one publishes a
     correction that supersedes it. Days without a published ``eod_final`` are not built (a
-    missing cut is an owner decision, ``mdhub run snapshot_market -p mode=eod_final -p day=``)."""
+    missing cut is an owner decision, ``mdhub run snapshot_market -p mode=eod_final -p day=``).
+    A day before the previous business day binds a static built for that day (terms as known
+    now, time-varying values as of the day; market-data-hub#102), like ``snapshot_market``."""
     dates = resolve_trade_dates(
         ctx,
         days_back=None,
@@ -350,6 +353,7 @@ def snapshot_rebuild(
         d.isoformat(): {"status": "no_eod_final"} for d in dates if d not in {c[0] for c in cuts}
     }
     corrected = unchanged = 0
+    last_live = ctx.business_dates([1], today=ctx.today(), calendar=BOND_CALENDAR)[0]
     for d, cut_ts in cuts:
         if d not in wanted:
             continue
@@ -362,6 +366,7 @@ def snapshot_rebuild(
             known_at=ka,
             run_id=ctx.run.id,
             params=market_params(ctx),
+            historical=d < last_live,
         )
         results[f"{d.isoformat()} {cut_ts.isoformat()}"] = {
             "market": _result(out.market),

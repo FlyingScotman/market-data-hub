@@ -49,6 +49,19 @@ First hub release with each version: 1.0 = 0.1.3, 1.1 = 0.1.7, 1.2 = 0.2.0, 1.3 
   For `daily`, `eod_preliminary` and `eod_final`, `cut_ts` depends only on the business date
   (the configured cut time; `eod_final`: on the next business day), so at most one snapshot
   per such cut and business date is not superseded; `intraday` and `change` can have several.
+* **Static of a past business date** (1.6, market-data-hub#102). A market cut of a past date
+  built later (a correction of an old `eod_final`, the first publication of a missing day)
+  binds a static snapshot with `business_date` equal to the market cut's and
+  `parameters.static_basis = terms_current_values_as_of_business_date`: contract terms
+  (floater formulas, `spread_schedule`, conventions, schedule dates, fixed coupon rates) as
+  known at `known_at`; no bond placed after the business date (unless quoted on it); status,
+  face (from the redemption schedule; not for indexed face), coupon rate and amount of
+  floating / `variable_known` periods starting after the date (null, status `unknown`) and
+  offer status as of the business date; ratings dated after it left out. When an existing
+  static already has exactly that data it is reused as is (static snapshots are shared by
+  content). A static without `static_basis` was built for the day it was built. A consumer that values an old date on the
+  linked static of its current (not superseded) market cut gets the reissued static
+  automatically.
 
 ## Envelope
 

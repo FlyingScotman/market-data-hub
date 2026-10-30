@@ -69,11 +69,17 @@ def publish_market_snapshot(
     params: MarketParams | None = None,
     matured_lookback_days: int = MATURED_LOOKBACK_DAYS,
     extra_stale: Mapping[str, Sequence[str]] | None = None,
+    historical: bool = False,
 ) -> MarketOutcome:
     """Build and publish one market cut (plus its static snapshot when the static data
     changed since the last static snapshot with the same content). ``extra_stale``: stale
-    reasons per dataset added to the manifest (:func:`mdhub.snapshot.market.build_market`)."""
-    static_date = known_at.astimezone(MSK).date()
+    reasons per dataset added to the manifest (:func:`mdhub.snapshot.market.build_market`).
+
+    ``historical``: a cut of a past business date built later (a rebuild, a first publication
+    of a missing day): its static is built for the business date, with terms as known at
+    ``known_at`` and time-varying values as of the business date
+    (:func:`mdhub.snapshot.static.build_static`); otherwise for the build day."""
+    static_date = business_date if historical else known_at.astimezone(MSK).date()
     static_cut = _static_cut("change", static_date, cut_ts, known_at)
     market_cut = Cut("market", cut_type, business_date, cut_ts, known_at)
     with db.connection() as conn:
@@ -95,6 +101,7 @@ def publish_market_snapshot(
             cut=static_cut,
             matured_lookback_days=matured_lookback_days,
             quoted_secids=quoted_secids,
+            historical=historical,
         )
         market_build = build_market(
             conn, cut=market_cut, static=static_build, params=params, extra_stale=extra_stale
