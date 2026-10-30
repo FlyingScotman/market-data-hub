@@ -6,6 +6,8 @@ flattening extension groups).
 
 * ``coverage`` - ``ops.v_coverage`` (refreshed by the ``quality`` job),
 * ``gaps`` - open gaps (``ops.v_open_gaps``), per dataset or as a per-dataset summary,
+* ``static-terms --from D --to D [--json FILE]`` - per date, the 1.4 bond terms missing in
+  the static of the current ``eod_final`` cut (:mod:`mdhub.snapshot.terms_coverage`),
 * ``backfill DATASET --from D --to D [--now]`` - queue ``ops.backfill_task`` rows (default)
   or run the dataset's backfill job inline now (recorded in ``ops.job_run``),
 * ``backup [--keep N] [--dir PATH]`` - run ``maintenance`` with ``mode=backup``,
@@ -14,6 +16,7 @@ flattening extension groups).
 
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
 from pathlib import Path
 from typing import Annotated, Any
@@ -25,6 +28,7 @@ from mdhub.core.bizday import DbCalendar
 from mdhub.datasets import get_dataset
 from mdhub.db.pool import Database
 from mdhub.jobs import JobParamError, UnknownJobError, discover_jobs, run_job
+from mdhub.snapshot.terms_coverage import TERM_FIELDS, terms_coverage_report
 
 name = "ops"
 toplevel = True
@@ -179,6 +183,65 @@ def gaps_cmd(
         typer.echo("no open gaps")
         return
     _table([dict(r) for r in rows], columns)
+
+
+@app.command("static-terms")
+def static_terms_cmd(
+    date_from: Annotated[str, typer.Option("--from", help="First business date, YYYY-MM-DD.")],
+    date_to: Annotated[str, typer.Option("--to", help="Last business date, YYYY-MM-DD.")],
+    reference: Annotated[
+        str | None,
+        typer.Option("--reference", help="Reference static snapshot id (default: the newest)."),
+    ] = None,
+    json_out: Annotated[
+        Path | None,
+        typer.Option("--json", help="Also write the full report (with secids) to this file."),
+    ] = None,
+) -> None:
+    """Per date: 1.4 floater terms of today's static missing in the static of the current
+    eod_final cut (read only)."""
+    start, end = _parse_date(date_from, "--from"), _parse_date(date_to, "--to")
+    settings = _settings()
+    db = _database(settings)
+    try:
+        with db.connection() as conn:
+            ref, rows = terms_coverage_report(conn, start, end, reference_id=reference)
+    except LookupError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from None
+    finally:
+        db.close()
+    typer.echo(f"reference static {ref.static_id}: {len(ref.terms)} bonds with 1.4 terms")
+    if not rows:
+        typer.echo("no current eod_final cut in the range")
+        return
+    wire = [r.wire() for r in rows]
+    _table(
+        [
+            {
+                **{k: w[k] for k in ("business_date", "bonds", "complete", "not_in_static")},
+                "schema": w["static_schema_version"].removeprefix("market_snapshot/"),
+                "basis": "as_of_date" if w["static_basis"] else None,
+                "no_formula": w["no_formula"],
+                **w["missing_by_field"],
+            }
+            for w in wire
+        ],
+        [
+            "business_date",
+            "schema",
+            "basis",
+            "bonds",
+            "complete",
+            "not_in_static",
+            "no_formula",
+            *TERM_FIELDS,
+        ],
+    )
+    if json_out is not None:
+        payload = {"reference_static_id": ref.static_id, "dates": wire}
+        json_out.write_text(json.dumps(payload, ensure_ascii=False, indent=1) + "\n")
+        typer.echo(f"written {json_out}")
 
 
 @app.command("backfill")
