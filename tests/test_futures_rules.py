@@ -28,8 +28,15 @@ def http_factory(**kw: Any) -> HttpClient:
     return HttpClient(limiter=RateLimiter(default_rps=None), max_retries=0, **kw)
 
 
-def seed(conn: psycopg.Connection[DictRow], *, secid: str, asset: str, expiry: str,
-         listed: str | None = None, min_step: str | None = None) -> None:
+def seed(
+    conn: psycopg.Connection[DictRow],
+    *,
+    secid: str,
+    asset: str,
+    expiry: str,
+    listed: str | None = None,
+    min_step: str | None = None,
+) -> None:
     conn.execute(
         """
         INSERT INTO ref.futures_contract
@@ -52,8 +59,12 @@ def verified(monkeypatch: pytest.MonkeyPatch, respx_mock: respx.MockRouter) -> N
 
 
 def test_rules_repair_only_historical_terms_and_capture_documents(
-    verified: None, conn: psycopg.Connection[DictRow], settings: Settings, db: Database,
-    respx_mock: respx.MockRouter, today_is: Any,
+    verified: None,
+    conn: psycopg.Connection[DictRow],
+    settings: Settings,
+    db: Database,
+    respx_mock: respx.MockRouter,
+    today_is: Any,
 ) -> None:
     today_is(date(2026, 11, 1))
     seed(conn, secid="RBH4", asset="RGBI", expiry="2024-03-01")
@@ -84,8 +95,12 @@ def test_rules_repair_only_historical_terms_and_capture_documents(
 
 
 def test_changed_document_rolls_back_all_repairs(
-    verified: None, conn: psycopg.Connection[DictRow], settings: Settings, db: Database,
-    respx_mock: respx.MockRouter, today_is: Any,
+    verified: None,
+    conn: psycopg.Connection[DictRow],
+    settings: Settings,
+    db: Database,
+    respx_mock: respx.MockRouter,
+    today_is: Any,
 ) -> None:
     today_is(date(2026, 11, 1))
     seed(conn, secid="RBH4", asset="RGBI", expiry="2024-03-01")
@@ -96,15 +111,21 @@ def test_changed_document_rolls_back_all_repairs(
     with pytest.raises(IssFormatError, match="document changed"):
         run_job("futures_contract_rules", settings=settings, db=db, http_factory=http_factory)
     conn.commit()
-    assert conn.execute(
-        "SELECT count(*) n FROM ref.futures_contract WHERE min_step IS NOT NULL"
-    ).fetchone()["n"] == 0
+    assert (
+        conn.execute(
+            "SELECT count(*) n FROM ref.futures_contract WHERE min_step IS NOT NULL"
+        ).fetchone()["n"]
+        == 0
+    )
     assert conn.execute("SELECT count(*) n FROM ops.raw_capture").fetchone()["n"] == 0
 
 
 def test_unknown_edition_remains_missing_without_requests(
-    conn: psycopg.Connection[DictRow], settings: Settings, db: Database,
-    respx_mock: respx.MockRouter, today_is: Any,
+    conn: psycopg.Connection[DictRow],
+    settings: Settings,
+    db: Database,
+    respx_mock: respx.MockRouter,
+    today_is: Any,
 ) -> None:
     today_is(date(2028, 1, 1))
     seed(conn, secid="RBZ7", asset="RGBI", expiry="2027-12-01")
@@ -115,8 +136,12 @@ def test_unknown_edition_remains_missing_without_requests(
 
 
 def test_conflicting_stored_term_is_not_overwritten(
-    verified: None, conn: psycopg.Connection[DictRow], settings: Settings, db: Database,
-    respx_mock: respx.MockRouter, today_is: Any,
+    verified: None,
+    conn: psycopg.Connection[DictRow],
+    settings: Settings,
+    db: Database,
+    respx_mock: respx.MockRouter,
+    today_is: Any,
 ) -> None:
     today_is(date(2026, 11, 1))
     seed(conn, secid="RBH4", asset="RGBI", expiry="2024-03-01", min_step="2")

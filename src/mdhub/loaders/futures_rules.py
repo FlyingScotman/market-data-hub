@@ -42,17 +42,38 @@ class Rule:
 # 2026-05-19 edition: separate RGBI/RUONIA parameter tables. Values are in the
 # contract's quoted points and RUB per tick, not index points or RUB per index unit.
 RULES: Final = (
-    Rule(date(2022, 2, 28), date(2025, 4, 27), "47vqbfk5hhpn4tnarp3mp3xcce",
-         "07de33a45a2fc65278202e27eb5acd74f0a361b4b5e44bf28653fe9c9ea08655"),
-    Rule(date(2025, 4, 28), date(2026, 3, 22), "4ze7kndca6j7cyddzh9q7sb04e",
-         "afe2c093af26f2b8ed560678ae304be9776c7e96221b8e2b17711e92466b26d8"),
-    Rule(date(2026, 3, 23), date(2026, 5, 18), "4m4ky668j6skm1z58xttwyg8c5",
-         "48e16e90700dcfb81d0b1961cadf7cdb66d475d91e2c4c45ee62b9c67a8112a5"),
-    Rule(date(2026, 5, 19), date(2026, 9, 13), "4ezh2awnts7t4tyf62nntw25d6",
-         "78335acee52f162d851036965d2182cac5445ffb98f4958e3d732d2ccf65ab55"),
-    Rule(date(2026, 5, 19), date(2026, 9, 13), "4ezh2awnts7t4tyf62nntw25d6",
-         "78335acee52f162d851036965d2182cac5445ffb98f4958e3d732d2ccf65ab55",
-         asset="RUONIA", min_step=Decimal("0.0001")),
+    Rule(
+        date(2022, 2, 28),
+        date(2025, 4, 27),
+        "47vqbfk5hhpn4tnarp3mp3xcce",
+        "07de33a45a2fc65278202e27eb5acd74f0a361b4b5e44bf28653fe9c9ea08655",
+    ),
+    Rule(
+        date(2025, 4, 28),
+        date(2026, 3, 22),
+        "4ze7kndca6j7cyddzh9q7sb04e",
+        "afe2c093af26f2b8ed560678ae304be9776c7e96221b8e2b17711e92466b26d8",
+    ),
+    Rule(
+        date(2026, 3, 23),
+        date(2026, 5, 18),
+        "4m4ky668j6skm1z58xttwyg8c5",
+        "48e16e90700dcfb81d0b1961cadf7cdb66d475d91e2c4c45ee62b9c67a8112a5",
+    ),
+    Rule(
+        date(2026, 5, 19),
+        date(2026, 9, 13),
+        "4ezh2awnts7t4tyf62nntw25d6",
+        "78335acee52f162d851036965d2182cac5445ffb98f4958e3d732d2ccf65ab55",
+    ),
+    Rule(
+        date(2026, 5, 19),
+        date(2026, 9, 13),
+        "4ezh2awnts7t4tyf62nntw25d6",
+        "78335acee52f162d851036965d2182cac5445ffb98f4958e3d732d2ccf65ab55",
+        asset="RUONIA",
+        min_step=Decimal("0.0001"),
+    ),
 )
 
 
@@ -73,8 +94,11 @@ def futures_contract_rules(ctx: JobContext) -> None:
         ).fetchall()
         captures: dict[str, int] = {}
         for row in rows:
-            rules = [r for r in RULES if r.asset == row["asset_code"]
-                     and r.start <= row["last_trade_date"] <= r.end]
+            rules = [
+                r
+                for r in RULES
+                if r.asset == row["asset_code"] and r.start <= row["last_trade_date"] <= r.end
+            ]
             if not rules:
                 ctx.run.mark_partial(f"no verified specification edition for {row['secid']}")
                 continue
@@ -91,8 +115,13 @@ def futures_contract_rules(ctx: JobContext) -> None:
                 if hashlib.sha256(response.content).hexdigest() != rule.sha256:
                     raise IssFormatError(f"MOEX specification document changed: {rule.document}")
                 captures[rule.url] = record_capture(
-                    conn, ctx.run.id, "moex_rules", "futures_contract_rules",
-                    rule.url, response, "1"
+                    conn,
+                    ctx.run.id,
+                    "moex_rules",
+                    "futures_contract_rules",
+                    rule.url,
+                    response,
+                    "1",
                 )
             cur = conn.execute(
                 """
