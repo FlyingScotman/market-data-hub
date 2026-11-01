@@ -409,10 +409,16 @@ def _ensure_contracts(
     conn: psycopg.Connection[Any],
     rows: list[dict[str, Any]],
 ) -> None:
-    """Add ref rows for contracts in history but not in ``ref.futures_contract`` (expired):
-    FX ones from ``/securities/{secid}.json``, others minimal (insert-only)."""
+    """Fill reference rows for historical contracts. FX and configured rates contracts use
+    instrument descriptions, including rates rows previously stored as history-only."""
+    rates_assets = ctx.settings.futures_rates_asset_set()
     with conn.cursor(row_factory=tuple_row) as cur:
-        cur.execute("SELECT secid FROM ref.futures_contract")
+        cur.execute(
+            "SELECT secid FROM ref.futures_contract WHERE NOT COALESCE("
+            "(spec_source = 'history' AND asset_code = ANY(%s) "
+            "AND contract_type = 'dated' AND last_trade_date IS NULL), false)",
+            (sorted(rates_assets),),
+        )
         known = {str(r[0]) for r in cur.fetchall()}
     run_id = ctx.run.id
     minimal: list[dict[str, Any]] = []
@@ -421,7 +427,7 @@ def _ensure_contracts(
             continue
         known.add(r["secid"])
         asset = fx_asset(r["asset_code"])
-        if asset is not None:
+        if asset is not None or r["asset_code"] in rates_assets:
             res = http.get_json(
                 SECURITY_DESCRIPTION.format(secid=r["secid"]),
                 params={"iss.meta": "off", "iss.only": "description"},
