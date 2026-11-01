@@ -75,7 +75,7 @@ for _name, _market, _desc in (
             max_lag_days=1,
             backfill_job="repo_ccp_bond" if _market == "ccp" else "repo_gc_term",
             history_start=date(2024, 1, 3),
-            min_rows_per_day=10,
+            min_rows_per_day=1 if _market == "gcc" else 10,
             max_task_days=10,
             where=f"market = '{_market}'",
             description=_desc,

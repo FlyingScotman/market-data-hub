@@ -774,6 +774,31 @@ def test_daily_endpoints(client: TestClient, iss_settings: Settings, db: Databas
     assert {r["board"] for r in _records(gc)} == set(mi.GCC_BOARDS)
 
 
+@respx.mock
+def test_gc_history_with_fewer_than_ten_rows_is_not_a_gap(
+    iss_settings: Settings, db: Database, conn: Conn
+) -> None:
+    from mdhub.datasets import get_dataset
+    from mdhub.quality.checks import scan_dataset
+
+    respx.get(REPO_HIST).mock(side_effect=_repo_hist)
+    assert (
+        run("repo_gc_term", {"mode": "final", "days_back": [1]}, iss_settings, db).status
+        == "succeeded"
+    )
+    # A trading day may contain only one of the GC baskets (one row per available tenor).
+    conn.execute("DELETE FROM md.repo_eod WHERE secid <> %s", (mi.GC_BOND_BASKET,))
+    conn.commit()
+    check = scan_dataset(
+        conn,
+        get_dataset("repo_gc_eod"),
+        today=TODAY,
+        calendar=lambda day, _calendar: day.weekday() < 5,
+    )
+    assert check.row_count == len(mi.GCC_BOARDS)
+    assert check.gaps == []
+
+
 def test_bond_close_endpoint_and_latency(
     client: TestClient, settings: Settings, db: Database, conn: Conn
 ) -> None:

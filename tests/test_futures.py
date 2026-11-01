@@ -252,6 +252,60 @@ def test_futures_eod(settings: Settings, db: Database, conn: Conn) -> None:
 
 # ---------------------------------------------------------------- futures_intraday
 
+
+@respx.mock
+def test_futures_eod_repairs_existing_history_only_rates_contract(
+    settings: Settings, db: Database, conn: Conn
+) -> None:
+    pages = {0: load("forts_history_p0.json"), 4: load("forts_history_p1.json")}
+    for payload in pages.values():
+        cols = payload["history"]["columns"]
+        for row in payload["history"]["data"]:
+            if row[cols.index("SECID")] == "SiH4":
+                row[cols.index("SECID")] = "RBH4"
+                row[cols.index("ASSETCODE")] = "RGBI"
+    respx.get(ISS_BASE_URL + fx.RFUD_SECURITIES).mock(
+        return_value=httpx.Response(200, json=load("rfud_securities.json"))
+    )
+    respx.get(ISS_BASE_URL + fx.FORTS_HISTORY).mock(side_effect=_paged(pages))
+    conn.execute(
+        "INSERT INTO ref.futures_contract "
+        "(secid, asset_code, is_fx, contract_type, spec_source, first_seen) "
+        "VALUES ('RBH4', 'RGBI', false, 'dated', 'history', CURRENT_DATE)"
+    )
+    conn.commit()
+    description = {
+        "description": {
+            "columns": ["name", "value"],
+            "data": [
+                ["SECID", "RBH4"],
+                ["ASSETCODE", "RGBI"],
+                ["LSTTRADE", "2024-03-01"],
+                ["FRSTTRADE", "2023-08-21"],
+                ["LOTSIZE", "1"],
+            ],
+        }
+    }
+    route = respx.get(ISS_BASE_URL + fx.SECURITY_DESCRIPTION.format(secid="RBH4")).mock(
+        return_value=httpx.Response(200, json=description)
+    )
+    params = {"date_from": "2026-10-15", "date_to": "2026-10-15", "mode": "final"}
+    assert run("futures_eod", params, settings, db).status == "succeeded"
+    row = conn.execute(
+        "SELECT last_trade_date, spec_source, last_seen "
+        "FROM ref.futures_contract WHERE secid='RBH4'"
+    ).fetchone()
+    assert row == {
+        "last_trade_date": date(2024, 3, 1),
+        "spec_source": "iss_description",
+        "last_seen": None,
+    }
+    assert len(route.calls) == 1
+    conn.commit()
+    assert run("futures_eod", params, settings, db).status == "succeeded"
+    assert len(route.calls) == 1  # the repaired description is not downloaded again
+
+
 APIM_FORTS = APIM_BASE_URL + fx.FORTS_SECURITIES
 ISS_FORTS = ISS_BASE_URL + fx.FORTS_SECURITIES
 
