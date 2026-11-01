@@ -8,5 +8,3 @@ INSERT INTO ops.source (code, name, base_url, licence_note) VALUES
     ('moex_rules', 'MOEX published contract specifications', 'https://www.moex.com',
      'Published contract rules; no marketdata entitlement is inferred')
 ON CONFLICT (code) DO NOTHING;
-INSERT INTO ops.job_source (job, source) VALUES ('futures_contract_rules', 'moex_rules')
-ON CONFLICT DO NOTHING;

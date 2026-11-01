@@ -27,7 +27,7 @@ raw capture under provider `moex_rules`. A changed document or a conflicting exi
 fails the run and rolls back all its writes. An unknown edition remains missing and is
 reported as partial. Repeating a completed repair makes no HTTP requests or row changes.
 
-Migration `0830` registers the provider/job relation and permits `spec_source=moex_rules`.
+Migration `0830` registers the document provider and permits `spec_source=moex_rules`.
 That value means retained ISS contract dates plus verified document tick terms;
 `capture_id` points to the actual specification document. The existing read endpoint and
 its field types are unchanged. Consumers should retain this provenance string rather than
