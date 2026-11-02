@@ -10,7 +10,7 @@ existing business-day flags would change settlement semantics for current users.
 
 ## Source and ingestion
 
-Use the [MOEX machine-readable stock calendar](https://www.moex.com/files/4qa0v882mt8xp7erfzs3bcjwxn)
+Use the [MOEX machine-readable stock calendar](https://fs.moex.com/files/26408)
 through ISS, subject to verifying the hub's entitlement, permitted redistribution,
 available historical range, request filters and pagination. The service is
 [available through Algopack PROMO or separately](https://www.moex.com/a2836).
