@@ -322,6 +322,9 @@ def test_futures_intraday_rates_contracts_fall_back_to_iss_with_trades(
         "intraday:futures_iss_trades",
     }
 
+    # The cursor uses PostgreSQL now(), independent of the frozen Python business date.
+    conn.execute("UPDATE md.futures_trade SET trade_ts = now() WHERE secid = 'RGBIF'")
+    conn.commit()
     # second run: incremental from the last stored TRADENO, nothing new
     run("futures_intraday", {}, settings, db)
     rgbif_calls = [c for c in trades.calls if "/RGBIF/" in str(c.request.url)]
