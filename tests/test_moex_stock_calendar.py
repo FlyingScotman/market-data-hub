@@ -3,6 +3,7 @@
 from datetime import date, timedelta
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from mdhub.core.errors import FormatDriftError
@@ -24,7 +25,7 @@ class FakeHttp:
             data={
                 "off_days": {"columns": COLUMNS, "data": self.rows[start : start + self.page_size]}
             },
-            response=SimpleNamespace(),
+            response=httpx.Response(200, text=f"source page {start}"),
         )
 
 
@@ -71,6 +72,23 @@ def test_unknown_reason_does_not_certify_month() -> None:
     rows[0][3] = None
     result = fetch_month(FakeHttp(rows), 2026, 10)  # type: ignore[arg-type]
     assert not result.complete and result.unknown_days == (date(2026, 10, 1),)
+
+
+def test_raw_response_available_before_invalid_row_is_parsed() -> None:
+    rows = month_rows()
+    rows[12][4] = {"oops": 1}
+    captured: list[str] = []
+    with pytest.raises(FormatDriftError, match="updatetime"):
+        fetch_month(FakeHttp(rows), 2026, 10, on_response=lambda r: captured.append(r.text))  # type: ignore[arg-type]
+    assert captured == ["source page 0", "source page 10"]
+
+
+@pytest.mark.parametrize("value", [{"oops": 1}, "", "2026-02-30 10:00:00", "2026-10-01T10:00:00"])
+def test_rejects_invalid_source_update_timestamp(value: object) -> None:
+    rows = month_rows()
+    rows[0][4] = value
+    with pytest.raises(FormatDriftError, match="updatetime"):
+        fetch_month(FakeHttp(rows), 2026, 10)  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(
