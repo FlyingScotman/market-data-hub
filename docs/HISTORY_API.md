@@ -109,6 +109,26 @@ Example rows (the examples on this page are actual responses for the test data s
 
 `meta.limits` repeats the limits above.
 
+## `GET /v1/history/rating-actions`
+
+This optional authenticated endpoint is disabled by default. The owner must resolve source
+licensing and access policy before enabling `MDHUB_RATING_HISTORY_ENABLED=true` (#59). It returns
+events observed by the hub, not a verified complete history or a calculated rating at a date.
+NKR list states, for example, are observations rather than a complete event feed; ACRA and Cbonds
+events are not provided by this endpoint. Missing events are not evidence of no rating.
+
+Required parameters: `object_kind` (`issue` or `issuer`), exact `object_key` (the agency's ISIN,
+INN or agency identifier), inclusive `from` and `to` dates, and `known_at` (ISO timestamp with
+offset). The date range is at most 3660 days. Event `action_date` is distinct from the moment
+the hub observed a version. Only versions known at `known_at` are returned, including withdrawals.
+The caller must establish the correct historical relationship between an issue and its issuer;
+this endpoint does not infer it from today's issuer mapping.
+
+The response includes `coverage: "unverified"`, `complete: false`, `actions`, and `truncated`.
+At most `limit` events are returned (default and maximum 1000). If truncated, split the date range;
+if a single day is still truncated, this interface cannot return that complete day. These flags do
+not establish source completeness, freshness, publication rights, or historical accuracy.
+
 ## `GET /v1/history/bonds`
 
 EOD history of bonds from `md.bond_eod` (ISS history) and `md.bond_eod_yield` (ISS yields)
