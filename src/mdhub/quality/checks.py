@@ -50,7 +50,7 @@ import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
-from typing import Any, Final
+from typing import Any, Final, cast
 
 import psycopg
 from psycopg import sql
@@ -133,8 +133,11 @@ def day_predicate(
     if spec.calendar is None:
         return is_weekday
     cal = spec.calendar
-    if start is not None and end is not None:
-        return calendar.for_range(start, end, cal)
+    for_range = getattr(
+        calendar, "for_range", None
+    )  # a plain ``(day, calendar)`` function works too
+    if start is not None and end is not None and for_range is not None:
+        return cast(DayPredicate, for_range(start, end, cal))
     return lambda d: calendar(d, cal)
 
 

@@ -150,6 +150,14 @@ def test_expected_days_loads_the_calendar_once(conn: Conn, db: Database) -> None
             assert [d for d in days if lo <= d <= hi] == ref, (name, lo, hi)
 
 
+def test_expected_days_accepts_a_plain_calendar_function() -> None:
+    """The calendar argument may be a bare ``(day, calendar) -> bool`` function (older callers)."""
+    spec = get_dataset("indices_bonds")
+    days = expected_days(spec, date(2026, 1, 5), date(2026, 1, 11), lambda d, _c: d.day != 7)
+    assert days == [date(2026, 1, 5), date(2026, 1, 6), date(2026, 1, 8), date(2026, 1, 9),
+                    date(2026, 1, 10), date(2026, 1, 11)]  # fmt: skip
+
+
 def _expected_gap(conn: Conn, dataset: str, key: dict[str, str], day: date, status: str) -> None:
     conn.execute(
         "INSERT INTO ops.data_gap (dataset, key, gap_date, status, note) "
