@@ -12,7 +12,8 @@ an operator:
   :data:`REISSUE_FROM` .. :data:`REISSUE_TO` (the range of #106: cuts published before contract
   1.4 and the as-of-date static) whose linked static has no ``parameters.static_basis``. The cut
   is rebuilt like ``snapshot_rebuild`` does (same ``cut_ts``; a correction that ``supersedes``
-  the old snapshot, which stays readable). Gaps: dataset :data:`REISSUE_GAPS`. Nothing outside
+  the old snapshot, which stays readable). Gaps: dataset :data:`REISSUE_GAPS`, one per cut
+  (``key.cut_ts``; a day can have more than one current cut). Nothing outside
   that range is ever reissued here; the range is a constant, not a setting.
 
 Status: every defect is an ``ops.data_gap`` row (``/v1/gaps?dataset=...`` lists the open ones
@@ -41,7 +42,7 @@ from __future__ import annotations
 import re
 import time as _time
 from collections.abc import Callable
-from datetime import date, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, Final
 
 from psycopg.rows import tuple_row
@@ -77,6 +78,11 @@ static 1.0, one on 1.3; #101, #106); the cuts of 2026-10-22 on carry static 1.5 
 MAX_ATTEMPTS: Final = 5
 RETRY_AFTER: Final = timedelta(hours=6)
 """A cut that failed is not tried again before this time (the gap's ``detected_at``)."""
+
+GapId = tuple[date, str]
+"""Identity of a gap inside its dataset: ``(gap_date, cut_ts key)``. A missing cut is the day
+(``""``); a reissue is one *cut* of the day (its ``cut_ts``, ISO UTC), because a day can have
+more than one current ``eod_final`` cut."""
 
 _FAILED: Final = "heal failed"
 _ATTEMPT: Final = re.compile(r"^heal failed \((\d+)\)")
@@ -166,12 +172,21 @@ def pending_reissue(
 # ------------------------------------------------------------------------------ gaps
 
 
-def sync_gaps(conn: DictConnection, dataset: str, found: dict[date, str]) -> None:
-    """Make ``ops.data_gap`` of ``dataset`` say what was found: a gap per day of ``found``
+def gap_id(day: date, cut_ts: datetime | None = None) -> GapId:
+    """The :data:`GapId` of a missing cut (no ``cut_ts``) or of one cut to reissue."""
+    return (day, "" if cut_ts is None else cut_ts.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
+
+
+def _gap_key(gid: GapId) -> Jsonb:
+    return Jsonb({"cut_ts": gid[1]} if gid[1] else {})
+
+
+def sync_gaps(conn: DictConnection, dataset: str, found: dict[GapId, str]) -> None:
+    """Make ``ops.data_gap`` of ``dataset`` say what was found: a gap per entry of ``found``
     (opened, or reopened when it had been closed; a note of a failed repair is kept; an
-    ``unfillable`` gap is left alone), and every ``open`` gap of a day no longer found closed
-    as ``backfilled``."""
-    for day, note in found.items():
+    ``unfillable`` gap is left alone), and every ``open`` gap no longer found closed as
+    ``backfilled``."""
+    for gid, note in found.items():
         conn.execute(
             """
             INSERT INTO ops.data_gap (dataset, key, gap_date, status, note)
@@ -187,42 +202,44 @@ def sync_gaps(conn: DictConnection, dataset: str, found: dict[date, str]) -> Non
             """,
             {
                 "ds": dataset,
-                "key": Jsonb({}),
-                "d": day,
+                "key": _gap_key(gid),
+                "d": gid[0],
                 "note": note[:_NOTE_CHARS],
                 "failed": f"{_FAILED}%",
             },
         )
-    conn.execute(
-        """
-        UPDATE ops.data_gap SET status = 'backfilled', note = %s
-        WHERE dataset = %s AND status = 'open' AND NOT (gap_date = ANY(%s))
-        """,
-        ("no longer detected (repaired, or outside the checked range)", dataset, list(found)),
-    )
+    for gid, (status, _note, _at) in _gap_state(conn, dataset).items():
+        if status == "open" and gid not in found:
+            _close_gap(
+                conn,
+                dataset,
+                gid,
+                "no longer detected (repaired, or outside the checked range)",
+            )
 
 
-def _gap_state(conn: DictConnection, dataset: str) -> dict[date, tuple[str, str, datetime]]:
+def _gap_state(conn: DictConnection, dataset: str) -> dict[GapId, tuple[str, str, datetime]]:
     with conn.cursor(row_factory=tuple_row) as cur:
         return {
-            r[0]: (r[1], r[2] or "", r[3])
+            (r[0], r[1]): (r[2], r[3] or "", r[4])
             for r in cur.execute(
-                "SELECT gap_date, status, note, detected_at FROM ops.data_gap WHERE dataset = %s",
+                "SELECT gap_date, coalesce(key ->> 'cut_ts', ''), status, note, detected_at "
+                "FROM ops.data_gap WHERE dataset = %s",
                 (dataset,),
             ).fetchall()
         }
 
 
-def _close_gap(conn: DictConnection, dataset: str, day: date, note: str) -> None:
+def _close_gap(conn: DictConnection, dataset: str, gid: GapId, note: str) -> None:
     conn.execute(
         "UPDATE ops.data_gap SET status = 'backfilled', note = %s "
         "WHERE dataset = %s AND key = %s AND gap_date = %s",
-        (note[:_NOTE_CHARS], dataset, Jsonb({}), day),
+        (note[:_NOTE_CHARS], dataset, _gap_key(gid), gid[0]),
     )
 
 
 def _fail_gap(
-    conn: DictConnection, dataset: str, day: date, error: str, *, attempts: int, now: datetime
+    conn: DictConnection, dataset: str, gid: GapId, error: str, *, attempts: int, now: datetime
 ) -> str:
     """Note a failed repair (``detected_at`` = ``now`` starts the retry wait); the
     :data:`MAX_ATTEMPTS`-th failure gives the day up (``unfillable``). Returns the status."""
@@ -233,7 +250,7 @@ def _fail_gap(
     conn.execute(
         "UPDATE ops.data_gap SET status = %s, note = %s, detected_at = %s "
         "WHERE dataset = %s AND key = %s AND gap_date = %s",
-        (status, note[:_NOTE_CHARS], now, dataset, Jsonb({}), day),
+        (status, note[:_NOTE_CHARS], now, dataset, _gap_key(gid), gid[0]),
     )
     return status
 
@@ -299,7 +316,7 @@ def snapshot_heal(
         with_quotes = days_with_bond_quotes(conn, missing, min_rows)
         reissue = pending_reissue(conn)
         found_missing = {
-            d: (
+            gap_id(d): (
                 "no eod_final cut; will be built"
                 if d in with_quotes
                 else "no eod_final cut; no bond quotes in the store for the day yet "
@@ -308,9 +325,9 @@ def snapshot_heal(
             for d in missing
         }
         found_reissue = {
-            d: "eod_final is on the static of its build day; will be reissued on the static "
-            "as of the date"
-            for d, _ in reissue
+            gap_id(d, ts): "eod_final is on the static of its build day; will be reissued on "
+            "the static as of the date"
+            for d, ts in reissue
         }
         sync_gaps(conn, MISSING_GAPS, found_missing)
         sync_gaps(conn, REISSUE_GAPS, found_reissue)
@@ -318,8 +335,10 @@ def snapshot_heal(
         reissue_state = _gap_state(conn, REISSUE_GAPS)
 
     now = _now()
-    todo_missing = [d for d in missing if d in with_quotes and _due(missing_state.get(d), now)]
-    todo_reissue = [(d, ts) for d, ts in reissue if _due(reissue_state.get(d), now)]
+    todo_missing = [
+        d for d in missing if d in with_quotes and _due(missing_state.get(gap_id(d)), now)
+    ]
+    todo_reissue = [(d, ts) for d, ts in reissue if _due(reissue_state.get(gap_id(d, ts)), now)]
     result: dict[str, Any] = {
         "mode": mode,
         "from": first.isoformat(),
@@ -380,20 +399,22 @@ def snapshot_heal(
         except Exception as exc:  # one bad day must not stop the others
             ctx.logger.exception("snapshot_heal: %s %s failed", dataset, day)
             error = f"{type(exc).__name__}: {exc}"[:200]
-            state = (missing_state if dataset == MISSING_GAPS else reissue_state).get(day)
+            gid = gap_id(day, cut_ts)
+            state = (missing_state if dataset == MISSING_GAPS else reissue_state).get(gid)
             with ctx.connection() as conn:
-                _fail_gap(conn, dataset, day, error, attempts=_attempts(state) + 1, now=_now())
+                _fail_gap(conn, dataset, gid, error, attempts=_attempts(state) + 1, now=_now())
             failures.append(f"{day}: {error}")
             result["failed"].append({"dataset": dataset, "day": day.isoformat(), "error": error})
             continue
+        gid = gap_id(day, cut_ts)
         with ctx.connection() as conn:
             if dataset == MISSING_GAPS:
-                _close_gap(conn, dataset, day, f"cut published: snapshot {out.market.id}")
-            elif not _still_on_build_day_static(conn, day):
-                _close_gap(conn, dataset, day, f"reissued: snapshot {out.market.id}")
+                _close_gap(conn, dataset, gid, f"cut published: snapshot {out.market.id}")
+            elif cut_ts is not None and not _still_on_build_day_static(conn, day, cut_ts):
+                _close_gap(conn, dataset, gid, f"reissued: snapshot {out.market.id}")
             else:
-                # rebuilt, yet the current cut still sits on a static without static_basis:
-                # retrying would give the same result, so the day is explained and left alone
+                # rebuilt, yet this cut still sits on a static without static_basis: retrying
+                # would give the same result, so it is explained and left alone
                 conn.execute(
                     "UPDATE ops.data_gap SET status = 'unfillable', note = %s "
                     "WHERE dataset = %s AND key = %s AND gap_date = %s",
@@ -401,7 +422,7 @@ def snapshot_heal(
                         f"rebuild ({out.market.status}) left the cut on the static of its "
                         "build day; not retried",
                         dataset,
-                        Jsonb({}),
+                        _gap_key(gid),
                         day,
                     ),
                 )
@@ -428,6 +449,7 @@ def snapshot_heal(
     return result
 
 
-def _still_on_build_day_static(conn: DictConnection, day: date) -> bool:
-    """Whether a current ``eod_final`` of ``day`` is still pending a reissue."""
-    return bool(pending_reissue(conn, day, day))
+def _still_on_build_day_static(conn: DictConnection, day: date, cut_ts: datetime) -> bool:
+    """Whether the current ``eod_final`` cut ``(day, cut_ts)`` is still pending a reissue (the
+    other cuts of the day have their own gaps)."""
+    return any(ts == cut_ts for _, ts in pending_reissue(conn, day, day))

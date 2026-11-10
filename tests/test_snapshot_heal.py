@@ -214,13 +214,14 @@ def test_a_long_window_uses_the_calendar_for_every_day(
 # -------------------------------------------------------------- reissue of old cuts
 
 
-def _old_style_cut(conn: Conn, db: Database, day: date) -> str:
-    """A cut published the old way: on the static of its build day (no ``static_basis``)."""
+def _old_style_cut(conn: Conn, db: Database, day: date, *, hour: int = 8) -> str:
+    """A cut published the old way: on the static of its build day (no ``static_basis``).
+    ``hour``: 08:00 MSK of the next day is the usual cut; another hour is another cut of the day."""
     out = publish_market_snapshot(
         db,
         cut_type="eod_final",
         business_date=day,
-        cut_ts=_cut_ts(day, 8, 0) + timedelta(days=1),
+        cut_ts=_cut_ts(day, hour, 0) + timedelta(days=1),
         known_at=datetime(2026, 10, 16, 5, tzinfo=UTC),
         historical=False,
     )
@@ -251,6 +252,41 @@ def test_old_cuts_in_the_106_range_are_reissued_once(
     before = _count(world)
     assert _heal(settings, db, date_from=DAY.isoformat()).status == "skipped"
     assert _count(world) == before
+
+
+def test_a_day_with_two_current_cuts_is_reissued_cut_by_cut(
+    world: Conn, settings: Settings, db: Database
+) -> None:
+    """Gaps of a reissue are per ``(day, cut_ts)``: reissuing the first cut must not close the
+    day or give it up while the second cut is still on the old static, also when a run's limit
+    stops between the two."""
+    old_a = _old_style_cut(world, db, DAY, hour=8)
+    old_b = _old_style_cut(world, db, DAY, hour=9)
+    assert old_a != old_b
+    first = _heal(settings, db, date_from=DAY.isoformat(), max_cuts=1)
+    assert [b["day"] for b in first.result["built"]] == [DAY.isoformat()]
+    assert first.result["remaining"] == 1
+    rows = world.execute(
+        "SELECT key ->> 'cut_ts' AS ts, status FROM ops.data_gap WHERE dataset = %s ORDER BY 1",
+        (heal.REISSUE_GAPS,),
+    ).fetchall()
+    assert [(r["ts"], r["status"]) for r in rows] == [
+        ("2026-10-16T05:00:00Z", "backfilled"),
+        ("2026-10-16T06:00:00Z", "open"),
+    ]
+    assert len(_eod_final(world)[DAY]) == 3  # two old cuts and the first correction
+    # the next run takes the second cut, not the first one again
+    second = _heal(settings, db, date_from=DAY.isoformat(), max_cuts=1)
+    assert [b["status"] for b in second.result["built"]] == ["published"]
+    assert len(_eod_final(world)[DAY]) == 4
+    assert {
+        r["status"]
+        for r in world.execute(
+            "SELECT status FROM ops.data_gap WHERE dataset = %s", (heal.REISSUE_GAPS,)
+        ).fetchall()
+    } == {"backfilled"}
+    assert _heal(settings, db, date_from=DAY.isoformat()).status == "skipped"
+    assert heal.pending_reissue(world) == []
 
 
 def test_cuts_outside_the_106_range_are_not_reissued(
