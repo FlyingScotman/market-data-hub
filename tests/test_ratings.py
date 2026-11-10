@@ -357,16 +357,12 @@ def _http_factory(**kw: Any) -> HttpClient:
 
 
 def _run(settings: Settings, db: Database, **params: Any) -> JobOutcome:
-    # Back-to-back runs: the previous run's lock session may still be closing on the server, so
-    # wait briefly for the job lock (short poll) instead of getting a flaky ``lock_busy`` skip.
     return run_job(
         "ratings_agencies",
         params,
         settings=settings,
         db=db,
         http_factory=_http_factory,
-        lock_wait_s=5.0,
-        lock_poll_s=0.02,
     )
 
 

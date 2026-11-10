@@ -514,7 +514,15 @@ def _job_lock(
                     reason = f"{LOCK_BUSY}: job {name} is already running{waited}"
         yield reason
     finally:
-        conn.close()  # closing the session releases the advisory locks
+        # Release explicitly: a lock that is left to the session end is dropped by the server
+        # asynchronously, so a run that starts right after this one can still see it held and
+        # be skipped as ``lock_busy`` (#139). A broken connection has already lost its locks.
+        try:
+            conn.execute("SELECT pg_advisory_unlock_all()")
+        except psycopg.Error:
+            pass
+        finally:
+            conn.close()
 
 
 def run_job(
