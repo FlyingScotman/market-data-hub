@@ -30,7 +30,10 @@ Behaviour, per run (a polling rule, every 30 minutes; the job lock keeps one run
 3. The state lives in the database (published cuts, gaps), so an interrupted run loses nothing:
    the next run detects what is left and continues. Nothing left: the run is ``skipped``
    ("nothing to heal") - a repeated run is a no-op. A cut that fails is retried after
-   :data:`RETRY_AFTER` and given up (``unfillable``) after :data:`MAX_ATTEMPTS` attempts.
+   :data:`RETRY_AFTER` and given up (``unfillable``) after :data:`MAX_ATTEMPTS` attempts; a day
+   given up because of failures (not because the rebuild changed nothing) is tried once more
+   after :data:`GIVE_UP_RETRY_AFTER` and when the hub version changes, so no manual action is
+   needed to get it repaired once the cause is gone.
 
 A missing day without bond quotes is not built (a cut of nothing): its gap stays ``open`` with
 that reason until the quotes are loaded (the ordinary ``bonds_eod`` backfill), then the next run
@@ -52,6 +55,7 @@ from typing import Any, Final
 from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 
+from mdhub import __version__
 from mdhub.config import in_clock_window, parse_clock_window
 from mdhub.core.timeutil import utc_now
 from mdhub.core.upsert import UpsertResult
@@ -84,6 +88,10 @@ static 1.0, one on 1.3; #101, #106); the cuts of 2026-10-22 on carry static 1.5 
 MAX_ATTEMPTS: Final = 5
 RETRY_AFTER: Final = timedelta(hours=6)
 """A cut that failed is not tried again before this time (the gap's ``detected_at``)."""
+GIVE_UP_RETRY_AFTER: Final = timedelta(days=7)
+"""A day given up after :data:`MAX_ATTEMPTS` failures is a candidate again after this time (one
+attempt; another failure gives it up again for the same time), and at once when the hub version
+differs from the one that gave it up: a fix in the hub may have removed the cause."""
 
 GapId = tuple[date, str]
 """Identity of a gap inside its dataset: ``(gap_date, cut_ts key)``. A missing cut is the day
@@ -92,11 +100,13 @@ more than one current ``eod_final`` cut."""
 
 _FAILED: Final = "heal failed"
 _ATTEMPT: Final = re.compile(r"^heal failed \((\d+)\)")
+_GAVE_UP_HUB: Final = re.compile(r"; hub (\S+)\)$")
 _NOTE_CHARS: Final = 300
 
 # indirection for tests (no real sleeping / fixed clock)
 _sleep: Callable[[float], None] = _time.sleep
 _now: Callable[[], datetime] = utc_now
+_hub_version: str = __version__
 
 
 # ------------------------------------------------------------------------------ detection
@@ -292,11 +302,16 @@ def _fail_gap(
     conn: DictConnection, dataset: str, gid: GapId, error: str, *, attempts: int, now: datetime
 ) -> str:
     """Note a failed repair (``detected_at`` = ``now`` starts the retry wait); the
-    :data:`MAX_ATTEMPTS`-th failure gives the day up (``unfillable``). Returns the status."""
+    :data:`MAX_ATTEMPTS`-th failure gives the day up (``unfillable``, the note keeps the hub
+    version that gave up: :func:`_due`). Returns the status."""
     status = "unfillable" if attempts >= MAX_ATTEMPTS else "open"
-    note = f"{_FAILED} ({attempts}): {error}"
-    if status == "unfillable":
-        note += f" (gave up after {MAX_ATTEMPTS} attempts)"
+    head = f"{_FAILED} ({attempts}): "
+    tail = (
+        f" (gave up after {attempts} attempts; hub {_hub_version})"
+        if status == "unfillable"
+        else ""
+    )
+    note = head + error[: max(0, _NOTE_CHARS - len(head) - len(tail))] + tail
     conn.execute(
         "UPDATE ops.data_gap SET status = %s, note = %s, detected_at = %s "
         "WHERE dataset = %s AND key = %s AND gap_date = %s",
@@ -322,10 +337,19 @@ def _missing_note(has_quotes: bool, waiting: list[str] | None) -> str:
 
 
 def _due(state: tuple[str, str, datetime] | None, now: datetime) -> bool:
-    """Whether the repair of a day is due: not given up, and not failed within the retry wait."""
+    """Whether the repair of a day is due: not failed within the retry wait; a day given up
+    after failures is due again after :data:`GIVE_UP_RETRY_AFTER` or under another hub version.
+    A day given up for another reason (the rebuild leaves the cut as it was) never is."""
     if state is None:
         return True
     status, note, detected_at = state
+    if status == "unfillable":
+        if not note.startswith(_FAILED):
+            return False
+        gave_up = _GAVE_UP_HUB.search(note)
+        return now - detected_at >= GIVE_UP_RETRY_AFTER or (
+            gave_up is None or gave_up.group(1) != _hub_version
+        )
     if status != "open":
         return False
     return not (note.startswith(_FAILED) and now - detected_at < RETRY_AFTER)

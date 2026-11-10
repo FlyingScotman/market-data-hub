@@ -241,7 +241,80 @@ def test_a_failing_day_is_retried_later_and_given_up_after_five_attempts(
     status, note = _gaps(world, heal.MISSING_GAPS)[bad]
     assert status == "unfillable" and "gave up after 5 attempts" in note
     fixed_clock[0] = NIGHT.astimezone(UTC) + timedelta(days=9)
-    assert _heal(settings, db).status == "skipped"  # never tried again
+    assert _heal(settings, db).status == "skipped"  # given up: not tried within a week
+
+
+def test_a_day_given_up_is_tried_again_after_a_week_and_with_a_new_hub_version(
+    world: Conn,
+    settings: Settings,
+    db: Database,
+    fixed_clock: list[datetime],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No manual action: errors that stopped a day are retried later, with one attempt per
+    cycle; the day is repaired when the cause is gone."""
+    real = heal.publish_market_snapshot
+    bad = QUOTED[1]
+    broken = [True]
+
+    def flaky(*a: Any, **kw: Any) -> Any:
+        if broken[0] and kw["business_date"] == bad:
+            raise RuntimeError("build failed")
+        return real(*a, **kw)
+
+    monkeypatch.setattr(heal, "publish_market_snapshot", flaky)
+    monkeypatch.setattr(heal, "_hub_version", "1.0")
+    start = NIGHT.astimezone(UTC)
+    for attempt in range(1, 6):
+        fixed_clock[0] = start + timedelta(days=attempt)  # a later night each time
+        assert _heal(settings, db).status == "partial", attempt
+    given_up = start + timedelta(days=5)
+    status, note = _gaps(world, heal.MISSING_GAPS)[bad]
+    assert status == "unfillable" and "gave up after 5 attempts; hub 1.0)" in note
+
+    # within a week, same version: left alone
+    fixed_clock[0] = given_up + timedelta(days=6)
+    assert _heal(settings, db).status == "skipped"
+    # after a week: one more attempt; it fails again and the day is given up for another week
+    fixed_clock[0] = given_up + timedelta(days=7, hours=1)
+    assert _heal(settings, db).status == "partial"
+    status, note = _gaps(world, heal.MISSING_GAPS)[bad]
+    assert status == "unfillable" and note.startswith("heal failed (6)")
+    fixed_clock[0] = given_up + timedelta(days=9)
+    assert _heal(settings, db).status == "skipped"
+    # a new hub version tries at once; the cause is gone: the day is cut
+    monkeypatch.setattr(heal, "_hub_version", "1.1")
+    broken[0] = False
+    out = _heal(settings, db)
+    assert out.status == "succeeded" and [b["day"] for b in out.result["built"]] == [
+        bad.isoformat()
+    ]
+    status, note = _gaps(world, heal.MISSING_GAPS)[bad]
+    assert status == "backfilled" and note.startswith("cut published")
+    assert bad in _eod_final(world)
+
+
+def test_a_rebuild_that_changes_nothing_is_never_retried(
+    world: Conn, settings: Settings, db: Database, fixed_clock: list[datetime]
+) -> None:
+    """A reissue that leaves the cut on the old static gives the same result every time: its
+    ``unfillable`` gap is not an error to retry, however long ago or whichever hub version."""
+    _old_style_cut(world, db, DAY)
+    world.execute(
+        "INSERT INTO ops.data_gap (dataset, key, gap_date, status, note, detected_at) "
+        "VALUES (%s, %s, %s, 'unfillable', 'rebuild (unchanged) left the cut on the static "
+        "of its build day; not retried', %s)",
+        (
+            heal.REISSUE_GAPS,
+            Jsonb({"cut_ts": "2026-10-16T05:00:00Z"}),
+            DAY,
+            NIGHT - timedelta(days=60),
+        ),
+    )
+    world.commit()
+    fixed_clock[0] = NIGHT.astimezone(UTC) + timedelta(days=30)
+    out = _heal(settings, db, date_from=DAY.isoformat())
+    assert out.status == "skipped" and out.result["built"] == []
 
 
 def test_a_long_window_uses_the_calendar_for_every_day(
