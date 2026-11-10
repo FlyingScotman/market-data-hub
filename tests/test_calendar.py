@@ -251,6 +251,64 @@ def test_observed_outranks_newer_curated(db: Database) -> None:
     assert DbCalendar(db, ttl=0)(date(2026, 6, 15), "MOEX_FX") is False
 
 
+def test_for_range_answers_like_the_per_day_lookup(db: Database) -> None:
+    """#140: ``DbCalendar.for_range`` (one query for a range) applies the rule of the per-day
+    lookup: source rank, base-calendar fallback, soft-deleted rows ignored, Monday-Friday where
+    the chain has no row, per-day answer outside the range."""
+    known = datetime(2026, 6, 16, tzinfo=UTC)
+    with db.connection() as c:
+        flags = {date(2026, 6, 15) + timedelta(days=i): i % 3 != 0 for i in range(20)}
+        cal.write_calendar_days(c, "MOEX_FX", "curated", flags, known_at=known, run_id=None)
+        # observed outranks curated on some days, a deleted observed row is ignored
+        cal.write_calendar_days(
+            c,
+            "MOEX_FX",
+            "observed_moex_fx",
+            {date(2026, 6, 16): False, date(2026, 6, 17): True, date(2026, 6, 20): False},
+            known_at=known,
+            run_id=None,
+        )
+        cal.write_calendar_days(
+            c,
+            "MOEX_FX",
+            "curated_unverified",
+            {date(2026, 6, 16): True},
+            known_at=known,
+            run_id=None,
+        )  # lowest rank
+        c.execute(
+            "UPDATE ref.calendar_day SET is_deleted = true "
+            "WHERE calendar = 'MOEX_FX' AND source = 'observed_moex_fx' AND day = '2026-06-20'"
+        )
+        # a derived calendar with rows for a part of the range; the rest comes from its base
+        cal.write_calendar_days(c, "RU_PRODUCTION", "curated", flags, known_at=known, run_id=None)
+        cal.write_calendar_days(
+            c,
+            "CBR_RUONIA",
+            "rule_cbr_ruonia",
+            {date(2026, 6, 18): False, date(2026, 6, 22): False},
+            known_at=known,
+            run_id=None,
+        )
+    dbcal = DbCalendar(db, ttl=0)
+    start, end = date(2026, 6, 10), date(2026, 7, 15)  # rows cover only part of it
+    for calendar in ("MOEX_FX", "CBR_RUONIA", "MOEX_STOCK"):
+        pred = dbcal.for_range(start, end, calendar)
+        for i in range((end - start).days + 1 + 3):  # + 3 days past the range
+            day = start + timedelta(days=i)
+            assert pred(day) is dbcal(day, calendar), (calendar, day)
+    assert dbcal.for_range(end, start)(start) is dbcal(start, "MOEX_STOCK")  # empty range
+    assert weekday_calendar.for_range(start, end)(date(2026, 6, 13)) is False  # Saturday
+
+
+def test_for_range_falls_back_to_weekdays_when_the_table_is_missing(
+    empty_db_url: str,
+) -> None:
+    dbcal = DbCalendar(Database(empty_db_url), ttl=0)
+    pred = dbcal.for_range(date(2026, 6, 1), date(2026, 6, 30), "MOEX_STOCK")
+    assert pred(date(2026, 6, 5)) is True and pred(date(2026, 6, 6)) is False
+
+
 def test_observed_days() -> None:
     days = cal.observed_days([date(2026, 5, 4), date(2026, 4, 30)], date(2026, 4, 29))
     assert days == {

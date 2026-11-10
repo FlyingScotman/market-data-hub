@@ -16,13 +16,19 @@ from psycopg.types.json import Jsonb
 import mdhub.loaders.cbr  # registers cbr_ruonia
 import mdhub.loaders.indices  # noqa: F401 - registers indices_rusfar*
 from mdhub.cli_ext.report import EffectiveCalendar
-from mdhub.core.bizday import CALENDAR_FALLBACK, CALENDARS, DbCalendar, calendar_chain
+from mdhub.core.bizday import (
+    CALENDAR_FALLBACK,
+    CALENDARS,
+    CalendarPredicate,
+    DbCalendar,
+    calendar_chain,
+)
 from mdhub.core.gaps import db_business_days
 from mdhub.core.timeutil import utc_now
 from mdhub.datasets import get_dataset
 from mdhub.db.pool import Database
 from mdhub.loaders import calendar as cal
-from mdhub.quality.checks import scan_dataset, sync_gaps
+from mdhub.quality.checks import expected_days, scan_dataset, sync_gaps
 
 Conn = psycopg.Connection[DictRow]
 TODAY = date(2026, 1, 20)
@@ -101,6 +107,47 @@ def test_predicates_fall_back_to_the_base_calendar(conn: Conn, db: Database) -> 
     assert dbcal(date(2026, 1, 6), "MOEX_RUSFAR") is False
     assert dbcal(date(2026, 1, 6), "MOEX_STOCK") is True
     assert dbcal(date(2030, 1, 7), "MOEX_RUSFAR") is True  # no row anywhere: Monday-Friday
+
+
+class _CountingDatabase:
+    """``Database`` stand-in that counts the connections opened through ``connection()``."""
+
+    def __init__(self, db: Database) -> None:
+        self._db = db
+        self.opened = 0
+
+    def connection(self):  # type: ignore[no-untyped-def]
+        self.opened += 1
+        return self._db.connection()
+
+
+class _PerDay(CalendarPredicate):
+    """The calendar answered one day at a time (the code path before #140)."""
+
+    def __init__(self, inner: DbCalendar) -> None:
+        self._inner = inner
+
+    def __call__(self, day: date, calendar: str = "MOEX_STOCK") -> bool:
+        return self._inner(day, calendar)
+
+
+def test_expected_days_loads_the_calendar_once(conn: Conn, db: Database) -> None:
+    """#140: a gap check over years of days opens a constant number of connections (it opened
+    one per calendar day), and expects exactly the days the per-day lookup expects."""
+    _calendars(conn)
+    conn.commit()
+    counting = _CountingDatabase(db)
+    dbcal = DbCalendar(counting, ttl=0)  # type: ignore[arg-type]
+    for name in ("cbr_ruonia", "indices_rusfar", "indices_bonds", "cbr_key_rate"):
+        spec = get_dataset(name)
+        before = counting.opened
+        days = expected_days(spec, date(2017, 1, 1), date(2027, 12, 31), dbcal)  # ~4000 days
+        assert counting.opened - before == 1, name
+        assert len(days) > 2000
+        # same answer as asking day by day, on the windows the fixtures cover
+        for lo, hi in (OLD, NEW, (date(2026, 12, 20), date(2027, 1, 20))):
+            ref = expected_days(spec, lo, hi, _PerDay(DbCalendar(db, ttl=0)))
+            assert [d for d in days if lo <= d <= hi] == ref, (name, lo, hi)
 
 
 def _expected_gap(conn: Conn, dataset: str, key: dict[str, str], day: date, status: str) -> None:

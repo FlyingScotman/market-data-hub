@@ -117,8 +117,15 @@ def _next_month(d: date) -> date:
     return date(d.year + 1, 1, 1) if d.month == 12 else date(d.year, d.month + 1, 1)
 
 
-def day_predicate(spec: DatasetSpec, calendar: CalendarPredicate) -> DayPredicate:
-    """Which days are expected to have data for ``spec``."""
+def day_predicate(
+    spec: DatasetSpec,
+    calendar: CalendarPredicate,
+    start: date | None = None,
+    end: date | None = None,
+) -> DayPredicate:
+    """Which days are expected to have data for ``spec``. With ``start`` and ``end`` the
+    calendar is loaded once for that range (:meth:`CalendarPredicate.for_range`) instead of
+    once per tested day; the answers are the same."""
     if spec.frequency == "daily":
         return lambda _d: True
     if spec.frequency == "monthly":
@@ -126,6 +133,8 @@ def day_predicate(spec: DatasetSpec, calendar: CalendarPredicate) -> DayPredicat
     if spec.calendar is None:
         return is_weekday
     cal = spec.calendar
+    if start is not None and end is not None:
+        return calendar.for_range(start, end, cal)
     return lambda d: calendar(d, cal)
 
 
@@ -161,7 +170,7 @@ def expected_days(
             out.append(cur)
             cur = _next_month(cur)
         return out
-    pred = day_predicate(spec, calendar)
+    pred = day_predicate(spec, calendar, start, end)
     return [d for d in date_range(start, end) if pred(d)]
 
 
@@ -752,7 +761,10 @@ def queue_backfill(
     covered = _task_ranges(conn, job_datasets(spec))
     todo = [d for d in days if not any(lo <= d <= hi for lo, hi in covered)]
     inserted: list[tuple[date, date]] = []
-    for lo, hi in compress_ranges(todo, day_predicate(spec, calendar), max_task_days(spec)):
+    if not todo:
+        return inserted
+    is_expected = day_predicate(spec, calendar, todo[0], todo[-1])
+    for lo, hi in compress_ranges(todo, is_expected, max_task_days(spec)):
         if _insert_task(conn, spec.name, lo, hi, "quality") is not None:
             inserted.append((lo, hi))
     return inserted
