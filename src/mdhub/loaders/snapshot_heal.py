@@ -34,7 +34,11 @@ Behaviour, per run (a polling rule, every 30 minutes; the job lock keeps one run
 
 A missing day without bond quotes is not built (a cut of nothing): its gap stays ``open`` with
 that reason until the quotes are loaded (the ordinary ``bonds_eod`` backfill), then the next run
-builds it.
+builds it. A missing day whose input data is still being filled - an ``open`` gap, or a
+``pending`` / ``running`` backfill task, of a dataset the cut reads
+(:data:`~mdhub.snapshot.readiness.SNAPSHOT_INPUT_JOBS`) - is not built either (the gap note
+names the dataset): the autocorrection would publish a correction right after the cut, and the
+consumer would download the day twice.
 """
 
 from __future__ import annotations
@@ -51,9 +55,11 @@ from psycopg.types.json import Jsonb
 from mdhub.config import in_clock_window, parse_clock_window
 from mdhub.core.timeutil import utc_now
 from mdhub.core.upsert import UpsertResult
+from mdhub.datasets import datasets_for_job
 from mdhub.db.pool import DictConnection
 from mdhub.jobs import JobContext, job
 from mdhub.loaders.snapshots import _cut_ts, market_params
+from mdhub.snapshot.readiness import SNAPSHOT_INPUT_JOBS
 from mdhub.snapshot.runner import publish_market_snapshot
 from mdhub.snapshot.static import BOND_CALENDAR
 
@@ -145,6 +151,50 @@ def days_with_bond_quotes(conn: DictConnection, days: list[date], min_rows: int)
             {"d": days, "m": min_rows},
         ).fetchall()
     return {r[0] for r in rows}
+
+
+def input_datasets() -> list[str]:
+    """Registered datasets whose rows of a day are read by the ``eod_final`` cut of that day
+    (the datasets of the backfill jobs in :data:`SNAPSHOT_INPUT_JOBS`)."""
+    return sorted({s.name for job_name in SNAPSHOT_INPUT_JOBS for s in datasets_for_job(job_name)})
+
+
+def days_waiting_for_inputs(conn: DictConnection, days: list[date]) -> dict[date, list[str]]:
+    """For each of ``days`` that still waits for input data, what it waits for: an ``open``
+    ``ops.data_gap`` of an input dataset on that day, or a ``pending`` / ``running``
+    ``ops.backfill_task`` of one whose range contains it. A cut built now would be corrected
+    (a second download for the consumer) as soon as that backfill ends, so the day is left
+    until then. Days without anything pending are not in the result."""
+    datasets = input_datasets()
+    if not days or not datasets:
+        return {}
+    waiting: dict[date, set[str]] = {}
+    with conn.cursor(row_factory=tuple_row) as cur:
+        for day, dataset in cur.execute(
+            "SELECT DISTINCT gap_date, dataset FROM ops.data_gap "
+            "WHERE status = 'open' AND dataset = ANY(%s) AND gap_date = ANY(%s)",
+            (datasets, days),
+        ).fetchall():
+            waiting.setdefault(day, set()).add(f"{dataset} (open gap)")
+        tasks = cur.execute(
+            """
+            SELECT dataset, status, params ->> 'date_from', params ->> 'date_to'
+            FROM ops.backfill_task
+            WHERE status IN ('pending', 'running') AND dataset = ANY(%s)
+              AND params ? 'date_from' AND params ? 'date_to'
+              AND params ->> 'date_to' >= %s AND params ->> 'date_from' <= %s
+            """,
+            (datasets, min(days).isoformat(), max(days).isoformat()),
+        ).fetchall()
+    for dataset, status, lo, hi in tasks:
+        try:
+            first, last = date.fromisoformat(str(lo)), date.fromisoformat(str(hi))
+        except ValueError:
+            continue
+        for day in days:
+            if first <= day <= last:
+                waiting.setdefault(day, set()).add(f"{dataset} (backfill {status})")
+    return {d: sorted(v) for d, v in waiting.items()}
 
 
 def pending_reissue(
@@ -255,6 +305,22 @@ def _fail_gap(
     return status
 
 
+def _missing_note(has_quotes: bool, waiting: list[str] | None) -> str:
+    if not has_quotes:
+        return (
+            "no eod_final cut; no bond quotes in the store for the day yet "
+            "(built once they are loaded)"
+        )
+    if waiting:
+        return (
+            "no eod_final cut; waiting for the input data of the day: "
+            + ", ".join(waiting[:4])
+            + (", ..." if len(waiting) > 4 else "")
+            + " (built once they are loaded)"
+        )
+    return "no eod_final cut; will be built"
+
+
 def _due(state: tuple[str, str, datetime] | None, now: datetime) -> bool:
     """Whether the repair of a day is due: not given up, and not failed within the retry wait."""
     if state is None:
@@ -314,15 +380,10 @@ def snapshot_heal(
     with ctx.connection() as conn:
         missing = missing_cut_days(conn, first, last, is_bday)
         with_quotes = days_with_bond_quotes(conn, missing, min_rows)
+        waiting = days_waiting_for_inputs(conn, [d for d in missing if d in with_quotes])
         reissue = pending_reissue(conn)
         found_missing = {
-            gap_id(d): (
-                "no eod_final cut; will be built"
-                if d in with_quotes
-                else "no eod_final cut; no bond quotes in the store for the day yet "
-                "(built once they are loaded)"
-            )
-            for d in missing
+            gap_id(d): _missing_note(d in with_quotes, waiting.get(d)) for d in missing
         }
         found_reissue = {
             gap_id(d, ts): "eod_final is on the static of its build day; will be reissued on "
@@ -336,7 +397,9 @@ def snapshot_heal(
 
     now = _now()
     todo_missing = [
-        d for d in missing if d in with_quotes and _due(missing_state.get(gap_id(d)), now)
+        d
+        for d in missing
+        if d in with_quotes and d not in waiting and _due(missing_state.get(gap_id(d)), now)
     ]
     todo_reissue = [(d, ts) for d, ts in reissue if _due(reissue_state.get(gap_id(d, ts)), now)]
     result: dict[str, Any] = {
@@ -345,6 +408,7 @@ def snapshot_heal(
         "to": last.isoformat(),
         "missing": len(missing),
         "missing_without_quotes": len(missing) - len(with_quotes),
+        "missing_waiting_inputs": len(waiting),
         "reissue_pending": len(reissue),
         "built": [],
         "failed": [],
@@ -356,7 +420,11 @@ def snapshot_heal(
     if mode == "detect" or pending == 0:
         ctx.run.mark_skipped(
             f"{len(missing)} missing, {len(reissue)} to reissue; "
-            + ("mode=detect" if mode == "detect" else "nothing due (waiting for quotes or retry)")
+            + (
+                "mode=detect"
+                if mode == "detect"
+                else "nothing due (waiting for quotes, inputs or retry)"
+            )
         )
         return result
     window = parse_clock_window(s.snapshot_heal_window)

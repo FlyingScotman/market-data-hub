@@ -10,13 +10,15 @@ from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
 import pytest
+from psycopg.types.json import Jsonb
 
 import mdhub.loaders.snapshot_heal as heal
 from mdhub.config import Settings, in_clock_window, parse_clock_window
 from mdhub.core.bizday import DbCalendar
 from mdhub.core.timeutil import MSK
+from mdhub.datasets import datasets_for_job
 from mdhub.db.pool import Database
-from mdhub.jobs import JobOutcome, run_job
+from mdhub.jobs import JobOutcome, discover_jobs, run_job
 from mdhub.snapshot.runner import publish_market_snapshot
 from mdhub.snapshot.static import STATIC_BASIS_AS_OF_DATE
 from test_api_seed import seed
@@ -143,6 +145,55 @@ def test_second_run_is_a_noop_and_quotes_arriving_later_are_cut(
     assert out.status == "succeeded"
     assert [b["day"] for b in out.result["built"]] == ["2026-10-16"]
     assert _gaps(world, heal.MISSING_GAPS)[date(2026, 10, 16)][0] == "backfilled"
+
+
+def test_a_day_waits_while_its_input_data_is_being_filled(
+    world: Conn, settings: Settings, db: Database
+) -> None:
+    """An open gap or a pending / running backfill of an input dataset of the day holds the
+    cut back (the autocorrection would otherwise publish a second version of it at once); the
+    day is built when that is done. Other days and finished tasks do not matter."""
+    discover_jobs()
+    zcyc = datasets_for_job("zcyc")[0].name
+    bonds = datasets_for_job("bonds_eod")[0].name
+    d13, d14, d15 = QUOTED
+    world.execute(
+        "INSERT INTO ops.data_gap (dataset, key, gap_date, status, note) "
+        "VALUES (%s, '{}', %s, 'open', 'queued')",
+        (zcyc, d13),
+    )
+
+    def task(dataset: str, lo: date, hi: date, status: str) -> None:
+        world.execute(
+            "INSERT INTO ops.backfill_task (dataset, params, status) VALUES (%s, %s, %s)",
+            (dataset, Jsonb({"date_from": lo.isoformat(), "date_to": hi.isoformat()}), status),
+        )
+
+    task(bonds, d14 - timedelta(days=1), d14, "running")  # covers 14
+    task(bonds, d15, d15, "done")  # finished: no reason to wait
+    task(bonds, d15 + timedelta(days=1), d15 + timedelta(days=2), "pending")  # other days
+    world.commit()
+
+    out = _heal(settings, db)
+    assert [b["day"] for b in out.result["built"]] == [d15.isoformat()]
+    assert out.result["missing_waiting_inputs"] == 2
+    gaps = _gaps(world, heal.MISSING_GAPS)
+    assert gaps[d13][0] == "open" and "waiting for the input data" in gaps[d13][1]
+    assert f"{zcyc} (open gap)" in gaps[d13][1]
+    assert gaps[d14][0] == "open" and f"{bonds} (backfill running)" in gaps[d14][1]
+    assert sorted(_eod_final(world)) == [d15]
+    assert _heal(settings, db).status == "skipped"  # nothing due: still waiting
+    assert _eod_final(world).keys() == {d15}
+
+    # the backfills end: the next run builds both days
+    world.execute("UPDATE ops.data_gap SET status = 'backfilled' WHERE dataset = %s", (zcyc,))
+    world.execute("UPDATE ops.backfill_task SET status = 'done' WHERE status = 'running'")
+    world.commit()
+    out = _heal(settings, db)
+    assert [b["day"] for b in out.result["built"]] == [d13.isoformat(), d14.isoformat()]
+    assert out.result["missing_waiting_inputs"] == 0
+    final = _gaps(world, heal.MISSING_GAPS)
+    assert final[d13][0] == "backfilled" and final[d14][0] == "backfilled"
 
 
 def test_runs_are_bounded_and_resume_where_they_stopped(
