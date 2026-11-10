@@ -811,6 +811,21 @@ def test_bond_close_endpoint_and_latency(
         client, "/v1/history/bond_close", **{"from": "2026-10-29", "basis": "zcyc_securities"}
     )
     assert [r["board"] for r in _records(body)] == ["ZCYC"]
+    # /v1/intraday/latency only looks at the last 4 days of PostgreSQL now(), so the fixed
+    # 2026-10-28/29 rows above would age out of it. Its rows are seeded relative to now().
+    conn.execute(
+        """
+        INSERT INTO md.bond_quote_intraday (secid, board, ts, source_ts, latency, bid, offer)
+        VALUES ('SU26238RMFS4', 'TQOB', now() - interval '20 minutes', now() - interval '5 minutes',
+                'delayed', 52.0, 52.5);
+        INSERT INTO md.zcyc_security_quote (secid, ts, trade_date, source_ts, latency,
+            bid_price_pct, ask_price_pct, bid_yield_pct, ask_yield_pct)
+        VALUES ('SU26238RMFS4', now() - interval '10 minutes',
+                (now() AT TIME ZONE 'Europe/Moscow')::date, now() - interval '10 minutes',
+                'realtime', 52.15, 52.35, 14.9, 14.8);
+        """
+    )
+    conn.commit()
     lat = _get(client, "/v1/intraday/latency")
     datasets = {(r["dataset"], r["latency"]) for r in lat["data"]}
     assert ("bond_quote_intraday", "delayed") in datasets
