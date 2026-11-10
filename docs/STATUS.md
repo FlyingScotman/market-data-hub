@@ -130,7 +130,6 @@
 - MOEX SDFI swap curves (CNY OIS vs RUSFAR CNY, xccy) need a subscription.
 - OTC Monitor: token present in env (audit 05 was wrong); live loader being added; no history endpoint.
 - andromeda (EOD swap archive, stopped 2026-09-10) not connected — personal browser session on old server.
-- Ratescalcs credentials: owner action tracked in the private repository; credentials are kept
-  in server secrets only.
+- Ratescalcs: credentials come from server configuration.
 - Not in hub (no source): SOFR/€STR/SARON fixings & curves, CDS, issuer ratings (Cbonds).
 - Two floaters with MOEX benchmark OTHER (Ситимат НН, КВС 01): reference rate not identified.
