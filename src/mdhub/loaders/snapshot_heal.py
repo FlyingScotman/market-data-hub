@@ -440,8 +440,9 @@ def snapshot_heal(
     last_live = ctx.business_dates([1], today=ctx.today(), calendar=BOND_CALENDAR)[0]
     last = last_live - timedelta(days=1)
 
-    # one query for the whole range (a year of days), the calendar of ctx: holidays and weekend
-    # sessions of the engine as the scheduler sees them
+    # one query for the whole range (a year of days), the calendar of ctx as the scheduler sees
+    # it: a business day is what the calendar says, holidays and working weekend days included
+    # (not the weekday)
     is_bday = ctx.calendar.for_range(first, last, BOND_CALENDAR)
     with ctx.connection() as conn:
         missing = missing_cut_days(conn, first, last, is_bday)

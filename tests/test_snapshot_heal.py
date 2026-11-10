@@ -64,7 +64,8 @@ def fixed_clock(monkeypatch: pytest.MonkeyPatch) -> list[datetime]:
 
 def _heal(settings: Settings, db: Database, **params: Any) -> JobOutcome:
     params = {"date_from": FROM.isoformat(), "min_bond_rows": 1, **params}
-    # the database calendar, as in production (the Saturday 2026-10-17 of the seed is a session)
+    # the database calendar, as in production (it counts the Saturday 2026-10-17 of the seed as a
+    # business day: a working weekend day)
     return run_job("snapshot_heal", params, settings=settings, db=db, calendar=DbCalendar(db))
 
 
@@ -116,7 +117,11 @@ def test_missing_cuts_are_found_built_and_reported(
     for d in QUOTED:
         assert gaps[d][0] == "backfilled" and gaps[d][1].startswith("cut published")
     # days without quotes are not cut: open, with the reason, listed by the status view
-    no_quotes = (date(2026, 10, 12), date(2026, 10, 16), date(2026, 10, 17))  # 17: Saturday session
+    no_quotes = (
+        date(2026, 10, 12),
+        date(2026, 10, 16),
+        date(2026, 10, 17),
+    )  # 17: a working Saturday
     for d in no_quotes:
         assert gaps[d][0] == "open" and "no bond quotes" in gaps[d][1]
     open_days = {
@@ -428,7 +433,7 @@ def test_a_rebuild_that_changes_nothing_is_never_retried(
 def test_a_long_window_uses_the_calendar_for_every_day(
     world: Conn, settings: Settings, db: Database
 ) -> None:
-    """Holidays and weekend sessions far from the window start are honoured (a year of days is
+    """Holidays and working weekend days far from the window start are honoured (a year of days is
     read with one calendar query, not just the first two months)."""
     world.execute(
         "INSERT INTO ref.calendar_day (calendar, day, source, is_business_day, known_at) VALUES "
@@ -439,8 +444,10 @@ def test_a_long_window_uses_the_calendar_for_every_day(
     assert out.status == "skipped"
     gaps = _gaps(world, heal.MISSING_GAPS)
     assert date(2026, 10, 12) not in gaps  # holiday: not expected
-    assert date(2026, 10, 17) in gaps  # Saturday session, no quotes
-    assert date(2026, 6, 6) not in gaps and date(2026, 6, 8) in gaps  # a weekend, a Monday
+    assert date(2026, 10, 17) in gaps  # a working Saturday by the calendar, no quotes
+    assert (
+        date(2026, 6, 6) not in gaps and date(2026, 6, 8) in gaps
+    )  # an ordinary weekend (not built), a Monday
 
 
 # -------------------------------------------------------------- reissue of old cuts
