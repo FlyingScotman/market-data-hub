@@ -147,6 +147,114 @@ def test_second_run_is_a_noop_and_quotes_arriving_later_are_cut(
     assert _gaps(world, heal.MISSING_GAPS)[date(2026, 10, 16)][0] == "backfilled"
 
 
+def _row_versions(conn: Conn) -> dict[tuple[str, date, str], str]:
+    """The physical version of every gap row: it changes whenever the row is written."""
+    return {
+        (r["dataset"], r["gap_date"], str(r["key"])): r["v"]
+        for r in conn.execute(
+            "SELECT dataset, gap_date, key, xmin::text AS v FROM ops.data_gap"
+        ).fetchall()
+    }
+
+
+def test_gap_rows_are_written_only_when_they_change(
+    world: Conn, settings: Settings, db: Database
+) -> None:
+    _old_style_cut(world, db, DAY)
+    _heal(settings, db, mode="detect", date_from=FROM.isoformat())
+    before = _row_versions(world)
+    assert len(before) >= 6  # missing days of both kinds and the reissue
+    for _ in range(2):
+        _heal(settings, db, mode="detect", date_from=FROM.isoformat())
+        assert _row_versions(world) == before
+    # a changed reason is written, and only on that row
+    _copy_day(world, "md.bond_eod", DAY, date(2026, 10, 16))
+    world.commit()
+    _heal(settings, db, mode="detect", date_from=FROM.isoformat())
+    after = _row_versions(world)
+    changed = {k for k in before if after[k] != before[k]}
+    assert {k[1] for k in changed} == {date(2026, 10, 16)}
+    assert "will be built" in _gaps(world, heal.MISSING_GAPS)[date(2026, 10, 16)][1]
+
+
+def test_gaps_no_longer_detected_say_why_they_were_closed(
+    world: Conn, settings: Settings, db: Database
+) -> None:
+    d12, d13, d14, d15, d16 = (date(2026, 10, n) for n in (12, 13, 14, 15, 16))
+    _heal(settings, db, mode="detect")
+    assert {d for d, (st, _) in _gaps(world, heal.MISSING_GAPS).items() if st == "open"} >= {
+        d12,
+        d13,
+        d14,
+        d15,
+        d16,
+    }
+
+    # the checked range moved (MDHUB_SNAPSHOT_HEAL_FROM): not repaired, just not looked at
+    _heal(settings, db, mode="detect", date_from=d15.isoformat())
+    gaps = _gaps(world, heal.MISSING_GAPS)
+    for d in (d12, d13, d14):
+        assert gaps[d][0] == "not_expected" and "outside the checked range" in gaps[d][1]
+    assert gaps[d15][0] == "open"
+    _heal(settings, db, mode="detect")  # the range is back: the gaps are open again
+    assert _gaps(world, heal.MISSING_GAPS)[d13][0] == "open"
+
+    # the calendar changed: the day is not a business day (a correction of ref.calendar_day)
+    world.execute(
+        "INSERT INTO ref.calendar_day (calendar, day, source, is_business_day, known_at) "
+        "VALUES ('MOEX_STOCK', %s, 'curated', false, '2026-01-01Z')",
+        (d16,),
+    )
+    world.commit()
+    _heal(settings, db, mode="detect")
+    status, note = _gaps(world, heal.MISSING_GAPS)[d16]
+    assert status == "not_expected" and "not a business day" in note
+
+    # cuts published by someone else: really repaired. One of the days had been given up
+    world.execute(
+        "UPDATE ops.data_gap SET status = 'unfillable', note = 'heal failed (5): boom "
+        "(gave up after 5 attempts; hub 1.0)' WHERE dataset = %s AND gap_date = %s",
+        (heal.MISSING_GAPS, d14),
+    )
+    world.commit()
+    for d in (d13, d14):
+        publish_market_snapshot(
+            db,
+            cut_type="eod_final",
+            business_date=d,
+            cut_ts=_cut_ts(d, 8, 0) + timedelta(days=1),
+            known_at=datetime.now(UTC),
+            historical=True,
+        )
+    _heal(settings, db, mode="detect")
+    gaps = _gaps(world, heal.MISSING_GAPS)
+    for d in (d13, d14):
+        assert gaps[d] == ("backfilled", "an eod_final cut exists now")
+
+
+def test_a_reissue_repaired_elsewhere_is_closed_as_repaired(
+    world: Conn, settings: Settings, db: Database
+) -> None:
+    old = _old_style_cut(world, db, DAY)
+    _heal(settings, db, mode="detect", date_from=DAY.isoformat())
+    assert _gaps(world, heal.REISSUE_GAPS)[DAY][0] == "open"
+    # the correction comes from the autocorrection of an input backfill (same cut_ts)
+    out = publish_market_snapshot(
+        db,
+        cut_type="eod_final",
+        business_date=DAY,
+        cut_ts=_cut_ts(DAY, 8, 0) + timedelta(days=1),
+        known_at=datetime.now(UTC),
+        historical=True,
+    )
+    assert out.market.id != old
+    _heal(settings, db, mode="detect", date_from=DAY.isoformat())
+    assert _gaps(world, heal.REISSUE_GAPS)[DAY] == (
+        "backfilled",
+        "the cut is no longer on the static of its build day",
+    )
+
+
 def test_a_day_waits_while_its_input_data_is_being_filled(
     world: Conn, settings: Settings, db: Database
 ) -> None:

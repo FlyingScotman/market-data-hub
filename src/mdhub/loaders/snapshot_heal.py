@@ -17,9 +17,11 @@ an operator:
   that range is ever reissued here; the range is a constant, not a setting.
 
 Status: every defect is an ``ops.data_gap`` row (``/v1/gaps?dataset=...`` lists the open ones
-with the reason; a repaired one becomes ``backfilled``; a day that cannot be repaired becomes
-``unfillable`` with the reason, and no day is left without a note). ``/v1/runs?job=snapshot_heal``
-shows what each run built.
+with the reason; a repaired one becomes ``backfilled``; a gap that is not detected any more
+for another reason (the checked range moved, the calendar no longer counts the day) becomes
+``not_expected`` with that reason; a day that cannot be repaired becomes ``unfillable`` with the
+reason, and no day is left without a note). Rows are written only when they change.
+``/v1/runs?job=snapshot_heal`` shows what each run built.
 
 Behaviour, per run (a polling rule, every 30 minutes; the job lock keeps one run at a time):
 
@@ -63,7 +65,7 @@ from mdhub.datasets import datasets_for_job
 from mdhub.db.pool import DictConnection
 from mdhub.jobs import JobContext, job
 from mdhub.loaders.snapshots import _cut_ts, market_params
-from mdhub.snapshot.readiness import SNAPSHOT_INPUT_JOBS
+from mdhub.snapshot.readiness import SNAPSHOT_INPUT_JOBS, eod_final_cuts
 from mdhub.snapshot.runner import publish_market_snapshot
 from mdhub.snapshot.static import BOND_CALENDAR
 
@@ -241,41 +243,50 @@ def _gap_key(gid: GapId) -> Jsonb:
     return Jsonb({"cut_ts": gid[1]} if gid[1] else {})
 
 
-def sync_gaps(conn: DictConnection, dataset: str, found: dict[GapId, str]) -> None:
-    """Make ``ops.data_gap`` of ``dataset`` say what was found: a gap per entry of ``found``
-    (opened, or reopened when it had been closed; a note of a failed repair is kept; an
-    ``unfillable`` gap is left alone), and every ``open`` gap no longer found closed as
-    ``backfilled``."""
-    for gid, note in found.items():
-        conn.execute(
-            """
-            INSERT INTO ops.data_gap (dataset, key, gap_date, status, note)
-            VALUES (%(ds)s, %(key)s, %(d)s, 'open', %(note)s)
-            ON CONFLICT (dataset, key, gap_date) DO UPDATE SET
-                status = CASE WHEN ops.data_gap.status = 'backfilled' THEN 'open'
-                              ELSE ops.data_gap.status END,
-                note = CASE WHEN ops.data_gap.status = 'unfillable'
-                                 OR ops.data_gap.note LIKE %(failed)s THEN ops.data_gap.note
-                            ELSE EXCLUDED.note END,
-                detected_at = CASE WHEN ops.data_gap.status = 'backfilled' THEN now()
-                                   ELSE ops.data_gap.detected_at END
-            """,
-            {
-                "ds": dataset,
-                "key": _gap_key(gid),
-                "d": gid[0],
-                "note": note[:_NOTE_CHARS],
-                "failed": f"{_FAILED}%",
-            },
-        )
-    for gid, (status, _note, _at) in _gap_state(conn, dataset).items():
-        if status == "open" and gid not in found:
-            _close_gap(
-                conn,
-                dataset,
-                gid,
-                "no longer detected (repaired, or outside the checked range)",
+def sync_gaps(
+    conn: DictConnection,
+    dataset: str,
+    found: dict[GapId, str],
+    closed_as: Callable[[GapId], tuple[str, str]],
+) -> None:
+    """Make ``ops.data_gap`` of ``dataset`` say what was found, writing only what changed:
+
+    * a gap per entry of ``found``: opened; reopened when it had been closed (``backfilled`` /
+      ``not_expected``); the note of an ``open`` gap refreshed when the reason changed (the note
+      of a failed repair is kept); an ``unfillable`` gap is left alone;
+    * every ``open`` or ``unfillable`` gap no longer found is closed with ``closed_as(gap)`` =
+      ``(status, note)``: repaired (``backfilled``) or not expected any more (``not_expected``:
+      outside the checked range, a day the calendar no longer counts), so the note says why.
+    """
+    state = _gap_state(conn, dataset)
+    for gid, found_note in found.items():
+        note = found_note[:_NOTE_CHARS]
+        known = state.get(gid)
+        if known is None:
+            conn.execute(
+                "INSERT INTO ops.data_gap (dataset, key, gap_date, status, note) "
+                "VALUES (%s, %s, %s, 'open', %s) ON CONFLICT DO NOTHING",
+                (dataset, _gap_key(gid), gid[0], note),
             )
+        elif known[0] in ("backfilled", "not_expected"):
+            conn.execute(
+                "UPDATE ops.data_gap SET status = 'open', note = %s, detected_at = now() "
+                "WHERE dataset = %s AND key = %s AND gap_date = %s",
+                (note, dataset, _gap_key(gid), gid[0]),
+            )
+        elif known[0] == "open" and not known[1].startswith(_FAILED) and known[1] != note:
+            _set_gap(conn, dataset, gid, "open", note)
+    for gid, (status, _note, _at) in state.items():
+        if status in ("open", "unfillable") and gid not in found:
+            _set_gap(conn, dataset, gid, *closed_as(gid))
+
+
+def _set_gap(conn: DictConnection, dataset: str, gid: GapId, status: str, note: str) -> None:
+    conn.execute(
+        "UPDATE ops.data_gap SET status = %s, note = %s "
+        "WHERE dataset = %s AND key = %s AND gap_date = %s",
+        (status, note[:_NOTE_CHARS], dataset, _gap_key(gid), gid[0]),
+    )
 
 
 def _gap_state(conn: DictConnection, dataset: str) -> dict[GapId, tuple[str, str, datetime]]:
@@ -291,11 +302,7 @@ def _gap_state(conn: DictConnection, dataset: str) -> dict[GapId, tuple[str, str
 
 
 def _close_gap(conn: DictConnection, dataset: str, gid: GapId, note: str) -> None:
-    conn.execute(
-        "UPDATE ops.data_gap SET status = 'backfilled', note = %s "
-        "WHERE dataset = %s AND key = %s AND gap_date = %s",
-        (note[:_NOTE_CHARS], dataset, _gap_key(gid), gid[0]),
-    )
+    _set_gap(conn, dataset, gid, "backfilled", note)
 
 
 def _fail_gap(
@@ -318,6 +325,41 @@ def _fail_gap(
         (status, note[:_NOTE_CHARS], now, dataset, _gap_key(gid), gid[0]),
     )
     return status
+
+
+def _missing_closed(
+    first: date, last: date, is_business_day: Callable[[date], bool]
+) -> Callable[[GapId], tuple[str, str]]:
+    """Why a gap of a missing cut is not detected any more: the day left the checked range
+    (``MDHUB_SNAPSHOT_HEAL_FROM``) or the calendar no longer counts it (``not_expected``), or
+    else it has its cut now (``backfilled``)."""
+
+    def closed_as(gid: GapId) -> tuple[str, str]:
+        day = gid[0]
+        if not first <= day <= last:
+            return "not_expected", f"outside the checked range {first}..{last}; not looked at"
+        if not is_business_day(day):
+            return "not_expected", "not a business day of the calendar (any more)"
+        return "backfilled", "an eod_final cut exists now"
+
+    return closed_as
+
+
+def _reissue_closed(conn: DictConnection) -> Callable[[GapId], tuple[str, str]]:
+    """Why a gap of a reissue is not detected any more: the cut is current and no longer on the
+    static of its build day (``backfilled``), or it is not a current cut any more
+    (``not_expected``)."""
+    current: set[GapId] | None = None
+
+    def closed_as(gid: GapId) -> tuple[str, str]:
+        nonlocal current
+        if current is None:
+            current = {gap_id(d, ts) for d, ts in eod_final_cuts(conn, REISSUE_FROM, REISSUE_TO)}
+        if gid in current:
+            return "backfilled", "the cut is no longer on the static of its build day"
+        return "not_expected", "the cut is not a current eod_final cut any more"
+
+    return closed_as
 
 
 def _missing_note(has_quotes: bool, waiting: list[str] | None) -> str:
@@ -414,8 +456,8 @@ def snapshot_heal(
             "the static as of the date"
             for d, ts in reissue
         }
-        sync_gaps(conn, MISSING_GAPS, found_missing)
-        sync_gaps(conn, REISSUE_GAPS, found_reissue)
+        sync_gaps(conn, MISSING_GAPS, found_missing, _missing_closed(first, last, is_bday))
+        sync_gaps(conn, REISSUE_GAPS, found_reissue, _reissue_closed(conn))
         missing_state = _gap_state(conn, MISSING_GAPS)
         reissue_state = _gap_state(conn, REISSUE_GAPS)
 
