@@ -821,7 +821,8 @@ def test_bond_close_endpoint_and_latency(
         INSERT INTO md.zcyc_security_quote (secid, ts, trade_date, source_ts, latency,
             bid_price_pct, ask_price_pct, bid_yield_pct, ask_yield_pct)
         VALUES ('SU26238RMFS4', now() - interval '10 minutes',
-                (now() AT TIME ZONE 'Europe/Moscow')::date, now() - interval '10 minutes',
+                ((now() - interval '10 minutes') AT TIME ZONE 'Europe/Moscow')::date,
+                now() - interval '10 minutes',
                 'realtime', 52.15, 52.35, 14.9, 14.8);
         """
     )

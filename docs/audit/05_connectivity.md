@@ -104,7 +104,7 @@ AlgoPack notes:
   - Pages carry no quote timestamp; the snapshot has `timestamp` and `ois_loaded_at`.
   - Service hours are Mon–Fri 08:50–23:00 MSK. The snapshot reported `market_closed=true` at 19:00.
   - Stay on GET only. The README forbids POST pages.
-- **Hygiene:** credentials are kept in server secrets; follow-up is tracked in the private repository.
+- **Hygiene:** credentials come from server configuration.
 
 ## 6. CBR and ECB (public)
 
