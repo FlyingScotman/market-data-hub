@@ -243,6 +243,7 @@ Migration ownership (to avoid conflicts): `0001-0099` core/ops; `0100-0199` ref 
 | `maintenance` | 02:00 `backup` (pg_dump, keep 14); 03:00 `retention` (all days) | DB | observability rows (`ops.api_request`, `ops.source_probe`, `ops.worker_heartbeat`) older than `MDHUB_OPS_LOG_RETENTION_DAYS` (90); raw retention of `intraday:reread:` captures (7 days, `MDHUB_RAW_RETENTION_DAYS_REREAD`) and other `intraday:` captures (90 days); intraday market snapshots (30 days, `MDHUB_SNAPSHOT_RETENTION_DAYS_INTRADAY`; static and EOD snapshots are kept forever); AlgoPack rolling window (`MDHUB_ALGOPACK_RETENTION_DAYS`, 90 calendar days): tradestats/FUTOI rows with `trade_date` before the window start (one date per committed delete), their `ops.row_history` images, AlgoPack raw captures (all `algopack_fx_futures` endpoints, incl. `*_history`) fetched before 00:00 MSK of the window start, plus backfill `*_history` captures whose requested range (`till=`) ends before the window start whenever they were fetched; orphaned `running` job runs (>12 h) → failed, VACUUM ANALYZE |
 | `snapshot_static` | 07:45 `daily` (`MDHUB_SNAPSHOT_STATIC_TIME`) | DB | static snapshot after `bonds_static` 06:30 and `cbonds_enrich` 07:30 (§11); static changes during the day are published by the next market cut (`change`) |
 | `snapshot_market` | 19:45 `eod_preliminary` (D), 08:00 `eod_final` (D-1), every 30 min 10:00–19:00 `intraday` (`MDHUB_SNAPSHOT_*`) | DB | market cuts (§11); three lock classes (`snapshot_market:intraday`, `:eod`, `:rebuild` = explicit `day`/`known_at`) so a manual rebuild never blocks a scheduled cut (0.3.1, review §6.5); EOD rules wait for the lock and are caught up; an intraday cut waits up to half its slot (≤ 10 min), and a cut that still cannot run opens an `ops.data_gap` `snapshot_market_intraday` (key `cut`), closed when the cut is replayed; `eod_final` waits up to `MDHUB_SNAPSHOT_EOD_FINAL_WAIT_MINUTES` (30) for the final `bonds_eod` / `zcyc` runs of D (§11 "Input readiness") |
+| `snapshot_heal` | every 30 min (all days); builds only 21:00-06:00 MSK (`MDHUB_SNAPSHOT_HEAL_*`) | DB | self-healing of the `eod_final` history (#138, [SNAPSHOT_HEAL.md](SNAPSHOT_HEAL.md)): business days without an `eod_final` are published, current cuts of 2026-01-05..2026-10-21 that sit on the static of their build day are reissued on the static as of the date; gaps in `/v1/gaps` datasets `snapshot_cut_missing` / `snapshot_cut_reissue`; nothing to do = `skipped` |
 | `snapshot_rebuild` | not scheduled: the backfill job of dataset `snapshot_eod_final` | DB | rebuilds published `eod_final` cuts of `date_from..date_to` (correction only when the content changed); queued by the backfill worker after a backfill that changed inputs of such a day (§11 "Corrections after backfills") |
 
 **Curve gaps (WEB-15, review §6.2).** The per-source curve datasets (`ratescalcs_*`, `otc_monitor_*`) are `event` datasets (freshness only). The curves every market cut requires are also registered dataset-level: `curves_ruonia_ois` and `curves_key_rate_swap` (`md.curve_snapshot`, `business_daily` on MOEX_STOCK from 2026-01-05, max lag 1): a business day without a stored snapshot from **any** source is an `ops.data_gap` (`/v1/gaps`) and makes the dataset stale. No backfill job (the live sources have no history): the gap stays `open` until a snapshot of that day is stored (history import), which closes it as `backfilled`. Dataset `snapshot_eod_final` (`ops.published_snapshot`, `event`, lag 4 days) shows the freshness of the published `eod_final` cuts in `/v1/coverage`.
@@ -318,7 +319,8 @@ snapshot cuts (§11; owner decision DEC04, defaults): `MDHUB_SNAPSHOT_STATIC_TIM
 `MDHUB_SNAPSHOT_INTRADAY_MINUTES=30` (divides 60; 0 = off), `MDHUB_SNAPSHOT_INTRADAY_WINDOW=10:00-19:00`,
 `MDHUB_SNAPSHOT_RETENTION_DAYS_INTRADAY=30`, `MDHUB_SNAPSHOT_EOD_FINAL_WAIT_MINUTES=30` (`eod_final` input
 readiness, 0 = no wait), `MDHUB_SNAPSHOT_AUTOCORRECT=true` (rebuild published `eod_final` cuts after
-backfills that changed their inputs),
+backfills that changed their inputs), `MDHUB_SNAPSHOT_HEAL=repair` (+ `_FROM`, `_WINDOW`, `_MAX_PER_RUN`,
+`_PAUSE_S`: self-healing of missing / outdated `eod_final` cuts, SNAPSHOT_HEAL.md),
 `MDHUB_ISS_RPS=3`, `MDHUB_RAW_RETENTION_DAYS_INTRADAY=90`, `MDHUB_RAW_RETENTION_DAYS_REREAD=7`
 (`intraday:reread:` captures), `MDHUB_ALGOPACK_FULL_REREAD_MINUTES=30`,
 `MDHUB_ALGOPACK_RETENTION_DAYS=90` (AlgoPack rolling window, calendar days, §6), `MDHUB_API_TOKENS` (comma list,
@@ -573,8 +575,9 @@ feeds the `eod_final` cut of its own date (`bonds_eod`, `zcyc`, `indices_eod`, `
 backfill worker queues the published `eod_final` cuts of the business dates in the task's range
 (dataset `snapshot_eod_final`, job `snapshot_rebuild`, tasks of at most 5 days). `snapshot_rebuild`
 rebuilds each current cut with its own `cut_ts` as known now: unchanged content publishes nothing,
-changed content publishes a correction that `supersedes` it. Days without a published `eod_final`
-are never built automatically. Known limit: windowed inputs (the 400-day fixing window, the CBR FX
+changed content publishes a correction that `supersedes` it. `snapshot_rebuild` itself never builds
+a day without a published `eod_final`; `snapshot_heal` does (owner decision of 2026-11-10, #138,
+[SNAPSHOT_HEAL.md](SNAPSHOT_HEAL.md)). Known limit: windowed inputs (the 400-day fixing window, the CBR FX
 forward window, ECB lookback) of *later* cuts are not followed; rebuild those with
 `mdhub run snapshot_rebuild -p date_from=... -p date_to=...`.
 

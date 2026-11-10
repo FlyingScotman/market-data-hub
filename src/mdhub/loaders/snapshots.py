@@ -20,6 +20,8 @@ skips a scheduled cut. A scheduled intraday cut that still cannot run opens an `
   known now: unchanged content publishes nothing, different content publishes a correction
   (``supersedes``). Queued by the backfill worker after a backfill run that changed inputs of
   such a day (``MDHUB_SNAPSHOT_AUTOCORRECT``, :mod:`mdhub.snapshot.readiness`).
+* ``snapshot_heal`` (:mod:`mdhub.loaders.snapshot_heal`; scheduled) - publishes the ``eod_final``
+  cuts that are missing and reissues the old ones on the static as of their date, by itself.
 
 Parameters: ``day`` (explicit business date), ``days_back`` (business-day offsets, defaults
 per mode), ``cut`` (nominal cut time ``HH:MM`` MSK on the business date, ``eod_final`` on the
@@ -75,7 +77,8 @@ register_dataset(
         table="ops.published_snapshot",
         date_column="business_date",
         calendar=BOND_CALENDAR,
-        # freshness only: a missing eod_final is not built automatically (owner decision, HR5)
+        # freshness only; a missing eod_final is built by snapshot_heal (owner decision of
+        # 2026-11-10, #138; before that it was a manual decision, HR5)
         frequency="event",
         max_lag_days=4,
         backfill_job="snapshot_rebuild",
@@ -330,8 +333,8 @@ def snapshot_rebuild(
 ) -> dict[str, Any]:
     """Rebuild, as known now, every published ``eod_final`` cut of the business dates in the
     range; a cut whose content is unchanged publishes nothing, a changed one publishes a
-    correction that supersedes it. Days without a published ``eod_final`` are not built (a
-    missing cut is an owner decision, ``mdhub run snapshot_market -p mode=eod_final -p day=``).
+    correction that supersedes it. Days without a published ``eod_final`` are not built here
+    (``snapshot_heal`` builds them).
     A day before the previous business day binds a static built for that day (terms as known
     now, time-varying values as of the day; market-data-hub#102), like ``snapshot_market``."""
     dates = resolve_trade_dates(

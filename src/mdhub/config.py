@@ -65,6 +65,15 @@ Environment variables (DESIGN §7 plus a few operational knobs):
 ``MDHUB_SNAPSHOT_AUTOCORRECT``      a backfill that changes inputs of a day with an
                                     ``eod_final`` queues its rebuild (published only when
                                     the content changes); default true
+``MDHUB_SNAPSHOT_HEAL``             ``snapshot_heal`` job: ``repair`` (default) publishes the
+                                    ``eod_final`` cuts that are missing and reissues the
+                                    old cuts built on the static of their build day;
+                                    ``detect`` only records the gaps; ``off`` does nothing
+``MDHUB_SNAPSHOT_HEAL_FROM``        first business date the job looks at, default 2025-10-29
+``MDHUB_SNAPSHOT_HEAL_WINDOW``      MSK hours (``HH:MM-HH:MM``, may wrap midnight) in which it
+                                    builds, default 21:00-06:00
+``MDHUB_SNAPSHOT_HEAL_MAX_PER_RUN`` cuts built per run, default 10
+``MDHUB_SNAPSHOT_HEAL_PAUSE_S``     pause between two cuts in seconds, default 20
 =================================== ====================================================
 
 Snapshot cut times are an owner decision (system DEC04); the defaults above follow the
@@ -74,7 +83,8 @@ collection schedule (DESIGN §6, §11) and can be changed without a code change.
 from __future__ import annotations
 
 import re
-from typing import Any
+from datetime import date, time
+from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator
@@ -111,6 +121,24 @@ def parse_window(value: str) -> tuple[int, int]:
     if m1 or m2 or h1 >= h2:
         raise ValueError(f"expected whole hours HH:00-HH:00 with start < end, got {value!r}")
     return h1, h2
+
+
+def parse_clock_window(value: str) -> tuple[time, time]:
+    """``"21:00-06:00"`` -> ``(21:00, 06:00)``; the window may wrap midnight (start > end).
+    Equal ends are refused (an empty or a whole-day window is ambiguous)."""
+    start, sep, end = value.partition("-")
+    if not sep:
+        raise ValueError(f"expected HH:MM-HH:MM, got {value!r}")
+    (h1, m1), (h2, m2) = parse_hhmm(start), parse_hhmm(end)
+    if (h1, m1) == (h2, m2):
+        raise ValueError(f"window start and end must differ, got {value!r}")
+    return time(h1, m1), time(h2, m2)
+
+
+def in_clock_window(now: time, window: tuple[time, time]) -> bool:
+    """Whether ``now`` is inside ``window`` (start inclusive, end exclusive; wraps midnight)."""
+    start, end = window
+    return start <= now < end if start < end else now >= start or now < end
 
 
 def _csv(value: str) -> list[str]:
@@ -285,6 +313,32 @@ class Settings(BaseSettings):
         default=True,
         validation_alias=AliasChoices("MDHUB_SNAPSHOT_AUTOCORRECT", "snapshot_autocorrect"),
     )
+    snapshot_heal: Literal["off", "detect", "repair"] = Field(
+        default="repair",
+        validation_alias=AliasChoices("MDHUB_SNAPSHOT_HEAL", "snapshot_heal"),
+    )
+    snapshot_heal_from: date = Field(
+        default=date(2025, 10, 29),
+        validation_alias=AliasChoices("MDHUB_SNAPSHOT_HEAL_FROM", "snapshot_heal_from"),
+    )
+    snapshot_heal_window: str = Field(
+        default="21:00-06:00",
+        validation_alias=AliasChoices("MDHUB_SNAPSHOT_HEAL_WINDOW", "snapshot_heal_window"),
+    )
+    snapshot_heal_max_per_run: int = Field(
+        default=10,
+        ge=1,
+        le=200,
+        validation_alias=AliasChoices(
+            "MDHUB_SNAPSHOT_HEAL_MAX_PER_RUN", "snapshot_heal_max_per_run"
+        ),
+    )
+    snapshot_heal_pause_s: int = Field(
+        default=20,
+        ge=0,
+        le=600,
+        validation_alias=AliasChoices("MDHUB_SNAPSHOT_HEAL_PAUSE_S", "snapshot_heal_pause_s"),
+    )
     bonds_eod_prelim_min_rows: int = Field(
         default=1000,
         ge=1,
@@ -389,6 +443,12 @@ class Settings(BaseSettings):
     @classmethod
     def _valid_window(cls, value: str) -> str:
         parse_window(value)
+        return value.strip()
+
+    @field_validator("snapshot_heal_window")
+    @classmethod
+    def _valid_heal_window(cls, value: str) -> str:
+        parse_clock_window(value)
         return value.strip()
 
     @field_validator("snapshot_intraday_minutes")

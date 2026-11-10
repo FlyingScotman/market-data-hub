@@ -25,7 +25,7 @@ EXPECTED_JOBS = {
     "proxy_curves",
     "swaps_ratescalcs", "swaps_otc_monitor", "quality", "backfill_worker",
     "maintenance", "source_probe",
-    "snapshot_static", "snapshot_market",
+    "snapshot_static", "snapshot_market", "snapshot_heal",
 }  # fmt: skip
 
 
