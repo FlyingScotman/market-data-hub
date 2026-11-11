@@ -14,8 +14,11 @@ is only reported ``no rows``, which is why a new dataset used to wait for a manu
 
 **Load.** The head ``[history_start, earliest stored day - 1]`` is queued in ``ops.backfill_task``
 (source :data:`HISTORY_SOURCE`, chunks of ``max_task_days``) - one set of tasks per backfill job
-(datasets sharing a job share its tasks). The ordinary ``backfill_worker`` runs them, after the
-tasks of every other source and with the same lock yielding, so live gap repairs are not delayed.
+over the **union** of the heads of its datasets (they share the tasks; a stretch that is stored
+between two heads is not downloaded again). A dataset's load is judged only when every task of its
+job has finished, and a task is matched to a dataset by overlap with its head. The ordinary
+``backfill_worker`` runs them, after the tasks of every other source and with the same lock
+yielding, so live gap repairs are not delayed.
 As far as each source allows: a source that has nothing for a day leaves it empty. A task that
 failed is queued again once, :data:`RETRY_AFTER` later (:data:`MAX_ROUNDS` rounds in all); what is
 still missing then stays missing and is noted. The worker's autocorrection of ``eod_final`` cuts
@@ -52,6 +55,7 @@ from mdhub.quality.checks import (
     job_datasets,
     max_task_days,
     queue_range,
+    split_range,
 )
 from mdhub.snapshot.readiness import SNAPSHOT_INPUT_JOBS
 
@@ -62,13 +66,18 @@ __all__ = [
     "MAX_ROUNDS",
     "REISSUE_DAYS",
     "RETRY_AFTER",
+    "Head",
     "HistoryLoad",
+    "JobPlan",
     "active",
     "detect_and_queue",
+    "find_heads",
     "finish_pass",
     "head_range",
     "load_rows",
+    "merge_ranges",
     "pass_datasets",
+    "plan_heads",
     "progress",
     "start_pass",
 ]
@@ -146,20 +155,56 @@ def head_range(
     return (spec.history_start, days[-1], first) if days else None
 
 
-def detect_and_queue(
+@dataclass(frozen=True, slots=True)
+class Head:
+    """The missing head of the history of one new dataset."""
+
+    spec: DatasetSpec
+    first_day: date
+    last_day: date
+    first_stored: date | None
+    """Earliest stored day (``None``: no rows)."""
+
+
+@dataclass(frozen=True, slots=True)
+class JobPlan:
+    """What the heads of the datasets of one backfill job need: the union of their ranges (not
+    their hull: years that are stored between two tails are not downloaded again), split into
+    tasks of the job's shortest ``max_task_days``. The tasks are queued under ``rep``."""
+
+    job: str
+    rep: DatasetSpec
+    heads: tuple[Head, ...]
+    ranges: tuple[tuple[date, date], ...]
+    tasks: tuple[tuple[date, date], ...]
+
+    def tasks_of(self, head: Head) -> int:
+        """Number of tasks that cover (part of) the head of one dataset."""
+        return sum(a <= head.last_day and b >= head.first_day for a, b in self.tasks)
+
+
+def merge_ranges(ranges: Collection[tuple[date, date]]) -> list[tuple[date, date]]:
+    """Union of inclusive day ranges (overlapping or adjacent ones are merged)."""
+    out: list[tuple[date, date]] = []
+    for lo, hi in sorted(ranges):
+        if out and lo <= out[-1][1] + timedelta(days=1):
+            out[-1] = (out[-1][0], max(out[-1][1], hi))
+        else:
+            out.append((lo, hi))
+    return out
+
+
+def find_heads(
     conn: DictConnection,
     *,
     today: date,
     calendar: CalendarPredicate,
-    hub_version: str,
     registry: JobRegistry = REGISTRY,
     only: Collection[str] | None = None,
-) -> list[HistoryLoad]:
-    """Register the datasets that are new (no row yet) and have a missing head of history, and
-    queue their backfill tasks (one set per backfill job, shared by its datasets). Returns the
-    rows created. ``only``: look among these datasets only (manual runs, tests)."""
+) -> list[Head]:
+    """The datasets that are new (no row yet) and have a missing head of history."""
     known = {r.dataset for r in load_rows(conn)}
-    by_job: dict[str, list[tuple[DatasetSpec, date, date, date | None]]] = {}
+    heads: list[Head] = []
     for spec in all_datasets():
         if spec.name in known or (only is not None and spec.name not in only):
             continue
@@ -172,18 +217,47 @@ def detect_and_queue(
             log.exception("history load: %s could not be checked", spec.name)
             continue
         if head is not None:
-            assert spec.backfill_job is not None
-            by_job.setdefault(spec.backfill_job, []).append((spec, *head))
-    created: list[HistoryLoad] = []
+            heads.append(Head(spec, *head))
+    return heads
+
+
+def plan_heads(heads: Collection[Head]) -> list[JobPlan]:
+    """One :class:`JobPlan` per backfill job of ``heads`` (sorted by job name)."""
+    by_job: dict[str, list[Head]] = {}
+    for h in heads:
+        assert h.spec.backfill_job is not None
+        by_job.setdefault(h.spec.backfill_job, []).append(h)
+    plans: list[JobPlan] = []
     for job_name, items in sorted(by_job.items()):
-        lo = min(i[1] for i in items)
-        hi = max(i[2] for i in items)
-        rep = min((i[0] for i in items), key=lambda s: (max_task_days(s), s.name))
-        queued = queue_range(conn, rep, lo, hi, source=HISTORY_SOURCE)
-        for spec, d1, d2, first in items:
+        rep = min((h.spec for h in items), key=lambda s: (max_task_days(s), s.name))
+        ranges = merge_ranges([(h.first_day, h.last_day) for h in items])
+        tasks = tuple(t for lo, hi in ranges for t in split_range(lo, hi, max_task_days(rep)))
+        plans.append(JobPlan(job_name, rep, tuple(items), tuple(ranges), tasks))
+    return plans
+
+
+def detect_and_queue(
+    conn: DictConnection,
+    *,
+    today: date,
+    calendar: CalendarPredicate,
+    hub_version: str,
+    registry: JobRegistry = REGISTRY,
+    only: Collection[str] | None = None,
+) -> list[HistoryLoad]:
+    """Register the datasets that are new (no row yet) and have a missing head of history, and
+    queue their backfill tasks (:class:`JobPlan`: one set per backfill job, shared by its
+    datasets, over the union of their heads). Returns the rows created. ``only``: look among
+    these datasets only (manual runs, tests)."""
+    created: list[HistoryLoad] = []
+    heads = find_heads(conn, today=today, calendar=calendar, registry=registry, only=only)
+    for plan in plan_heads(heads):
+        for lo, hi in plan.ranges:
+            queue_range(conn, plan.rep, lo, hi, source=HISTORY_SOURCE)
+        for h in plan.heads:
             note = (
-                f"loading {d1}..{d2}: {len(queued)} backfill task(s) queued "
-                f"(job {job_name}, shared by {len(items)} dataset(s))"
+                f"loading {h.first_day}..{h.last_day}: {plan.tasks_of(h)} backfill task(s) "
+                f"queued (job {plan.job}, shared by {len(plan.heads)} dataset(s))"
             )
             conn.execute(
                 """
@@ -192,10 +266,29 @@ def detect_and_queue(
                      hub_version, note)
                 VALUES (%s, %s, 'loading', %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING
                 """,
-                (spec.name, job_name, d1, d2, first, hub_version, note),
+                (
+                    h.spec.name,
+                    plan.job,
+                    h.first_day,
+                    h.last_day,
+                    h.first_stored,
+                    hub_version,
+                    note,
+                ),
             )
             created.append(
-                HistoryLoad(spec.name, job_name, "loading", d1, d2, first, None, 1, None, note)
+                HistoryLoad(
+                    h.spec.name,
+                    plan.job,
+                    "loading",
+                    h.first_day,
+                    h.last_day,
+                    h.first_stored,
+                    None,
+                    1,
+                    None,
+                    note,
+                )
             )
     return created
 
@@ -206,7 +299,9 @@ def detect_and_queue(
 def _latest_tasks(
     conn: DictConnection, row: HistoryLoad
 ) -> list[tuple[str, str, dict[str, Any], Any]]:
-    """The newest task of every range of this load: ``(dataset, status, params, done_at)``."""
+    """The newest task of every range that overlaps this load's head: ``(dataset, status, params,
+    done_at)``. Tasks are queued per backfill job over the union of the heads of its datasets (and
+    under one dataset's name), so a task is matched by overlap, not by containment."""
     names = _job_dataset_names(row)
     with conn.cursor(row_factory=tuple_row) as cur:
         return [
@@ -216,7 +311,7 @@ def _latest_tasks(
                 SELECT DISTINCT ON (dataset, params) dataset, status, params, done_at
                 FROM ops.backfill_task
                 WHERE source = %(src)s AND dataset = ANY(%(names)s)
-                  AND params ->> 'date_from' >= %(a)s AND params ->> 'date_to' <= %(b)s
+                  AND params ->> 'date_to' >= %(a)s AND params ->> 'date_from' <= %(b)s
                 ORDER BY dataset, params, id DESC
                 """,
                 {
@@ -227,6 +322,18 @@ def _latest_tasks(
                 },
             ).fetchall()
         ]
+
+
+def _job_open(conn: DictConnection, row: HistoryLoad) -> int:
+    """History tasks of the row's backfill job (any dataset, any range) that are still open: the
+    rows of the job are judged only when the whole job has finished loading."""
+    with conn.cursor(row_factory=tuple_row) as cur:
+        found = cur.execute(
+            "SELECT count(*) FROM ops.backfill_task WHERE source = %s AND dataset = ANY(%s) "
+            "AND status IN ('pending', 'running')",
+            (HISTORY_SOURCE, _job_dataset_names(row)),
+        ).fetchone()
+    return int(found[0]) if found else 0
 
 
 def _job_dataset_names(row: HistoryLoad) -> list[str]:
@@ -257,13 +364,19 @@ def progress(conn: DictConnection, *, now: datetime, requeue: bool = True) -> No
         open_ = [t for t in tasks if t[1] in ("pending", "running")]
         failed = [t for t in tasks if t[1] == "failed"]
         finished = len(tasks) - len(open_) - len(failed)
-        if open_:
+        job_open = _job_open(conn, row)
+        if open_ or job_open:
+            more = (
+                f"; {job_open - len(open_)} more of job {row.backfill_job}"
+                if job_open > len(open_)
+                else ""
+            )
             _set(
                 conn,
                 row.dataset,
                 f"loading {row.history_from}..{row.head_to}: {len(tasks) - len(open_)} of "
                 f"{len(tasks)} backfill task(s) finished (round {row.load_round}"
-                f"{f', {len(failed)} failed' if failed else ''})",
+                f"{f', {len(failed)} failed' if failed else ''}{more})",
             )
             continue
         last_done = max((t[3] for t in failed if t[3] is not None), default=None)

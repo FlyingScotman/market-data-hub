@@ -77,7 +77,7 @@ def fixed_clock(monkeypatch: pytest.MonkeyPatch) -> list[datetime]:
 
 
 def _heal(settings: Settings, db: Database, **params: Any) -> JobOutcome:
-    # the history load of new datasets has its own tests (test_history_load.py)
+    # the history load of new datasets is tested at the end of this file
     params = {"date_from": FROM.isoformat(), "min_bond_rows": 1, "history": False, **params}
     # the database calendar, as in production (it counts the Saturday 2026-10-17 of the seed as a
     # business day: a working weekend day)
@@ -1227,3 +1227,133 @@ def test_a_dataset_that_cannot_be_checked_does_not_stop_the_others(
     finally:
         REGISTRY.unregister("test_hl_bad")
         unregister_dataset("test_hl_bad")
+
+
+@pytest.fixture
+def shared_job(world: Conn, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[..., Series]]:
+    """Factory of fake datasets that share ONE backfill job (``md.fixing``, one index code each).
+    The job's fake source has history only for the codes made with ``at_source=True`` (from their
+    ``history_start`` on) and loads all of them for every range it is run for."""
+    job = "test_hl_shared"
+    calls: list[tuple[date, date]] = []
+    source_from: dict[str, date] = {}
+    specs: list[str] = []
+    monkeypatch.setattr(history_load, "SNAPSHOT_INPUT_JOBS", frozenset({*SNAPSHOT_INPUT_JOBS, job}))
+    monkeypatch.setattr(backfill, "SNAPSHOT_INPUT_JOBS", frozenset({*SNAPSHOT_INPUT_JOBS, job}))
+
+    def loader(
+        ctx: JobContext, *, date_from: date | None = None, date_to: date | None = None
+    ) -> None:
+        assert date_from is not None and date_to is not None
+        calls.append((date_from, date_to))
+        with ctx.connection() as c, c.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO md.fixing (index_code, fixing_date, source, value) "
+                "VALUES (%s, %s, 'ecb', 1.5) ON CONFLICT DO NOTHING",
+                [
+                    (code, d)
+                    for code, floor in source_from.items()
+                    for d in _weekdays(max(date_from, floor), date_to)
+                ],
+            )
+
+    REGISTRY.register(job, "fake shared history loader", loader)
+
+    def make(code: str, start: date, first_stored: date, *, at_source: bool = True) -> Series:
+        s = Series(code=code, job=job, dataset=f"test_hl_{code.lower()}", calls=calls)
+        if at_source:
+            source_from[code] = start
+        register_dataset(
+            DatasetSpec(
+                name=s.dataset,
+                table="md.fixing",
+                date_column="fixing_date",
+                calendar="MOEX_STOCK",
+                frequency="business_daily",
+                max_lag_days=1,
+                description="t",
+                backfill_job=job,
+                history_start=start,
+                where=f"index_code = '{code}'",
+            )
+        )
+        specs.append(s.dataset)
+        for d in _weekdays(first_stored, date(2026, 10, 13)):
+            world.execute(
+                "INSERT INTO md.fixing (index_code, fixing_date, source, value) "
+                "VALUES (%s, %s, 'ecb', 1.5)",
+                (code, d),
+            )
+        world.commit()
+        return s
+
+    try:
+        yield make
+    finally:
+        REGISTRY.unregister(job)
+        for name in specs:
+            unregister_dataset(name)
+
+
+def test_datasets_sharing_a_job_are_judged_when_the_whole_job_has_loaded(
+    world: Conn,
+    settings: Settings,
+    db: Database,
+    shared_job: Callable[..., Series],
+) -> None:
+    """One task set serves both datasets; B (shorter, later head) must wait for it, and must not
+    be closed 'no rows were added' before the shared task loads its rows. A is empty at the
+    source."""
+    a = shared_job("TESTSHA", date(2026, 10, 1), FIRST_STORED, at_source=False)
+    b = shared_job("TESTSHB", date(2026, 10, 6), FIRST_STORED)
+    _heal(settings, db)
+    base = _eod_final(world)
+    _hl(settings, db, [a, b])
+    # one task set over the union of both heads (the head of B lies inside the head of A)
+    assert [(t["a"], t["b"]) for t in _tasks(world, a.dataset)] == [("2026-10-01", "2026-10-09")]
+    for s in (a, b):
+        assert _history_row(world, s.dataset)["status"] == "loading"
+        assert "1 backfill task" in _history_row(world, s.dataset)["note"]
+    # still loading: the next runs do not close the shorter head 'done' on an empty task list
+    out = _hl(settings, db, [a, b])
+    assert out.result["history"]["loading"] == 2
+    assert _tasks(world, b.dataset) == []  # the tasks are queued under one dataset's name
+
+    _work(settings, db)
+    assert a.calls == [(date(2026, 10, 1), date(2026, 10, 9))]  # one download for both
+    out = _hl(settings, db, [a, b])
+    row_a, row_b = _history_row(world, a.dataset), _history_row(world, b.dataset)
+    assert row_a["status"] == "done" and "no rows were added" in row_a["note"]
+    assert row_a["pass_started_at"] is None
+    # B gained its rows (from 10-06): it is reissued, not closed with "nothing added"
+    assert row_b["first_after"] == date(2026, 10, 6)
+    assert row_b["status"] == "done" and row_b["pass_started_at"] is not None
+    assert out.result["history"]["pass_started"] == {"datasets": [b.dataset], "cuts": 3}
+    assert all(len(v) == 2 for v in _eod_final(world).values()) and _eod_final(world) != base
+
+
+def test_the_load_of_datasets_sharing_a_job_skips_the_years_between_their_heads(
+    world: Conn,
+    settings: Settings,
+    db: Database,
+    shared_job: Callable[..., Series],
+) -> None:
+    """Heads 10-01..10-02 (A) and 10-08..10-09 (B): two tasks, not the hull 10-01..10-09 that
+    would download the stored days in between again."""
+    a = shared_job("TESTSHA", date(2026, 10, 1), date(2026, 10, 5))
+    b = shared_job("TESTSHB", date(2026, 10, 8), FIRST_STORED)
+    _hl(settings, db, [a, b])
+    assert [(t["a"], t["b"]) for t in _tasks(world, a.dataset)] == [
+        ("2026-10-01", "2026-10-02"),
+        ("2026-10-08", "2026-10-09"),
+    ]
+    assert "1 backfill task" in _history_row(world, a.dataset)["note"]
+    assert "1 backfill task" in _history_row(world, b.dataset)["note"]
+    _work(settings, db)
+    assert sorted(a.calls) == [
+        (date(2026, 10, 1), date(2026, 10, 2)),
+        (date(2026, 10, 8), date(2026, 10, 9)),
+    ]
+    _hl(settings, db, [a, b])
+    assert _history_row(world, a.dataset)["first_after"] == date(2026, 10, 1)
+    assert _history_row(world, b.dataset)["first_after"] == date(2026, 10, 8)
