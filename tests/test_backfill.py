@@ -43,6 +43,8 @@ class Source:
     """Behaviour of the fake backfill job."""
 
     fail: bool = False
+    error: str = "source down"
+    """The message of the failure."""
     calls: list[tuple[date | None, date | None]] = field(default_factory=list)
     no_data: set[date] = field(default_factory=lambda: {HOLIDAY})
 
@@ -66,7 +68,7 @@ def source(conn: Conn) -> Iterator[Source]:
     ) -> None:
         src.calls.append((date_from, date_to))
         if src.fail:
-            raise RuntimeError("source down")
+            raise RuntimeError(src.error)
         assert date_from is not None and date_to is not None
         with ctx.connection() as c, c.cursor() as cur:
             cur.executemany(

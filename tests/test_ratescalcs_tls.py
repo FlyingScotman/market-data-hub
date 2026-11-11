@@ -26,7 +26,7 @@ from pydantic import ValidationError
 import mdhub.core.http as http_mod
 import mdhub.loaders.swaps  # noqa: F401 - registers the job
 import mdhub.quality.source_probe as sp
-from mdhub.config import Settings
+from mdhub.config import BASE_URL_PLACEHOLDER, SERVER_NAME_PLACEHOLDER, Settings
 from mdhub.core.errors import MdhubError
 from mdhub.core.http import HttpClient, RateLimiter, TransportFailure
 from mdhub.db.pool import Database
@@ -265,7 +265,8 @@ def test_the_source_probe_uses_the_name_and_shows_a_mismatch_in_plain_words(
     )
     row = _probe_row(conn)
     assert row["ok"] is True and row["http_status"] == 200 and row["error"] is None
-    assert row["endpoint"] == tls_site.base + rc.SNAPSHOT_PATH
+    # the address is not stored (the read-only role reads ops.source_probe): the page stays
+    assert row["endpoint"] == BASE_URL_PLACEHOLDER + rc.SNAPSHOT_PATH
     assert set(tls_site.sni) == {NAME}
 
     run_job(
@@ -277,9 +278,8 @@ def test_the_source_probe_uses_the_name_and_shows_a_mismatch_in_plain_words(
     )
     row = _probe_row(conn)
     assert row["ok"] is False and row["http_status"] is None
-    assert (
-        "TLS certificate check failed" in row["error"] and "other.example.invalid" in row["error"]
-    )
+    assert "TLS certificate check failed" in row["error"]
+    assert SERVER_NAME_PLACEHOLDER in row["error"] and "other.example.invalid" not in row["error"]
 
     run_job(
         "source_probe",

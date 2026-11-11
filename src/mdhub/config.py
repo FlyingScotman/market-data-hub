@@ -119,13 +119,16 @@ collection schedule (DESIGN §6, §11) and can be changed without a code change.
 
 from __future__ import annotations
 
+import contextlib
+import functools
 import ipaddress
 import re
 from datetime import date, datetime, time, timedelta
 from typing import Any, Final, Literal
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import httpx
 from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -201,6 +204,69 @@ def parse_base_url(value: str, name: str) -> str:
     if "?" in text or "#" in text:
         raise ValueError(f"{name}: no query string or fragment in the URL")
     return text.rstrip("/")
+
+
+def _name_forms(name: str) -> set[str]:
+    """``name`` and its punycode / unicode spelling (an IDN host shows up as either)."""
+    forms = {name} if name else set()
+    with contextlib.suppress(UnicodeError):  # not an IDN name
+        forms.add(name.encode("idna").decode("ascii"))
+    with contextlib.suppress(UnicodeError):
+        forms.add(name.encode("ascii").decode("idna"))
+    return forms
+
+
+@functools.lru_cache(maxsize=8)
+def _address_forms(base_url: str) -> frozenset[str]:
+    """Every spelling of the Ratescalcs base URL that a text can carry (see
+    :meth:`Settings.hidden_addresses`)."""
+    parts = urlsplit(base_url)
+    try:
+        url: httpx.URL | None = httpx.URL(base_url)
+    except httpx.InvalidURL:
+        url = None
+    schemes = {parts.scheme.lower()}
+    hosts = {parts.hostname or ""}
+    ports: set[int | None] = {parts.port}
+    netlocs = {parts.netloc}
+    paths = {parts.path}
+    if url is not None:
+        schemes.add(url.scheme)
+        hosts.add(url.host)
+        ports.add(url.port)
+        wire = url.netloc.decode("ascii")  # punycode, no default port
+        netlocs.add(wire)
+        hosts.add(urlsplit("//" + wire).hostname or "")
+        paths.update((url.path, url.raw_path.decode("ascii")))
+    for scheme in tuple(schemes):
+        ports.add({"http": 80, "https": 443}.get(scheme))
+    for host in tuple(hosts):
+        hosts |= _name_forms(host)
+    for host in tuple(h for h in hosts if h):
+        try:
+            ip = ipaddress.ip_address(host.strip("[]"))
+        except ValueError:
+            continue
+        hosts |= {ip.compressed, ip.exploded}
+    hosts.discard("")
+    for host in tuple(hosts):  # an IPv6 literal appears in brackets in a URL
+        bracketed = f"[{host}]" if ":" in host else host
+        netlocs.add(bracketed)
+        netlocs.update(f"{bracketed}:{p}" for p in ports if p is not None)
+        if ":" in host:
+            hosts.add(bracketed)
+    prefixes = {unquote(p).rstrip("/") for p in paths} | {p.rstrip("/") for p in paths}
+    prefixes.discard("")
+    netlocs.discard("")
+    forms: set[str] = {base_url.rstrip("/"), *hosts, *netlocs}
+    if url is not None:
+        forms.add(str(url).rstrip("/"))
+    for netloc in netlocs:
+        forms.update(netloc + prefix for prefix in prefixes)
+        forms.update(f"{scheme}://{netloc}" for scheme in schemes)
+        forms.update(f"{scheme}://{netloc}{prefix}" for scheme in schemes for prefix in prefixes)
+    forms.discard("")
+    return frozenset(forms)
 
 
 _SERVER_NAME_RE: Final = re.compile(
@@ -795,16 +861,26 @@ class Settings(BaseSettings):
         return None
 
     def hidden_addresses(self) -> list[tuple[str, str]]:
-        """``(value, placeholder)`` pairs of the configured Ratescalcs address (base URL, host,
-        TLS server name): what must not appear in a text that the read API can serve (job errors,
-        :mod:`mdhub.core.redact`). The full text goes to the log only."""
-        parts = urlsplit(self.ratescalcs_base_url)
+        """``(value, placeholder)`` pairs of the configured Ratescalcs address: what must not
+        appear in a text that the read API (or the read-only role) can serve - job errors, source
+        probe rows, capture URLs, backfill notes; see :func:`mdhub.core.redact.stored_text`. The
+        full text goes to the log only.
+
+        Every spelling that a text can carry: the setting as written, the URL as ``httpx`` writes
+        it (host lower-cased, an IDN host in punycode, the default port dropped, the path
+        percent-encoded), the host in unicode and punycode, an IP address in its compressed and
+        expanded form, with and without the port (also the default port of the scheme); each of
+        them alone and followed by the path prefix, so a host cannot be replaced while ``/prefix``
+        stays visible next to the placeholder. Forms shorter than 4 characters are skipped (too
+        likely to hit unrelated text). No form ends with ``/``: the page path that follows stays.
+        The TLS server name gets its own placeholder."""
         pairs = [
-            (self.ratescalcs_base_url, BASE_URL_PLACEHOLDER),
-            (parts.netloc, BASE_URL_PLACEHOLDER),
-            (parts.hostname or "", BASE_URL_PLACEHOLDER),
-            (self.ratescalcs_tls_server_name or "", SERVER_NAME_PLACEHOLDER),
+            (v, BASE_URL_PLACEHOLDER) for v in sorted(_address_forms(self.ratescalcs_base_url))
         ]
+        pairs.extend(
+            (v, SERVER_NAME_PLACEHOLDER)
+            for v in sorted(_name_forms(self.ratescalcs_tls_server_name or ""))
+        )
         return [(v, ph) for v, ph in pairs if len(v) >= 4]
 
     def api_token_entries(self) -> list[tuple[str, str]]:

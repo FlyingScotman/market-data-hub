@@ -49,7 +49,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date, datetime, timedelta
 from typing import Any, Final
 
@@ -59,7 +59,7 @@ from mdhub.config import Settings, clock_window_start, parse_clock_window
 from mdhub.core.bizday import CalendarPredicate
 from mdhub.core.errors import NOT_CONFIGURED
 from mdhub.core.http import HttpClient
-from mdhub.core.redact import sanitize_text
+from mdhub.core.redact import sanitize_text, stored_text
 from mdhub.core.timeutil import utc_now
 from mdhub.datasets import DatasetSpec, get_dataset
 from mdhub.db.pool import Database
@@ -331,7 +331,7 @@ def run_backfill_range(
         raise
     except Exception as exc:
         err = sanitize_text(f"{type(exc).__name__}: {exc}", settings.secret_values())
-        return RangeOutcome(status="failed", run_id=None, error=err)
+        return RangeOutcome(status="failed", run_id=None, error=stored_text(err, settings))
     if outcome.status not in ("succeeded", "partial"):
         return RangeOutcome(
             status=outcome.status, run_id=outcome.run_id, error=_run_error(db, outcome.run_id)
@@ -458,6 +458,7 @@ def process_task(
             raise JobParamError(f"dataset {spec.name} has no backfill_job")
     except (KeyError, JobParamError) as exc:
         msg = f"unknown dataset {task.dataset!r}" if isinstance(exc, KeyError) else str(exc)
+        msg = stored_text(msg, settings)
         _finish(db, task, "failed", error=msg)
         summary.failed += 1
         entry.update(status="failed", error=msg)
@@ -475,12 +476,19 @@ def process_task(
             http_factory=http_factory,
         )
     except JobParamError as exc:  # job does not accept date_from/date_to: permanent
-        _finish(db, task, "failed", error=str(exc))
+        msg = stored_text(str(exc), settings)
+        _finish(db, task, "failed", error=msg)
         summary.failed += 1
-        entry.update(status="failed", error=str(exc))
+        entry.update(status="failed", error=msg)
         return "failed"
     except Exception as exc:  # e.g. UnknownJobError (loader failed to import): retry
-        res = RangeOutcome(status="failed", run_id=None, error=f"{type(exc).__name__}: {exc}")
+        text = sanitize_text(f"{type(exc).__name__}: {exc}", settings.secret_values())
+        res = RangeOutcome(status="failed", run_id=None, error=text)
+    # Every sink below (ops.backfill_task.last_error, ops.data_gap.note, the summary) is readable
+    # by the read-only role and the notes by the read API (/v1/gaps): the configured address of a
+    # source is replaced by a placeholder in the text once, here; the log has the full text.
+    if res.error is not None:
+        res = replace(res, error=stored_text(res.error, settings))
 
     entry.update(run_id=res.run_id, job_status=res.status)
     if res.status == "partial" and res.remaining_open:

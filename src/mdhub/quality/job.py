@@ -17,6 +17,7 @@ import time
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from mdhub.core.redact import sanitize_text, stored_text
 from mdhub.datasets import DatasetSpec, all_datasets, get_dataset
 from mdhub.jobs import REGISTRY, JobContext, JobParamError, job, run_job
 from mdhub.quality.checks import (
@@ -210,7 +211,10 @@ def catch_up_missed(
         except Exception as exc:
             ctx.logger.exception("catch-up run of %s failed", j.job)
             ctx.run.mark_partial(f"catch-up {j.job}: {type(exc).__name__}")
-            entry.update(status="failed", error=f"{type(exc).__name__}: {exc}"[:300])
+            # this text is stored in ops.quality_report (readable by the read-only role): no
+            # secret, no URL credentials, no configured address; the cut comes last
+            text = sanitize_text(f"{type(exc).__name__}: {exc}", ctx.settings.secret_values())
+            entry.update(status="failed", error=stored_text(text, ctx.settings)[:300])
         else:
             entry.update(status=outcome.status, run_id=outcome.run_id)
         out.append(entry)

@@ -38,10 +38,11 @@ their ``robots.txt``, at most hourly.
 from __future__ import annotations
 
 import base64
+import logging
 import ssl
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from datetime import time as dtime
 from typing import Any, Final
@@ -50,9 +51,9 @@ import httpx
 
 from mdhub.config import Settings
 from mdhub.core.errors import FormatDriftError
-from mdhub.core.http import HttpClient, HttpError, TransportFailure
+from mdhub.core.http import HttpClient, HttpError, TransportFailure, stored_message
 from mdhub.core.iss import APIM_BASE_URL, ISS_BASE_URL
-from mdhub.core.redact import redact_url, sanitize_text
+from mdhub.core.redact import redact_url, sanitize_text, stored_text
 from mdhub.core.timeutil import MSK
 from mdhub.credentials import REGISTRY as CREDENTIALS
 from mdhub.jobs import JobContext, JobParamError, job
@@ -78,6 +79,8 @@ from mdhub.sources import (
 from mdhub.sources.moex_apim import apim_headers
 
 __all__ = ["PROBES", "PROBE_TIMEOUT_S", "ProbeRequest", "ProbeResult", "ProbeSpec", "probe"]
+
+log = logging.getLogger(__name__)
 
 PROBE_TIMEOUT_S: Final = 15.0
 _MAX_ERROR = 500
@@ -262,7 +265,22 @@ def tls_expiry(response: httpx.Response) -> datetime | None:
 
 
 def probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult:
-    """Send ``spec``'s request once and classify the answer (never raises for HTTP errors)."""
+    """Send ``spec``'s request once and classify the answer (never raises for HTTP errors).
+
+    The result is what ``ops.source_probe`` stores, and the read-only role can read that table:
+    the configured address of a source is replaced by a placeholder in ``endpoint`` and ``error``
+    (:func:`~mdhub.core.redact.stored_text`), and the error of Ratescalcs has no text the server
+    chose (:func:`~mdhub.core.http.stored_message`); the log keeps the full text."""
+    result = _probe(http, spec, settings)
+    return replace(
+        result,
+        endpoint=stored_text(result.endpoint, settings),
+        # the address is replaced before the cut: a cut inside it would leave its start
+        error=None if result.error is None else stored_text(result.error, settings)[:_MAX_ERROR],
+    )
+
+
+def _probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult:
     req = spec.build(settings)
     endpoint = redact_url(req.url)
     auth = "n/a" if req.configured is None else "ok" if req.configured else "not_configured"
@@ -272,7 +290,7 @@ def probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult:
             endpoint=endpoint,
             ok=False,
             auth=auth,
-            error=req.problem[:_MAX_ERROR],
+            error=req.problem,
         )
     started = time.perf_counter()
     try:
@@ -287,7 +305,10 @@ def probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult:
     except (HttpError, httpx.HTTPError, OSError) as exc:
         if spec.source == "ratescalcs" and isinstance(exc, TransportFailure):
             exc = ratescalcs.tls_hint(exc, req.tls_server_name)
-        text = sanitize_text(f"{type(exc).__name__}: {exc}", settings.secret_values())
+        if spec.source == "ratescalcs":
+            log.warning("source probe %s failed: %s: %s", spec.source, type(exc).__name__, exc)
+        message = stored_message(exc) if spec.source == "ratescalcs" else str(exc)
+        text = sanitize_text(f"{type(exc).__name__}: {message}", settings.secret_values())
         if req.warning:
             text = f"{text}; {req.warning}"
         return ProbeResult(
@@ -296,7 +317,7 @@ def probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult:
             ok=False,
             auth=auth,
             latency_ms=round((time.perf_counter() - started) * 1000, 1),
-            error=text[:_MAX_ERROR],
+            error=text,
         )
     latency_ms = round((time.perf_counter() - started) * 1000, 1)
     status = response.status_code
@@ -313,7 +334,7 @@ def probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult:
             ok = False
             if isinstance(exc, cbonds.CbondsAuthError):
                 auth = "rejected"
-            error = sanitize_text(str(exc), settings.secret_values())[:_MAX_ERROR]
+            error = sanitize_text(str(exc), settings.secret_values())
     elif req.configured is None:
         ok = 200 <= status < 400
     elif not req.configured:
