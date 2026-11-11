@@ -51,6 +51,7 @@ from psycopg.types.json import Jsonb
 from mdhub.core.capture import record_capture
 from mdhub.core.errors import MdhubError, SourceNotConfigured
 from mdhub.core.http import stored_message
+from mdhub.core.redact import stored_text
 from mdhub.core.timeutil import MSK, utc_now
 from mdhub.core.upsert import UpsertResult, upsert_rows
 from mdhub.datasets import DatasetSpec, register_dataset
@@ -317,7 +318,9 @@ def swaps_ratescalcs(ctx: JobContext) -> dict[str, str]:
                     type(exc).__name__,
                     str(exc)[:1000],
                 )
-                failures.append(f"{endpoint}: {type(exc).__name__}: {stored_message(exc)[:400]}")
+                # the address is replaced before the cut: a cut inside it would leave its start
+                message = stored_text(stored_message(exc), ctx.settings)[:400]
+                failures.append(f"{endpoint}: {type(exc).__name__}: {message}")
                 status[endpoint] = "failed"
     if failures and len(failures) == len(targets):
         raise MdhubError("swaps_ratescalcs: all pages failed: " + "; ".join(failures))

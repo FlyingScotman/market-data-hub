@@ -166,8 +166,11 @@ def job_run(
         error = stored(full)
     except BaseException as exc:
         status = "failed"
-        full = sanitize_text(f"{type(exc).__name__}: {exc}", secrets)[:MAX_ERROR_CHARS]
-        error = stored(full)[:MAX_ERROR_CHARS]
+        # the address is replaced first and the text cut after: a cut inside the address would
+        # leave its start behind
+        sanitized = sanitize_text(f"{type(exc).__name__}: {exc}", secrets)
+        full = sanitized[:MAX_ERROR_CHARS]
+        error = stored(sanitized)[:MAX_ERROR_CHARS]
         _finish(db, run, status, error)
         log.error("job %s run %d failed: %s", job, run.id, full)
         raise
@@ -178,8 +181,9 @@ def job_run(
             error = stored(full)
         elif run._partial:
             status = "partial"
-            full = sanitize_text("; ".join(run._partial), secrets)[:MAX_ERROR_CHARS]
-            error = stored(full)[:MAX_ERROR_CHARS]
+            sanitized = sanitize_text("; ".join(run._partial), secrets)
+            full = sanitized[:MAX_ERROR_CHARS]
+            error = stored(sanitized)[:MAX_ERROR_CHARS]
     _finish(db, run, status, error)
     log.info(
         "job %s run %d %s (inserted=%d updated=%d unchanged=%d)%s",

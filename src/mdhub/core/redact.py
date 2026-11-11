@@ -99,14 +99,24 @@ def hide_values(text: str, pairs: Iterable[tuple[str, str]]) -> str:
     placeholder, ignoring case, longest value first, in one pass (a placeholder is never searched
     again). For texts that are stored where the read API or the read-only role can serve them: the
     configured address of a source must not leave the hub that way (the log keeps the full text)."""
-    placeholders: dict[str, str] = {}
+    entries: dict[str, tuple[str, str]] = {}
     for value, placeholder in sorted(pairs, key=lambda p: len(p[0]), reverse=True):
         if value:
-            placeholders.setdefault(value.lower(), placeholder)
-    if not placeholders:
+            entries.setdefault(value.lower(), (value, placeholder))
+    if not entries:
         return text
-    pattern = re.compile("|".join(re.escape(v) for v in placeholders), re.IGNORECASE)
-    return pattern.sub(lambda m: placeholders[m.group(0).lower()], text)
+    pattern = re.compile("|".join(re.escape(v) for v, _ in entries.values()), re.IGNORECASE)
+
+    def _placeholder(m: re.Match[str]) -> str:
+        # The regex folds case by Unicode rules that ``str.lower`` does not follow (a long s, a
+        # Kelvin sign, a dotted capital I), so the match is looked up by the same rules; a match
+        # that belongs to no value cannot happen, but a stored text must never raise here.
+        for value, placeholder in entries.values():
+            if re.fullmatch(re.escape(value), m.group(0), re.IGNORECASE):
+                return placeholder
+        return REDACTED
+
+    return pattern.sub(_placeholder, text)
 
 
 def stored_text(text: str, settings: Settings | None) -> str:

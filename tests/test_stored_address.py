@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +21,7 @@ import httpx
 import psycopg
 import pytest
 import respx
+from fastapi.testclient import TestClient
 from psycopg import sql
 from psycopg.conninfo import make_conninfo
 
@@ -27,6 +29,8 @@ import mdhub.loaders.swaps
 import mdhub.quality.source_probe  # noqa: F401 - registers the job
 from mdhub.config import BASE_URL_PLACEHOLDER, SERVER_NAME_PLACEHOLDER, Settings
 from mdhub.core.bizday import weekday_calendar
+from mdhub.core.capture import MAX_ERROR_CHARS, job_run
+from mdhub.core.errors import MdhubError
 from mdhub.core.http import (
     EntitlementError,
     HttpClient,
@@ -36,13 +40,19 @@ from mdhub.core.http import (
     stored_message,
 )
 from mdhub.core.redact import hide_values, redact_url, stored_text, stored_url
+from mdhub.core.timeutil import MSK, utc_now
 from mdhub.db.pool import Database
 from mdhub.job_requests import claim_request, run_request
-from mdhub.jobs import JobContext, JobRegistry
+from mdhub.jobs import REGISTRY, JobContext, JobRegistry
 from mdhub.quality.backfill import MAX_ATTEMPTS
+from mdhub.quality.job import catch_up_missed
+from mdhub.quality.report import QualityReport, store_report
+from mdhub.quality.source_probe import _MAX_ERROR, PROBES, probe
+from mdhub.schedule import Rule
 from mdhub.sources import ratescalcs as rc
 from test_backfill import Conn, Source, seed_gaps, source, work  # noqa: F401 - the fixture
-from test_ratescalcs_address import _client, _probe, _s
+from test_ratescalcs_address import _probe, _s
+from test_ratescalcs_address import client as client
 from test_swaps_ratescalcs import _run, _serve
 
 HOST = "198.51.100.7"
@@ -277,6 +287,7 @@ def test_a_failed_backfill_task_does_not_store_or_serve_the_address(
     db_url: str,
     db: Database,
     conn: Conn,
+    client: TestClient,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     source.error = f"cannot reach {BASE}/snapshot: certificate for '{NAME}'"
@@ -295,8 +306,7 @@ def test_a_failed_backfill_task_does_not_store_or_serve_the_address(
     notes = conn.execute("SELECT DISTINCT note FROM ops.data_gap WHERE status = 'open'").fetchall()
     assert len(notes) == 1 and "failed after" in notes[0]["note"]
     assert BASE_URL_PLACEHOLDER in notes[0]["note"]
-    with next(_client(db_url)) as client:
-        served = client.get("/v1/gaps", headers={"Authorization": "Bearer tok-alpha-123"}).text
+    served = client.get("/v1/gaps", headers={"Authorization": "Bearer tok-alpha-123"}).text
     assert "failed after" in served and BASE_URL_PLACEHOLDER in served
     assert not [t for t in CONFIGURED if t.lower() in served.lower()]
     assert leaks(db_url, conn) == []
@@ -388,6 +398,41 @@ def test_the_tls_server_name_is_hidden_in_unicode_and_punycode() -> None:
         )
 
 
+SPELLED = "<X>"
+
+
+@pytest.mark.parametrize(
+    ("value", "text"),
+    [
+        ("ratescalcs.example.invalid", "see ratescalc\u017f.example.invalid now"),  # long s
+        ("ratescalcs.example.invalid", "see RATESCALC\u017f.EXAMPLE.INVALID now"),
+        ("istanbul.example.invalid", "see \u0130STANBUL.example.invalid now"),  # dotted I
+        ("\u0130stanbul.example.invalid", "see istanbul.example.invalid now"),
+        ("stra\u00dfe.example.invalid", "see STRA\u1e9eE.example.invalid now"),  # sharp s
+        ("STRA\u1e9eE.example.invalid", "see stra\u00dfe.example.invalid now"),
+        ("kelvin.example.invalid", "see \u212aELVIN.example.invalid now"),  # Kelvin sign
+        ("\u212aelvin.example.invalid", "see kelvin.example.invalid now"),
+    ],
+)
+def test_hide_values_does_not_raise_for_letters_that_fold_differently_than_lower(
+    value: str, text: str
+) -> None:
+    out = hide_values(text, [(value, SPELLED)])
+    assert out == f"see {SPELLED} now"
+
+
+def test_hide_values_never_raises_whatever_the_text_is() -> None:
+    # every character in every position of the value: the text is hidden or left as it was
+    value = "ratescalcs.example.invalid"
+    codes = [*range(0x2200), *range(0xFB00, 0xFB10), *range(0xFF00, 0xFF60)]
+    for code in codes:
+        char = chr(code)
+        for i in range(len(value)):
+            text = value[:i] + char + value[i + 1 :]
+            assert hide_values(text, [(value, SPELLED)]) in (text, SPELLED), (code, i)
+        assert hide_values(char * 3, [(value, SPELLED)]) == char * 3
+
+
 def test_hide_values_is_one_pass() -> None:
     # a placeholder is never searched again: a value inside a placeholder does not change it
     assert hide_values("a b", [("a", "<b>"), ("b", "<a>")]) == "<b> <a>"
@@ -452,3 +497,117 @@ def test_the_job_error_has_the_status_but_no_error_page_and_no_redirect_target(
 def test_the_message_of_a_status_error_still_has_the_page_for_the_log() -> None:
     err = HttpStatusError(404, url="https://iss.example/x", body_snippet="no such board")
     assert str(err) == "HTTP 404 for https://iss.example/x: no such board"
+
+
+# ------------------------------------------------- the cut comes after the replacement (step 5)
+
+FRAGMENT = HOST.rsplit(".", 2)[0]  # "198.51": the start of the host, what a cut inside it leaves
+CUT_INSIDE = len("https://198.51.")  # characters of the address that are before the cut
+CUT_PLACEHOLDER = BASE_URL_PLACEHOLDER[:CUT_INSIDE]  # what is left of the placeholder at the cut
+
+
+def test_the_cut_of_a_job_error_does_not_leave_the_start_of_the_address(
+    db_url: str, db: Database, conn: Conn
+) -> None:
+    s = _settings(db_url)
+    pad = "x" * (MAX_ERROR_CHARS - CUT_INSIDE - len("RuntimeError: "))
+    with pytest.raises(RuntimeError), job_run(db, "cut_failed", settings=s):
+        raise RuntimeError(f"{pad}{BASE}/snapshot, then more text")
+    with job_run(db, "cut_partial", settings=s) as run:
+        run.mark_partial(pad + " ".join([BASE, "and more"]))
+    rows = conn.execute(
+        "SELECT job, status, error FROM ops.job_run WHERE job LIKE 'cut\\_%' ORDER BY job"
+    ).fetchall()
+    assert [(r["job"], r["status"]) for r in rows] == [
+        ("cut_failed", "failed"),
+        ("cut_partial", "partial"),
+    ]
+    for row in rows:
+        assert "xxxxxxxx" in row["error"] and len(row["error"]) <= MAX_ERROR_CHARS
+        assert FRAGMENT not in row["error"], row["job"]
+        assert CUT_PLACEHOLDER in row["error"], row["job"]
+    assert leaks(db_url, conn, (*SECRET, FRAGMENT)) == []
+
+
+def test_the_cut_of_a_loader_failure_does_not_leave_the_start_of_the_address(
+    db_url: str, db: Database, conn: Conn, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    pad = "x" * (400 - CUT_INSIDE)
+
+    def fetch(*_a: Any, **_k: Any) -> Any:
+        raise MdhubError(f"{pad}{BASE}/snapshot")
+
+    monkeypatch.setattr(rc, "fetch", fetch)
+    with pytest.raises(MdhubError, match="all pages failed"):
+        _run(_settings(db_url), db)
+    row = conn.execute(
+        "SELECT error FROM ops.job_run WHERE job = 'swaps_ratescalcs' ORDER BY id DESC"
+    ).fetchone()
+    assert row is not None and "MdhubError: xxx" in row["error"]
+    assert FRAGMENT not in row["error"] and CUT_PLACEHOLDER in row["error"]
+
+
+def test_the_cut_of_a_probe_error_does_not_leave_the_start_of_the_address(
+    db_url: str,
+) -> None:
+    class Down:
+        def request(self, *_a: Any, **_k: Any) -> Any:
+            raise OSError(pad + BASE + "/snapshot")
+
+    pad = "x" * (_MAX_ERROR - CUT_INSIDE - len("OSError: "))
+    spec = next(p for p in PROBES if p.source == "ratescalcs")
+    result = probe(Down(), spec, _settings(db_url))  # type: ignore[arg-type]
+    assert result.error is not None and len(result.error) <= _MAX_ERROR
+    assert result.error.startswith("OSError: xxx")
+    assert FRAGMENT not in result.error and CUT_PLACEHOLDER in result.error
+
+
+# ------------------------------------------------------------------ the catch-up run (step 5)
+
+
+def test_a_failed_catch_up_run_does_not_store_the_address_or_a_secret_in_the_report(
+    db_url: str, db: Database, conn: Conn
+) -> None:
+    password = "pw-catch-up-4711"
+    s = _settings(db_url, ratescalc_password=password)
+
+    def loader(
+        ctx: JobContext, *, mode: str = "final", date_from: Any = None, date_to: Any = None
+    ) -> None:
+        raise RuntimeError(f"cannot reach {BASE}/snapshot as u-test:{password}, valid for '{NAME}'")
+
+    class Run:
+        id = 0
+
+        def mark_partial(self, _reason: str) -> None:
+            pass
+
+    class Health:
+        job = "sa_catch_up"
+        missed_by_lock = True
+        last_expected_at = utc_now().astimezone(MSK) - timedelta(days=3)
+        expected_rule = Rule(cron="0 3 * * *", params={"mode": "final"}, days="all")
+
+    REGISTRY.register("sa_catch_up", "fails", loader)
+    try:
+        ctx = JobContext(
+            settings=s,
+            db=db,
+            run=Run(),  # type: ignore[arg-type]
+            job="quality",
+            params={},
+            logger=logging.getLogger("t"),
+        )
+        done = catch_up_missed(ctx, [Health()], lock_wait_s=1)  # type: ignore[list-item]
+    finally:
+        REGISTRY.unregister("sa_catch_up")
+    assert [e["status"] for e in done] == ["failed"]
+    assert "cannot reach" in done[0]["error"] and len(done[0]["error"]) <= 300
+    run = conn.execute("INSERT INTO ops.job_run (job) VALUES ('quality') RETURNING id").fetchone()
+    assert run is not None
+    store_report(conn, QualityReport(as_of=utc_now().date(), run_id=run["id"], catch_up=done))
+    conn.commit()
+    stored = conn.execute("SELECT report::text AS t FROM ops.quality_report").fetchone()
+    assert stored is not None and "cannot reach" in stored["t"]
+    assert BASE_URL_PLACEHOLDER in stored["t"]
+    assert leaks(db_url, conn, (*SECRET, password)) == []

@@ -273,7 +273,8 @@ def probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult:
     return replace(
         result,
         endpoint=stored_text(result.endpoint, settings),
-        error=None if result.error is None else stored_text(result.error, settings),
+        # the address is replaced before the cut: a cut inside it would leave its start
+        error=None if result.error is None else stored_text(result.error, settings)[:_MAX_ERROR],
     )
 
 
@@ -287,7 +288,7 @@ def _probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult
             endpoint=endpoint,
             ok=False,
             auth=auth,
-            error=req.problem[:_MAX_ERROR],
+            error=req.problem,
         )
     started = time.perf_counter()
     try:
@@ -314,7 +315,7 @@ def _probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult
             ok=False,
             auth=auth,
             latency_ms=round((time.perf_counter() - started) * 1000, 1),
-            error=text[:_MAX_ERROR],
+            error=text,
         )
     latency_ms = round((time.perf_counter() - started) * 1000, 1)
     status = response.status_code
@@ -331,7 +332,7 @@ def _probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult
             ok = False
             if isinstance(exc, cbonds.CbondsAuthError):
                 auth = "rejected"
-            error = sanitize_text(str(exc), settings.secret_values())[:_MAX_ERROR]
+            error = sanitize_text(str(exc), settings.secret_values())
     elif req.configured is None:
         ok = 200 <= status < 400
     elif not req.configured:

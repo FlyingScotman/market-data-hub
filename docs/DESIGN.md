@@ -353,9 +353,11 @@ prefix replaced by `<MDHUB_RATESCALCS_BASE_URL>`, and the server name by `<serve
 path stays: `<MDHUB_RATESCALCS_BASE_URL>/snapshot`). The columns are `ops.job_run.error`,
 `ops.raw_capture.url_redacted`, `ops.source_probe.endpoint` and `.error`, `ops.job_request.error`,
 `ops.backfill_task.last_error` and `ops.data_gap.note`; the default public address is replaced the
-same way. The stored error of a Ratescalcs request has no text that the server chose either: the
-status (`HTTP 503 for <...>/snapshot`) without the start of the error page, and "refusing cross-host
-redirect from <...>" without the target (`HttpError.stored_message`); the log has both. A test
+same way. The stored error of a Ratescalcs request does not keep the error page (the body of the
+answer) or the target of a redirect: the status (`HTTP 503 for <...>/snapshot`) without the start of
+the error page, and "refusing cross-host redirect from <...>" without the target
+(`HttpError.stored_message`); the log has both. Values from an answer that was read (the
+`FormatDriftError` message, a content type) can be in the stored error; they carry no address. A test
 (`tests/test_stored_address.py`) reads every column of every table and view that the read-only role
 can read, after a load, a probe, a console request and a backfill task, and looks for the address.
 The other sources keep the text of their errors as it was. The console shows the same placeholders:
