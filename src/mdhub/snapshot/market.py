@@ -18,6 +18,7 @@ Curve quote sets of proxy datasets (government par yields, ``meta.proxy``) carry
 
 from __future__ import annotations
 
+import logging
 from collections import Counter, defaultdict
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -36,6 +37,16 @@ from mdhub.snapshot.build import (
     json_decimal,
     sorted_labels,
 )
+from mdhub.snapshot.carry import (
+    CARRY_LABEL,
+    DEFAULT_CARRY_DATASETS,
+    DEFAULT_CARRY_MAX_AGE,
+    CarryRule,
+    latest_source_day,
+    working_days_between,
+)
+from mdhub.snapshot.carry import marker as carry_marker
+from mdhub.snapshot.carry import summary_item as carry_summary
 from mdhub.sources.moex_market import INDEX_GROUPS
 
 __all__ = [
@@ -58,6 +69,8 @@ __all__ = [
     "rusfar_unit",
     "settlement_calendars",
 ]
+
+log = logging.getLogger(__name__)
 
 EXPECTED_CURVES: Final = (
     ("otc_monitor", "cny_ruonia_xccy"),
@@ -158,6 +171,13 @@ class MarketParams:
     Recorded in the coverage of ``curve_quote_sets``."""
     cpi_from: date = DEFAULT_CPI_FROM
     """``cpi``: first month of the CPI history (contract 1.5, H10)."""
+    curve_carry_datasets: tuple[str, ...] = DEFAULT_CARRY_DATASETS
+    """Curves taken from the latest previous day that has them when no source delivered them on
+    the cut's business date, flagged (contract 1.7, :mod:`mdhub.snapshot.carry`;
+    ``MDHUB_CURVE_CARRY_DATASETS``). Empty = no carry."""
+    curve_carry_max_age: int = DEFAULT_CARRY_MAX_AGE
+    """Working days after which the marker says ``age_limit_exceeded`` (the curve is still
+    served; ``MDHUB_CURVE_CARRY_MAX_AGE_DAYS``)."""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -495,16 +515,11 @@ def _bond_quotes_intraday(
 # ---------------------------------------------------------------------------- curves
 
 
-def _curve_sets(
-    conn: DictConnection,
-    t: datetime,
-    d: date,
-    prov: Provenance,
-    *,
-    eod_cutoff: str | None = None,
-) -> Dataset:
-    """Quote sets of ``d`` per (source, dataset) known at ``t``: EOD cuts (``eod_cutoff``) by
-    the curve EOD rule (:func:`curve_eod_order`), intraday cuts the latest."""
+def _day_snapshots(
+    conn: DictConnection, t: datetime, d: date, eod_cutoff: str | None
+) -> tuple[list[dict[str, Any]], dict[int, list[dict[str, Any]]]]:
+    """The quote-set snapshots of ``d`` per (source, dataset) known at ``t`` (EOD cuts: the curve
+    EOD rule with ``eod_cutoff``; intraday: the latest) and their quotes per snapshot id."""
     order = curve_eod_order("s") if eod_cutoff is not None else "s.fetched_at DESC, s.id DESC"
     snaps = conn.execute(
         """
@@ -523,11 +538,40 @@ def _curve_sets(
             {"ids": [s["id"] for s in snaps]},
         ).fetchall():
             quotes[q["snapshot_id"]].append(q)
-    out = []
+    return snaps, quotes
+
+
+def _curve_sets(
+    conn: DictConnection,
+    t: datetime,
+    d: date,
+    prov: Provenance,
+    *,
+    eod_cutoff: str | None = None,
+    carry: CarryRule | None = None,
+    calendar_t: datetime | None = None,
+) -> tuple[Dataset, list[dict[str, Any]]]:
+    """Quote sets of ``d`` per (source, dataset) known at ``t``: EOD cuts (``eod_cutoff``) by
+    the curve EOD rule (:func:`curve_eod_order`), intraday cuts the latest.
+
+    ``carry``: a curve of the carried set that no source delivered on ``d`` is taken, flagged,
+    from the latest previous day that has it (:mod:`mdhub.snapshot.carry`; ``calendar_t`` = the
+    calendar version for the age in working days). Returns the dataset and the snapshot-level
+    summary of the carried curves (empty when nothing was carried)."""
+    snaps, quotes = _day_snapshots(conn, t, d, eod_cutoff)
+    present = {(s["source"], s["dataset"]) for s in snaps}
+    present_datasets = {ds for _, ds in present}
+    without_source = [ds for ds in REQUIRED_CURVE_DATASETS if ds not in present_datasets]
+    out: list[dict[str, Any]] = []
     stale: list[str] = []
-    for s in snaps:
+    carried: list[dict[str, Any]] = []
+
+    def add(s: dict[str, Any], rows: list[dict[str, Any]], mark: dict[str, Any] | None) -> None:
         clock_day = s["source_ts"].astimezone(MSK).date() if s["source_ts"] else None
-        off_day = clock_day is not None and clock_day != d
+        # a carried set is off its business date by definition; its own clock is judged against
+        # its source day (the marker says the rest)
+        own_day = s["snapshot_date"] if mark is not None else d
+        off_day = clock_day is not None and clock_day != own_day
         meta = json_decimal(s["meta_text"]) or {}
         proxy = meta.get("proxy") if isinstance(meta, dict) else None
         labels = sorted_labels(
@@ -535,6 +579,7 @@ def _curve_sets(
             "market_closed" if s["market_closed"] else None,
             "source_clock_not_on_business_date" if off_day else None,
             f"proxy_{proxy}" if isinstance(proxy, str) else None,
+            CARRY_LABEL if mark is not None else None,
         )
         series = f"{s['source']}/{s['dataset']}"
         if off_day:
@@ -542,56 +587,84 @@ def _curve_sets(
         if s["dataset"] in _OIS_LIKE and s["quote_basis"] == "mid_only":
             stale.append(f"{series}: mid-only quotes (off-hours mark)")
         prov.add("curve_quote_sets", s["source"], s["run_id"], s["ingested_at"])
-        out.append(
-            {
-                "quote_set_id": s["id"],
-                "dataset": s["dataset"],
-                "source": s["source"],
-                "quote_basis": s["quote_basis"],
-                "fetched_at": s["fetched_at"],
-                "source_ts": s["source_ts"],
-                "snapshot_date": s["snapshot_date"],
-                "market_closed": s["market_closed"],
-                "label": s["label"],
-                "content_sha256": s["content_sha256"],
-                "labels": labels,
-                "quotes": [
-                    {
-                        "tenor": q["tenor"],
-                        "position": q["position"],
-                        "tenor_months": q["tenor_months"],
-                        "tenor_days": q["tenor_days"],
-                        "pillar_date": q["pillar_date"],
-                        "bid_pct": q["bid_pct"],
-                        "mid_pct": q["mid_pct"],
-                        "ask_pct": q["ask_pct"],
-                        "extra": _extra(q["extra_text"]),
-                    }
-                    for q in quotes[s["id"]]
-                ],
-            }
-        )
-    present = {(s["source"], s["dataset"]) for s in snaps}
-    present_datasets = {ds for _, ds in present}
-    without_source = [ds for ds in REQUIRED_CURVE_DATASETS if ds not in present_datasets]
+        row: dict[str, Any] = {
+            "quote_set_id": s["id"],
+            "dataset": s["dataset"],
+            "source": s["source"],
+            "quote_basis": s["quote_basis"],
+            "fetched_at": s["fetched_at"],
+            "source_ts": s["source_ts"],
+            "snapshot_date": s["snapshot_date"],
+            "market_closed": s["market_closed"],
+            "label": s["label"],
+            "content_sha256": s["content_sha256"],
+            "labels": labels,
+            "quotes": [
+                {
+                    "tenor": q["tenor"],
+                    "position": q["position"],
+                    "tenor_months": q["tenor_months"],
+                    "tenor_days": q["tenor_days"],
+                    "pillar_date": q["pillar_date"],
+                    "bid_pct": q["bid_pct"],
+                    "mid_pct": q["mid_pct"],
+                    "ask_pct": q["ask_pct"],
+                    "extra": _extra(q["extra_text"]),
+                }
+                for q in rows
+            ],
+        }
+        if mark is not None:
+            row["carried_forward"] = mark
+        out.append(row)
+
+    for s in snaps:
+        add(s, quotes[s["id"]], None)
+
+    if carry is not None:
+        for ds in sorted(carry.datasets):
+            if ds in present_datasets:
+                continue
+            source_day = latest_source_day(conn, t, d, ds)
+            if source_day is None:
+                continue  # the start of the history: nothing to carry, the curve stays absent
+            age = working_days_between(conn, calendar_t or t, source_day, d)
+            mark = carry_marker(source_day, age, carry.max_age)
+            csnaps, cquotes = _day_snapshots(conn, t, source_day, eod_cutoff)
+            for s in csnaps:
+                if s["dataset"] != ds or not cquotes[s["id"]]:
+                    continue
+                add(s, cquotes[s["id"]], mark)
+                carried.append(carry_summary(out[-1]))
+            over = f"; age limit of {carry.max_age} exceeded" if mark["age_limit_exceeded"] else ""
+            stale.append(
+                f"{ds}: carried forward from {source_day.isoformat()} "
+                f"(age {age} working day(s){over})"
+            )
+            log.warning(
+                "curve %s carried forward into the cut of %s from %s (age %d working day(s))",
+                ds,
+                d,
+                source_day,
+                age,
+            )
+    # the old reason stays for a curve that was carried: no source delivered it on the day
     stale.extend(f"{ds}: no quote set from any source on {d.isoformat()}" for ds in without_source)
-    return Dataset(
-        "curve_quote_sets",
-        out,
-        {
-            "expected": [f"{a}/{b}" for a, b in EXPECTED_CURVES],
-            "present": sorted(f"{a}/{b}" for a, b in present),
-            "missing": [f"{a}/{b}" for a, b in EXPECTED_CURVES if (a, b) not in present],
-            "required_datasets": list(REQUIRED_CURVE_DATASETS),
-            "required_without_any_source": without_source,
-            **(
-                {"eod_rule": CURVE_EOD_RULE, "eod_cutoff_msk": eod_cutoff}
-                if eod_cutoff is not None
-                else {}
-            ),
-        },
-        stale,
-    )
+    coverage: dict[str, Any] = {
+        "expected": [f"{a}/{b}" for a, b in EXPECTED_CURVES],
+        "present": sorted(f"{a}/{b}" for a, b in present),
+        "missing": [f"{a}/{b}" for a, b in EXPECTED_CURVES if (a, b) not in present],
+        "required_datasets": list(REQUIRED_CURVE_DATASETS),
+        "required_without_any_source": without_source,
+        **(
+            {"eod_rule": CURVE_EOD_RULE, "eod_cutoff_msk": eod_cutoff}
+            if eod_cutoff is not None
+            else {}
+        ),
+    }
+    if carried:
+        coverage["carried_forward"] = sorted({c["dataset"] for c in carried})
+    return Dataset("curve_quote_sets", out, coverage, stale), carried
 
 
 def _extra(text: str | None) -> dict[str, Any] | None:
@@ -1388,13 +1461,22 @@ def build_market(
         quotes = Dataset("bond_quotes", [], {"not_in_cut": "intraday"})
         quotes_intraday = _bond_quotes_intraday(conn, t, d, universe, prov, excluded)
     lookback = params.fixing_lookback_days if eod else params.intraday_fixing_lookback_days
+    curve_sets, carried = _curve_sets(
+        conn,
+        t,
+        d,
+        prov,
+        eod_cutoff=params.curve_eod_cutoff if eod else None,
+        carry=CarryRule(params.curve_carry_datasets, params.curve_carry_max_age),
+        calendar_t=static.cut.known_at,
+    )
     settle = _settle_dates(conn, t, d)
     swap_rows: list[dict[str, Any]] = []
     fx_rates = _fx(conn, t, d, params, eod, prov, excluded, settle, swap_rows)
     datasets = [
         quotes,
         quotes_intraday,
-        _curve_sets(conn, t, d, prov, eod_cutoff=params.curve_eod_cutoff if eod else None),
+        curve_sets,
         _zcyc(conn, t, d, eod, prov),
         _fixings(conn, t, d, lookback, params.fx_forward_days, prov, excluded, static.cut.known_at),
         fx_rates,
@@ -1414,8 +1496,19 @@ def build_market(
         parameters={
             **params.as_dict(),
             "expected_curves": [f"{a}/{b}" for a, b in EXPECTED_CURVES],
+            # only in a cut that carried a curve: the rule that was applied (a cut without
+            # a gap is byte for byte what it was before contract 1.7)
+            **(
+                {
+                    "curve_carry_datasets": list(params.curve_carry_datasets),
+                    "curve_carry_max_age_working_days": params.curve_carry_max_age,
+                }
+                if carried
+                else {}
+            ),
         },
         provenance=prov,
         excluded=excluded,
         static_snapshot_id=static_snapshot_id,
+        carried_curves=carried,
     )

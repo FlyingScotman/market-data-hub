@@ -1,7 +1,7 @@
 # market-data-hub — design
 
 Status: living design, first written 2026-10-15 (v0.1) and kept current with `main` (contract
-`market_snapshot/1.6`, 46 migrations; production v0.4.0 = contract 1.5). Owner: FiveLimaGolf. Target: a single VPS that is the
+`market_snapshot/1.7`, 46 migrations; production v0.4.0 = contract 1.5). Owner: FiveLimaGolf. Target: a single VPS that is the
 market data hub for the trading desk backend (trading_desk_monitor + rub-fixed-income-core).
 
 Inputs to this design (audits, 2026-10-15): market-data-store (curves/FX/fixings loaders),
@@ -33,8 +33,11 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
   change of a non-meta column on an existing key writes the previous row image to
   `ops.row_history` (generic trigger) → bitemporal "as known at" reconstruction.
   Identical re-loads are no-ops (no history row, no churn).
-- **Missing ≠ zero ≠ stale.** Never forward-fill. A failed/empty fetch is recorded as a
-  failed run / `ops.data_gap`, never as a value.
+- **Missing ≠ zero ≠ stale.** Never forward-fill silently. A failed/empty fetch is recorded as a
+  failed run / `ops.data_gap`, never as a value. The one exception is an owner decision (2026-11-11):
+  a curve of the carried set (RUONIA OIS, key-rate swaps) that no source stored for the day of a
+  market cut is taken from the latest earlier day and **flagged** in the snapshot (contract 1.7,
+  §11); stored tables are never filled.
 - **Fail closed on format drift.** Parsers validate columns/types and raise; the run is
   marked `failed` with the error; nothing partial is committed for that capture.
 - **Separate clocks.** `source_ts` (source's own time, e.g. UPDATETIME/SYSTIME), `fetched_at`
@@ -455,7 +458,9 @@ The hub's dispatch layer (system ADR-002, doc 02 §3/§6; milestone M1). The des
 only immutable snapshots; the TDM CSV export stays until it does.
 
 **Contract.** JSON Schema and golden fixtures in `schemas/market_snapshot/v1/` (see its
-README; `schema_version` `market_snapshot/1.6` since TDM brief H17: the calendars of RUB swaps and
+README; `schema_version` `market_snapshot/1.7` since market-data-hub#143: curves carried forward
+from the latest earlier day, flagged (`carried_forward` per quote set, `carried_curves` in the
+manifest); 1.6 since TDM brief H17: the calendars of RUB swaps and
 fixings `MOEX_SPFI`, `CBR_RUONIA`, `MOEX_RUSFAR` in `calendars`; 1.5 since package P6 (TDM brief H10-H13): FX value
 dates (`fx_rates.settle_date`, `settlement_calendars`; `md.fx_settle_date` from the selt / CETS
 listings), MOEX FX swaps (`fx_swaps`), FORTS futures (`futures_prices`,
@@ -520,8 +525,15 @@ swaps in `fx_swaps`, before excluded), indicative 14:00/19:00, ECB of [D-7, D] p
 ZCYC, fixings of [D-200, D+7] (floater coupon-period history, TDM HR3; was D-7), FX, the latest
 FX futures quotes of D (1.5), CPI. Coverage (expected/missing curve series, `required_without_any_source` for
 `ruonia_ois`/`key_rate_swap` — stale when a cut has neither source —, latest
-fixing dates, universe without quote) and stale reasons are per dataset in the manifest; no
-forward fill.
+fixing dates, universe without quote) and stale reasons are per dataset in the manifest. No
+forward fill, except the flagged **carried curves** (1.7, `src/mdhub/snapshot/carry.py`): a curve of
+`MDHUB_CURVE_CARRY_DATASETS` (default `ruonia_ois`, `key_rate_swap`) that no source stored on D is
+taken from the latest earlier day that has it - any gap length - with `carried_forward` (source
+day, age in `MOEX_STOCK` working days, reason, age-limit flag from `MDHUB_CURVE_CARRY_MAX_AGE_DAYS`),
+the label `carried_forward`, the manifest list `carried_curves` and the stale reason; at the start
+of the history nothing is carried. `snapshot_heal` reissues a carried `eod_final` once newer data
+of the curve is stored (`docs/SNAPSHOT_HEAL.md`); `GET /v1/carried-curves` and the `quality` report
+list what is carried now.
 
 **Schedule (DEC04 open: defaults, configurable, §7).**
 

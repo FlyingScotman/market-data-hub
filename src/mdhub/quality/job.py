@@ -14,7 +14,7 @@ SQL error) makes the run ``partial``.
 from __future__ import annotations
 
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any
 
 from mdhub.datasets import DatasetSpec, all_datasets, get_dataset
@@ -29,8 +29,14 @@ from mdhub.quality.checks import (
 from mdhub.quality.health import JobHealth, catch_up_params, job_health
 from mdhub.quality.report import QualityReport, store_report
 from mdhub.schedule import SCHEDULED_LOCK_WAIT_S, effective_rules
+from mdhub.snapshot.carry import carried_curves
 
 __all__ = ["catch_up_missed", "quality", "run_quality"]
+
+CARRIED_LOOKBACK_DAYS = 7
+CARRIED_CUTS = ("eod_preliminary", "eod_final")
+"""The report lists the curves carried in the current EOD cuts of the last days (intraday cuts are
+many and short-lived; ``/v1/carried-curves`` lists them too)."""
 
 
 def _select(names: list[str] | None) -> list[DatasetSpec]:
@@ -151,6 +157,14 @@ def run_quality(
             )
         if catch_up:
             report.catch_up = catch_up_missed(ctx, report.jobs)
+    try:
+        with ctx.connection() as conn:
+            report.carried_curves = carried_curves(
+                conn, since=today - timedelta(days=CARRIED_LOOKBACK_DAYS), cut_types=CARRIED_CUTS
+            )
+    except Exception as exc:  # a status extra must not stop the report
+        ctx.logger.exception("quality: carried curves could not be listed")
+        ctx.run.mark_partial(f"carried curves: {type(exc).__name__}")
     with ctx.connection() as conn:
         store_report(conn, report)
     ctx.logger.info("quality: %s", report.summary_line())

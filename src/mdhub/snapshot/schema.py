@@ -27,7 +27,7 @@ __all__ = [
     "validator",
 ]
 
-SCHEMA_VERSION: Final = "market_snapshot/1.6"
+SCHEMA_VERSION: Final = "market_snapshot/1.7"
 """Value of ``schema_version`` written by this hub release."""
 
 BASE_URI: Final = "https://schemas.market-data-hub.invalid/market_snapshot/v1/"

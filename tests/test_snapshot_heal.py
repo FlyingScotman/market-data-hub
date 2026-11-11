@@ -22,6 +22,7 @@ from mdhub.jobs import JobOutcome, discover_jobs, run_job
 from mdhub.snapshot.runner import publish_market_snapshot
 from mdhub.snapshot.static import STATIC_BASIS_AS_OF_DATE
 from test_api_seed import seed
+from test_contract_1_7 import curve
 from test_snapshots import DAY, Conn, _all_snapshots_valid, _bundle, _cut_ts
 
 TODAY = date(2026, 10, 20)  # Tuesday: the previous business day is Monday 10-19
@@ -612,3 +613,164 @@ def test_clock_window_wraps_midnight() -> None:
         Settings(database_url="x", snapshot_heal_window="nonsense")
     with pytest.raises(ValueError, match="snapshot_heal"):
         Settings(database_url="x", snapshot_heal="sometimes")
+
+
+# ---------------------------------------------------- carried curves (contract 1.7, #143)
+
+
+def _doc_of_current(conn: Conn, day: date) -> dict[str, Any]:
+    """The bundle of the current (not superseded) ``eod_final`` cut of ``day``."""
+    row = conn.execute(
+        "SELECT id FROM ops.published_snapshot p WHERE kind = 'market' AND cut_type = 'eod_final' "
+        "AND business_date = %s AND NOT EXISTS (SELECT 1 FROM ops.published_snapshot n "
+        "WHERE n.supersedes = p.id)",
+        (day,),
+    ).fetchone()
+    assert row is not None
+    return _bundle(conn, row["id"])
+
+
+def _carried_of(doc: dict[str, Any]) -> dict[str, str]:
+    """Carried dataset -> source day, of a bundle."""
+    return {c["dataset"]: c["source_day"] for c in doc.get("carried_curves", [])}
+
+
+def test_a_legitimately_carried_cut_is_built_once_and_never_looped_on(
+    world: Conn, settings: Settings, db: Database
+) -> None:
+    """Days whose curves are missing are cut with the curves carried from Monday; nothing newer is
+    stored, so the cuts are not defects: the next runs publish nothing and open no gap."""
+    mon = date(2026, 10, 12)
+    curve(world, "ratescalcs", "key_rate_swap", mon, 1)
+    curve(world, "ratescalcs", "ruonia_ois", mon, 2)
+    world.commit()
+    out = _heal(settings, db)
+    assert out.status == "succeeded", out
+    d13, d14, d15 = QUOTED
+    assert _carried_of(_doc_of_current(world, d13)) == {
+        "key_rate_swap": "2026-10-12",
+        "ruonia_ois": "2026-10-12",
+    }
+    assert _carried_of(_doc_of_current(world, d14)) == _carried_of(_doc_of_current(world, d13))
+    # the seed has ruonia_ois on the 15th: only the key-rate swaps are carried there
+    assert _carried_of(_doc_of_current(world, d15)) == {"key_rate_swap": "2026-10-12"}
+    assert [c["age_working_days"] for c in _doc_of_current(world, d14)["carried_curves"]] == [2, 2]
+
+    before = _count(world)
+    for _ in range(2):
+        again = _heal(settings, db)
+        assert again.status == "skipped" and again.result["built"] == []
+        assert again.result["carried_pending"] == 0
+    assert _count(world) == before
+    assert _gaps(world, heal.CARRIED_GAPS) == {}
+
+
+def test_a_carried_cut_is_reissued_once_when_the_real_data_arrives(
+    world: Conn, settings: Settings, db: Database
+) -> None:
+    mon, wed = date(2026, 10, 12), date(2026, 10, 14)
+    curve(world, "ratescalcs", "key_rate_swap", mon, 1)
+    curve(world, "ratescalcs", "ruonia_ois", mon, 2)
+    world.commit()
+    _heal(settings, db)
+    d13, d14, d15 = QUOTED
+    old = _eod_final(world)
+
+    # the key-rate swaps of Wednesday are imported later
+    real = curve(world, "ratescalcs", "key_rate_swap", wed, 3)
+    world.commit()
+    detected = _heal(settings, db, mode="detect")
+    assert detected.result["carried_pending"] == 2  # the 14th (its own day) and the 15th (newer)
+    gaps = _gaps(world, heal.CARRIED_GAPS)
+    assert sorted(gaps) == [d14, d15] and {st for st, _ in gaps.values()} == {"open"}
+    assert "newer data" in gaps[d14][1]
+    listed = world.execute(
+        "SELECT gap_date FROM ops.v_open_gaps WHERE dataset = %s ORDER BY 1", (heal.CARRIED_GAPS,)
+    ).fetchall()
+    assert [r["gap_date"] for r in listed] == [d14, d15]  # visible in /v1/gaps
+
+    out = _heal(settings, db)
+    assert out.status == "succeeded", out
+    assert [(b["day"], b["status"]) for b in out.result["built"]] == [
+        (d14.isoformat(), "published"),
+        (d15.isoformat(), "published"),
+    ]
+    assert all(b["datasets"] == [heal.CARRIED_GAPS] for b in out.result["built"])
+    # the 13th is untouched; the 14th and the 15th are corrections of their cuts
+    cuts = _eod_final(world)
+    assert cuts[d13] == old[d13]
+    for d in (d14, d15):
+        assert len(cuts[d]) == 2
+        row = world.execute(
+            "SELECT supersedes FROM ops.published_snapshot WHERE id = %s", (cuts[d][1],)
+        ).fetchone()
+        assert row is not None and row["supersedes"] == cuts[d][0]  # the old one stays readable
+    fresh = _doc_of_current(world, d14)
+    (krs,) = [q for q in fresh["data"]["curve_quote_sets"] if q["dataset"] == "key_rate_swap"]
+    assert krs["quote_set_id"] == real and "carried_forward" not in krs
+    assert _carried_of(fresh) == {"ruonia_ois": "2026-10-12"}  # nothing newer for ruonia_ois yet
+    assert _carried_of(_doc_of_current(world, d15)) == {"key_rate_swap": "2026-10-14"}
+    assert all(st == "backfilled" for st, _ in _gaps(world, heal.CARRIED_GAPS).values())
+    assert _gaps(world, heal.CARRIED_GAPS)[d14][1].startswith("reissued: snapshot")
+
+    # a second run is a no-op: the remaining carried cuts are legitimate
+    before = _count(world)
+    again = _heal(settings, db)
+    assert again.status == "skipped" and again.result["built"] == []
+    assert _count(world) == before
+
+
+def test_a_cut_that_stays_outdated_after_a_rebuild_is_not_retried(
+    world: Conn, settings: Settings, db: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The guard against a loop: if a rebuild leaves the cut carrying a curve for which newer data
+    is stored (it cannot with the real builder), the gap is closed ``unfillable`` and not tried
+    again."""
+    from types import SimpleNamespace
+
+    mon = date(2026, 10, 12)
+    curve(world, "ratescalcs", "key_rate_swap", mon, 1)
+    world.commit()
+    _heal(settings, db)
+    curve(world, "ratescalcs", "key_rate_swap", date(2026, 10, 14), 2)
+    world.commit()
+    calls: list[date] = []
+
+    def fake_publish(*_a: Any, **kw: Any) -> Any:
+        calls.append(kw["business_date"])
+        return SimpleNamespace(
+            market=SimpleNamespace(status="unchanged", id="m"), static=SimpleNamespace(id="s")
+        )
+
+    monkeypatch.setattr(heal, "publish_market_snapshot", fake_publish)
+    out = _heal(settings, db)
+    assert sorted(calls) == [date(2026, 10, 14), date(2026, 10, 15)]
+    assert out.status == "succeeded"
+    gaps = _gaps(world, heal.CARRIED_GAPS)
+    assert {st for st, _ in gaps.values()} == {"unfillable"}
+    assert "carrying a curve for which newer data is stored" in gaps[date(2026, 10, 14)][1]
+    calls.clear()
+    again = _heal(settings, db)
+    assert calls == [] and again.result["built"] == []
+
+
+def test_a_cut_on_an_old_static_that_also_carries_is_rebuilt_once(
+    world: Conn, settings: Settings, db: Database
+) -> None:
+    """Both defects on one cut: one rebuild, both gaps closed."""
+    first = curve(world, "ratescalcs", "key_rate_swap", date(2026, 10, 12), 1)
+    # stored back then (the old-style cut is built as known on 2026-10-16)
+    world.execute(
+        "UPDATE md.curve_snapshot SET ingested_at = '2026-10-12Z' WHERE id = %s", (first,)
+    )
+    world.commit()
+    old = _old_style_cut(world, db, DAY)  # carries key_rate_swap from Monday, old static
+    assert _carried_of(_bundle(world, old)) == {"key_rate_swap": "2026-10-12"}
+    curve(world, "ratescalcs", "key_rate_swap", date(2026, 10, 14), 2)
+    world.commit()
+    out = _heal(settings, db, date_from=DAY.isoformat())
+    (done,) = [b for b in out.result["built"] if b["day"] == DAY.isoformat()]
+    assert done["datasets"] == [heal.REISSUE_GAPS, heal.CARRIED_GAPS]
+    assert len(_eod_final(world)[DAY]) == 2
+    assert _gaps(world, heal.REISSUE_GAPS)[DAY][0] == "backfilled"
+    assert _gaps(world, heal.CARRIED_GAPS)[DAY][0] == "backfilled"

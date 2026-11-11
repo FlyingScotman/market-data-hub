@@ -40,7 +40,7 @@ from collections.abc import Callable, Mapping
 from datetime import date, datetime, time
 from typing import Any, Final
 
-from mdhub.config import parse_hhmm
+from mdhub.config import parse_hhmm, parse_name_list
 from mdhub.core.gaps import close_gap
 from mdhub.core.timeutil import MSK, add_business_days, utc_now
 from mdhub.core.upsert import UpsertResult
@@ -150,10 +150,13 @@ def _wait_for_inputs(ctx: JobContext, day: date, wait_minutes: int) -> list[Inpu
 
 
 def market_params(ctx: JobContext) -> MarketParams:
-    """Builder parameters from the settings (prelim bond threshold, curve EOD cutoff)."""
+    """Builder parameters from the settings (prelim bond threshold, curve EOD cutoff, the curves
+    carried forward and the age limit of their marker)."""
     return MarketParams(
         prelim_bond_min_rows=ctx.settings.bonds_eod_prelim_min_rows,
         curve_eod_cutoff=ctx.settings.curve_eod_cutoff,
+        curve_carry_datasets=parse_name_list(ctx.settings.curve_carry_datasets),
+        curve_carry_max_age=ctx.settings.curve_carry_max_age_days,
     )
 
 

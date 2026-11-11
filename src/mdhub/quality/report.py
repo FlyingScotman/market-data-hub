@@ -26,6 +26,9 @@ class QualityReport:
     jobs: list[JobHealth] = field(default_factory=list)
     catch_up: list[dict[str, Any]] = field(default_factory=list)
     """Scheduled fires skipped with ``lock_busy`` that this run re-executed."""
+    carried_curves: list[dict[str, Any]] = field(default_factory=list)
+    """Curves carried forward in the current EOD market cuts of the last days (contract 1.7,
+    :func:`mdhub.snapshot.carry.carried_curves`): one row per carried curve and snapshot."""
 
     @property
     def stale(self) -> list[DatasetCheck]:
@@ -43,6 +46,11 @@ class QualityReport:
     def job_problems(self) -> list[JobHealth]:
         return [j for j in self.jobs if j.problem]
 
+    @property
+    def carried_summary(self) -> list[str]:
+        """The distinct curves currently carried, as ``"<dataset> from <source day>"``."""
+        return sorted({f"{c['dataset']} from {c['source_day']}" for c in self.carried_curves})
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "as_of": self.as_of.isoformat(),
@@ -56,10 +64,12 @@ class QualityReport:
                 "dataset_problems": {
                     d.dataset: d.problem for d in self.datasets if d.problem is not None
                 },
+                "carried_curves": self.carried_summary,
             },
             "datasets": [d.to_dict() for d in self.datasets],
             "jobs": [j.to_dict() for j in self.jobs],
             "catch_up": self.catch_up,
+            "carried_curves": self.carried_curves,
         }
 
     def summary_line(self) -> str:
@@ -70,9 +80,11 @@ class QualityReport:
             f"{self.tasks_queued} tasks queued",
             f"{len(self.job_problems)} job problems",
         ]
-        details = [d.dataset for d in self.stale] + [
-            f"{j.job}:{j.status}" for j in self.job_problems
-        ]
+        details = (
+            [d.dataset for d in self.stale]
+            + [f"{j.job}:{j.status}" for j in self.job_problems]
+            + [f"carried {c}" for c in self.carried_summary]
+        )
         return ", ".join(parts) + (f" ({', '.join(details)})" if details else "")
 
 

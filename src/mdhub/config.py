@@ -74,6 +74,12 @@ Environment variables (DESIGN §7 plus a few operational knobs):
                                     builds, default 21:00-06:00
 ``MDHUB_SNAPSHOT_HEAL_MAX_PER_RUN`` cuts built per run, default 10
 ``MDHUB_SNAPSHOT_HEAL_PAUSE_S``     pause between two cuts in seconds, default 20
+``MDHUB_CURVE_CARRY_DATASETS``      curves a market cut takes from the latest previous day that
+                                    has them when no source delivered them on its day, flagged
+                                    (contract 1.7); comma separated, empty = no carry; default
+                                    ``key_rate_swap,ruonia_ois``
+``MDHUB_CURVE_CARRY_MAX_AGE_DAYS``  working days after which a carried curve is still served but
+                                    its marker says the age limit is exceeded; default 5
 =================================== ====================================================
 
 Snapshot cut times are an owner decision (system DEC04); the defaults above follow the
@@ -90,7 +96,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-__all__ = ["ConfigError", "Settings", "get_settings", "parse_hhmm", "parse_window"]
+__all__ = [
+    "ConfigError",
+    "Settings",
+    "get_settings",
+    "parse_hhmm",
+    "parse_name_list",
+    "parse_window",
+]
 
 _NAMED_TOKEN_RE = re.compile(r"^([a-z0-9][a-z0-9._-]{0,63})=([^=].*)$")
 """``name=token`` entry of ``MDHUB_API_TOKENS``. The token part must not start with ``=``, so
@@ -99,6 +112,12 @@ a padded base64 token (``abc==``) is never split."""
 
 class ConfigError(RuntimeError):
     """A required setting is missing or invalid."""
+
+
+def parse_name_list(value: str) -> tuple[str, ...]:
+    """``"a, b,a"`` -> ``("a", "b")``: comma / space separated names, sorted, unique (the order
+    of the setting must not change what a snapshot says); empty text = no names."""
+    return tuple(sorted({n for n in re.split(r"[,\s]+", value.strip()) if n}))
 
 
 def parse_hhmm(value: str) -> tuple[int, int]:
@@ -364,6 +383,16 @@ class Settings(BaseSettings):
         default="19:00",
         validation_alias=AliasChoices("MDHUB_CURVE_EOD_CUTOFF", "curve_eod_cutoff"),
     )
+    curve_carry_datasets: str = Field(
+        default="key_rate_swap,ruonia_ois",
+        validation_alias=AliasChoices("MDHUB_CURVE_CARRY_DATASETS", "curve_carry_datasets"),
+    )
+    curve_carry_max_age_days: int = Field(
+        default=5,
+        ge=0,
+        le=3650,
+        validation_alias=AliasChoices("MDHUB_CURVE_CARRY_MAX_AGE_DAYS", "curve_carry_max_age_days"),
+    )
 
     hostmon_mounts: str = Field(
         default="/", validation_alias=AliasChoices("MDHUB_HOSTMON_MOUNTS", "hostmon_mounts")
@@ -438,6 +467,15 @@ class Settings(BaseSettings):
     def _valid_hhmm(cls, value: str) -> str:
         parse_hhmm(value)
         return value.strip()
+
+    @field_validator("curve_carry_datasets")
+    @classmethod
+    def _valid_carry_datasets(cls, value: str) -> str:
+        names = parse_name_list(value)
+        bad = [n for n in names if not re.fullmatch(r"[a-z][a-z0-9_]*", n)]
+        if bad:
+            raise ValueError(f"invalid curve dataset name(s) {bad} (lower-case codes)")
+        return ",".join(names)
 
     @field_validator("snapshot_intraday_window")
     @classmethod

@@ -1,7 +1,8 @@
-"""Operations endpoints: coverage, job runs, job health, open gaps."""
+"""Operations endpoints: coverage, job runs, job health, open gaps, carried curves."""
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -9,6 +10,8 @@ from fastapi.responses import Response
 from psycopg import sql
 
 from mdhub.api.common import Page, Where, fetch_all, json_response, page_params, read_connection
+from mdhub.core.timeutil import msk_today
+from mdhub.snapshot.carry import carried_curves
 
 router = APIRouter(tags=["ops"])
 
@@ -77,3 +80,28 @@ def gaps(
     with read_connection(request) as conn:
         rows = fetch_all(conn, query, where.params)
     return json_response(request, page.wrap(rows), etag=False)
+
+
+@router.get(
+    "/carried-curves",
+    summary="Curves carried forward in the current market snapshots (contract 1.7)",
+)
+def carried(
+    request: Request,
+    days: Annotated[int, Query(ge=0, le=400, description="business dates from today - days")] = 30,
+    cut_type: Annotated[str | None, Query(description="eod_preliminary|eod_final|intraday")] = None,
+) -> Response:
+    """The curves that no source delivered on the business date of a market snapshot and that the
+    hub took, flagged, from the latest earlier day that has them. One row per carried curve of a
+    **current** (not superseded) snapshot, newest first: the snapshot, the carried ``dataset`` and
+    ``source``, ``source_day``, ``age_working_days``, ``age_limit_exceeded`` and ``reason``. A cut
+    reissued after the real data arrived is superseded, so it drops out of the list; an empty list
+    means no curve is carried."""
+    since = msk_today() - timedelta(days=days)
+    with read_connection(request) as conn:
+        rows = carried_curves(conn, since=since, cut_types=[cut_type] if cut_type else None)
+    return json_response(
+        request,
+        {"data": rows, "meta": {"returned": len(rows), "since": since.isoformat()}},
+        etag=False,
+    )

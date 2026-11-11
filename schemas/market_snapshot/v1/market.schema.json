@@ -502,6 +502,14 @@
               }
             }
           }
+        },
+        "carried_forward": {
+          "description": "1.7, optional: present only on a carried quote set (also the label carried_forward; snapshot_date is then source_day, not the business date)",
+          "allOf": [
+            {
+              "$ref": "#/$defs/curve_carry"
+            }
+          ]
         }
       }
     },
@@ -1587,6 +1595,49 @@
         "last_rub_per_unit",
         "labels"
       ]
+    },
+    "curve_carry": {
+      "description": "CurveCarry (1.7): this quote set is not from the business date; it is the curve of source_day carried forward because no source stored the curve on the business date",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_day",
+        "age_working_days",
+        "age_limit_working_days",
+        "age_limit_exceeded",
+        "reason"
+      ],
+      "properties": {
+        "source_day": {
+          "description": "The earlier day the curve was taken from: the latest day before the business date with a stored quote set of this curve",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date"
+            }
+          ]
+        },
+        "age_working_days": {
+          "description": "Working days (MOEX_STOCK) after source_day up to the business date; grows while the gap lasts",
+          "type": "integer",
+          "minimum": 0
+        },
+        "age_limit_working_days": {
+          "description": "The age limit in force (hub setting): a curve older than this is still served, with age_limit_exceeded true",
+          "type": "integer",
+          "minimum": 0
+        },
+        "age_limit_exceeded": {
+          "type": "boolean"
+        },
+        "reason": {
+          "description": "no_quote_set_on_business_date: no source stored a quote set of this curve on the business date",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/label"
+            }
+          ]
+        }
+      }
     }
   },
   "type": "object",
@@ -1730,6 +1781,7 @@
           }
         }
       }
-    }
+    },
+    "carried_curves": true
   }
 }

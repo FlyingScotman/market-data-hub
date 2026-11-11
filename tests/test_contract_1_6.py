@@ -33,7 +33,8 @@ T0 = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 def test_version() -> None:
-    assert SCHEMA_VERSION == "market_snapshot/1.6"
+    assert SCHEMA_VERSION.startswith("market_snapshot/1.")  # the 1.6 rules hold in later minors
+    assert int(SCHEMA_VERSION.rsplit(".", 1)[1]) >= 6
     assert {"MOEX_SPFI", "CBR_RUONIA", "MOEX_RUSFAR"} <= set(CALENDARS)
     assert cal.DERIVED_CALENDARS == ("MOEX_SPFI", "CBR_RUONIA", "MOEX_RUSFAR")
 
@@ -354,7 +355,7 @@ def test_static_snapshot_lists_the_fixing_calendars(conn: Conn, db: Database) ->
         known_at=utc_now(),
     )
     doc = _bundle(conn, out.id)  # the runner validates the bundle against the schema
-    assert doc["schema_version"] == "market_snapshot/1.6"
+    assert doc["schema_version"] == SCHEMA_VERSION  # the 1.6 calendars in later minors
     cals = {c["calendar"]: c for c in doc["data"]["calendars"]}
     ruonia = cals["CBR_RUONIA"]
     assert (ruonia["valid_from"], ruonia["valid_to"]) == ("2025-01-01", "2026-12-31")

@@ -161,6 +161,9 @@ class Build:
     static_snapshot_id: str | None = None
     universe: frozenset[str] = frozenset()
     """SECIDs of the static universe (static builds; used to filter market quotes)."""
+    carried_curves: list[dict[str, Any]] = field(default_factory=list)
+    """Market builds: the curves carried forward from an earlier day (contract 1.7,
+    :mod:`mdhub.snapshot.carry`); listed in the envelope only when there are any."""
 
     def data(self) -> dict[str, list[Any]]:
         return {d.name: d.rows for d in self.datasets}
@@ -194,6 +197,7 @@ class Build:
             "sources": self.provenance.wire(),
             "datasets": [d.entry() for d in self.datasets],
             "excluded": self.excluded.wire(),
+            **({"carried_curves": to_wire(self.carried_curves)} if self.carried_curves else {}),
         }
 
     def document(self, supersedes: str | None) -> dict[str, Any]:

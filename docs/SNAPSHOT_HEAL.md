@@ -10,7 +10,9 @@ need manual runs on the server). Code: `src/mdhub/loaders/snapshot_heal.py`.
 | **Missing cut**: a business day of `MOEX_STOCK` from `MDHUB_SNAPSHOT_HEAL_FROM` (default 2025-10-29) to the day before the previous business day has no `eod_final` market snapshot, although `md.bond_eod` / `md.bond_eod_yield` hold its bond quotes | no row of `ops.published_snapshot` with `kind = market`, `cut_type = eod_final`, that `business_date` | the cut is published as known now, bound to a static built for that date (`parameters.static_basis`, #102 / #104) - what `mdhub run snapshot_market -p mode=eod_final -p day=D` does | `snapshot_cut_missing` |
 | **Cut on the static of its build day**: a current `eod_final` of a business date from 2026-01-05 to 2026-10-21 whose linked static has no `parameters.static_basis` (cuts published before contract 1.4; #101, #106) | the cut's static manifest has no `static_basis` | the cut is rebuilt with its own `cut_ts`: a correction that `supersedes` the old snapshot (which stays readable); what `snapshot_rebuild` does | `snapshot_cut_reissue` (one gap per cut: `key.cut_ts`) |
 
-The reissue range is fixed in the code (`REISSUE_FROM`, `REISSUE_TO`): the one described in #106.
+| **Outdated carried cut** (contract 1.7, #143): a current `eod_final` of a business date from `MDHUB_SNAPSHOT_HEAL_FROM` whose manifest lists `carried_curves` (a curve no source stored on its day, taken from an earlier day, flagged) while the store now holds a non-empty quote set of that curve for a day after the carried `source_day` up to the cut's business date (the real data, or a newer carry source, arrived late) | the cut is rebuilt with its own `cut_ts`: a correction that `supersedes` the old snapshot; the new cut holds the real curve (no marker) or the newer carry | `snapshot_cut_carried` (one gap per cut: `key.cut_ts`) |
+
+The reissue range of the static-basis defect is fixed in the code (`REISSUE_FROM`, `REISSUE_TO`): the one described in #106.
 Cuts of other dates are never reissued by this job. The day before the previous business day is the
 newest day it looks at: the previous business day belongs to the scheduled 08:00 cut (it waits for
 its inputs; the `quality` job catches it up).
@@ -30,6 +32,21 @@ futures, fixings, CPI, ...). The gap note names the dataset ("waiting for the in
 zcyc_params (open gap), ..."). Otherwise the cut would be built from incomplete inputs, the
 autocorrection would publish a correction as soon as that backfill ends, and the consumer would
 download the day twice. When the gaps and tasks are done, the next run builds the day.
+
+### Carried curves: when a cut is outdated, and why the job does not loop
+
+A cut that carries a curve is **not** a defect by itself: the day really has no data, and the cut
+says so (`carried_curves`, #143). It is outdated only when the store holds newer data of that curve
+than the one it carries: a quote set of the same curve dated after the carried `source_day` and not
+after the cut's business date. Then (and only then) the next night run rebuilds it, as of now, on
+the static as of its date (`historical`): the correction replaces the carried quote set by the real
+one, or by a newer carry source. After that the cut carries nothing outdated, so the detection is
+silent: a run with nothing else to do ends `skipped` ("nothing to heal"), a second run publishes
+nothing. A cut that legitimately stays carried (no newer data) is never touched, however many runs
+pass. If a rebuild nevertheless left the cut carrying a curve with newer data (it cannot happen
+with the same inputs; the guard is for a defect), the gap is closed `unfillable` with that reason
+and not retried: no loop. A cut that is both on the static of its build day and carries an outdated
+curve is rebuilt once and closes both gaps.
 
 ## How it runs
 
@@ -63,13 +80,16 @@ download the day twice. When the gaps and tasks are done, the next run builds th
 
 ## Progress and what is left (existing status API)
 
-* `GET /v1/gaps?dataset=snapshot_cut_missing` and `...=snapshot_cut_reissue`: the open items with
-  the reason in `note`. Zero rows = nothing to repair. A repaired day is `backfilled`, a day that is
+* `GET /v1/gaps?dataset=snapshot_cut_missing`, `...=snapshot_cut_reissue` and
+  `...=snapshot_cut_carried`: the open items with the reason in `note`. Zero rows = nothing to repair. A repaired day is `backfilled`, a day that is
   no longer expected `not_expected` and a day that could not be repaired `unfillable` in
   `ops.data_gap`, all with a note, so no day is left without an explanation.
 * `GET /v1/runs?job=snapshot_heal`: each run with its counts (`rows_inserted` = cuts published,
   `rows_unchanged` = rebuilds that changed nothing), `error` = reason for `skipped` / `partial`.
 * `GET /v1/coverage`, dataset `snapshot_eod_final`: freshness of the published cuts.
+* `GET /v1/carried-curves`: the curves carried in the *current* market snapshots (the cuts that
+  still wait for the real data of their day). A cut reissued after the data arrived is superseded
+  and drops out. The `quality` report lists them too (`summary.carried_curves`).
 
 ## Settings (`deploy/env.example`)
 
@@ -109,9 +129,10 @@ deploy that contains it repairs the history without anyone running anything:
 
 ## Not covered here
 
-* Days without a curve in any source are not filled (see the open question in #138: a carried-forward
-  curve needs a contract decision). They stay visible as gaps of `curves_ruonia_ois` /
-  `curves_key_rate_swap` and as stale reasons of the cuts.
+* A day without a curve in any source is not a gap of this job: the cut is built with the curve
+  carried forward from the latest earlier day, flagged (contract 1.7, #143), and stays visible as a
+  gap of `curves_ruonia_ois` / `curves_key_rate_swap` and as stale reasons of the cut. The carry is
+  configured by `MDHUB_CURVE_CARRY_DATASETS` / `MDHUB_CURVE_CARRY_MAX_AGE_DAYS`.
 * Loading the history of datasets added later (v0.3.2: €STR, SOFR, FX crosses, proxy curves, ...).
 * Corrections of cuts after such a history load: that is the existing `MDHUB_SNAPSHOT_AUTOCORRECT`
   mechanism, unchanged.
