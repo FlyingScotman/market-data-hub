@@ -1192,6 +1192,8 @@ def test_step_publish_tag_elsewhere_is_never_released(step_env: StepEnv) -> None
         out.write(f"v0.7.0 {OTHER_SHA}\n")  # the tag exists on another commit
     out = _publish(step_env, TAGS_AT_CHECK=digest)
     assert out.returncode == 1 and "not to the built commit" in out.stdout
+    # the ruleset is named in the message: backticks in a double-quoted echo would run it
+    assert "release tags: no change" in out.stdout and "command not found" not in out.stderr
     assert not [c for c in step_env.calls() if "release create" in c or "POST" in c]
     assert (step_env.state / "releases").read_text() == ""
 

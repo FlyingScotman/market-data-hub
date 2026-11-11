@@ -404,13 +404,16 @@ to *Active* again.
 **7 days** (`retention-days: 7`): approve the signature within 7 days of the build, later `sign` cannot
 download the artifact and the release has to be started again.
 
-- *`publish` failed before the tag was made* (the message says that the tags changed, or a call failed):
-  fix the cause, then open the run and press **Re-run failed jobs**: only `publish` runs again, with the same
-  built and signed files. Or the owner pushes the tag by hand: that is the first path, with a new build and
-  a new approval of the signature.
+- *`publish` failed before the tag was made because a call failed* (network, a refused request): fix the
+  cause, then open the run and press **Re-run failed jobs**: only `publish` runs again, with the same built
+  and signed files. This works within 7 days of the build, while the artifacts exist. Or the owner pushes
+  the tag by hand: that is the first path, with a new build and a new approval of the signature.
+- *`publish` says that the release tags changed since `check`*: a re-run cannot help (it compares with the
+  tags the same `check` saw). Start **Run workflow** again; nothing was made by the stopped run.
 - *The tag exists, the Release does not*: press **Re-run failed jobs**, and **not** *Re-run all jobs*: a
   full re-run starts `check` again, and `check` refuses with "tag exists". The re-run of `publish` sees the
-  tag on the built commit and only creates the Release.
+  tag on the built commit and only creates the Release. After 7 days the artifacts are gone: then the
+  owner removes the tag (ruleset 2 off for the moment, see above) and a new run is started.
 - *The tag points to another commit* (the message of `publish` says so): no Release was made. The tag must be
   removed by the owner, who switches ruleset 2 off for the moment (see above); then a new run is started.
 - A tag without a Release does no harm to servers: the updaters read the list of Releases (and skip

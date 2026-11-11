@@ -313,7 +313,7 @@ jobs:
               fi
             fi
             if [[ "$tagged" != "$GITHUB_SHA" ]]; then
-              echo "::error::the tag $RELEASE_TAG points to $tagged, not to the built commit $GITHUB_SHA: no release was published; the owner removes the tag, after temporarily switching off ruleset 2 `release tags: no change` (README_DEPLOY §11)"
+              echo "::error::the tag $RELEASE_TAG points to $tagged, not to the built commit $GITHUB_SHA: no release was published; the owner removes the tag, after temporarily switching off ruleset 2 'release tags: no change' (README_DEPLOY §11)"
               exit 1
             fi
           fi
