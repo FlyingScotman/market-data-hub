@@ -78,6 +78,21 @@ def _settings() -> Settings:
         raise typer.Exit(2) from None
 
 
+def _source_settings(settings: Settings) -> None:
+    """The worker refuses to start with source address settings that would leak credentials or
+    verify nothing (``ConfigError`` text: setting names, never values) and says loudly when
+    credentials are sent unencrypted by explicit opt-in. Credentials set in the console are
+    checked again by the loader and the probe."""
+    try:
+        settings.require_ratescalcs_config()
+    except ConfigError as exc:
+        typer.echo(f"invalid configuration: {exc}", err=True)
+        raise typer.Exit(2) from None
+    warning = settings.ratescalcs_plaintext_warning()
+    if warning is not None:
+        log.warning("%s", warning)
+
+
 def _database(settings: Settings, *, pool_size: int | None = None) -> Database:
     try:
         return Database.from_settings(settings, pool_size=pool_size)
@@ -216,6 +231,7 @@ def scheduler_cmd(
     (:mod:`mdhub.credentials`). It also samples the PostgreSQL statistics for the Machine page
     every minute (:mod:`mdhub.hostmon.pgstats`)."""
     settings = _settings()
+    _source_settings(settings)
     report = discover_jobs()
     for module, err in report.failed.items():
         log.error("job module %s failed to import: %s", module, err)

@@ -265,6 +265,7 @@ def test_a_configured_base_is_used_by_every_page_the_snapshot_and_the_probe(
         ratescalc_username="u-test",
         ratescalc_password="p-test",
         ratescalcs_base_url=base,
+        ratescalcs_allow_plaintext_credentials=True,  # some of the bases are plain http
     )
     clean = base.rstrip("/")
     assert settings.ratescalcs_base_url == clean
@@ -290,6 +291,10 @@ def test_a_configured_base_is_used_by_every_page_the_snapshot_and_the_probe(
         "https://ratescalcs.example.invalid/x?a=1",
         "https://ratescalcs.example.invalid/x#frag",
         "https://ratescalcs.example.invalid:99999",
+        "https://ratescalcs.example.invalid:0",  # port 0
+        "https://ratescalcs.example.invalid:/x",  # an empty port
+        "https://ratescalcs.example.invalid:",
+        "https://[2001:db8::1]:/x",
         "https://ratescalcs .example.invalid",
     ],
 )

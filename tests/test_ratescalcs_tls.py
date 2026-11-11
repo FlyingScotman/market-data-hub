@@ -172,6 +172,7 @@ def test_without_the_server_name_the_check_fails_with_a_plain_reason(tls_site: S
     assert exc.value.tls_certificate and "TLS certificate check failed" in text
     assert "127.0.0.1" in text and "not valid for" in text  # the certificate lists no IP
     assert "MDHUB_RATESCALCS_TLS_SERVER_NAME" in text  # what the owner can set
+    assert text.count("not valid for") == 1 and "must be valid for" not in text  # said once
     assert tls_site.paths == []  # nothing was sent: no unverified request ever left
 
 

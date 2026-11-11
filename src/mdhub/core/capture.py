@@ -32,7 +32,7 @@ from psycopg.types.json import Jsonb
 
 from mdhub.config import Settings
 from mdhub.core.errors import JobSkipped
-from mdhub.core.redact import redact_url, sanitize_text
+from mdhub.core.redact import hide_values, redact_url, sanitize_text
 from mdhub.core.timeutil import ensure_aware, utc_now
 from mdhub.core.upsert import UpsertResult, atomic
 from mdhub.db.pool import Database
@@ -140,6 +140,13 @@ def job_run(
     if trigger is not None and trigger not in JOB_TRIGGERS:
         raise ValueError(f"unknown job trigger {trigger!r} (one of {', '.join(JOB_TRIGGERS)})")
     secrets = settings.secret_values() if settings is not None else []
+    hidden = settings.hidden_addresses() if settings is not None else []
+
+    def stored(text: str) -> str:
+        """The text for ``ops.job_run.error`` (served by the read API): the configured address
+        of a source is replaced by a placeholder there; the log keeps the full text."""
+        return hide_values(text, hidden)
+
     with db.connection() as conn, conn.cursor(row_factory=tuple_row) as cur:
         row = cur.execute(
             "INSERT INTO ops.job_run (job, params, host, trigger) VALUES (%s, %s, %s, %s) "
@@ -151,22 +158,29 @@ def job_run(
     log.info("job %s run %d started", job, run.id)
     status = "succeeded"
     error: str | None = None
+    full: str | None = None
     try:
         yield run
     except JobSkipped as exc:
-        status, error = "skipped", sanitize_text(str(exc) or "skipped", secrets)
+        status = "skipped"
+        full = sanitize_text(str(exc) or "skipped", secrets)
+        error = stored(full)
     except BaseException as exc:
         status = "failed"
-        error = sanitize_text(f"{type(exc).__name__}: {exc}", secrets)[:MAX_ERROR_CHARS]
+        full = sanitize_text(f"{type(exc).__name__}: {exc}", secrets)[:MAX_ERROR_CHARS]
+        error = stored(full)[:MAX_ERROR_CHARS]
         _finish(db, run, status, error)
-        log.error("job %s run %d failed: %s", job, run.id, error)
+        log.error("job %s run %d failed: %s", job, run.id, full)
         raise
     else:
         if run._skipped is not None:
-            status, error = "skipped", sanitize_text(run._skipped, secrets)
+            status = "skipped"
+            full = sanitize_text(run._skipped, secrets)
+            error = stored(full)
         elif run._partial:
             status = "partial"
-            error = sanitize_text("; ".join(run._partial), secrets)[:MAX_ERROR_CHARS]
+            full = sanitize_text("; ".join(run._partial), secrets)[:MAX_ERROR_CHARS]
+            error = stored(full)[:MAX_ERROR_CHARS]
     _finish(db, run, status, error)
     log.info(
         "job %s run %d %s (inserted=%d updated=%d unchanged=%d)%s",
@@ -176,7 +190,7 @@ def job_run(
         run.counts.inserted,
         run.counts.updated,
         run.counts.unchanged,
-        f": {error}" if error else "",
+        f": {full}" if full else "",
     )
 
 

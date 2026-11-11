@@ -61,7 +61,13 @@ Environment variables (DESIGN §7 plus a few operational knobs):
                                     certificate does not list it; the hub still connects to the
                                     base URL, but sends this name as SNI and ``Host`` and checks
                                     the certificate against it (verification stays on); unset =
-                                    checked against the host of the base URL
+                                    checked against the host of the base URL; needs an https
+                                    base URL and no ``MDHUB_HTTP_PROXY`` (a proxy tunnel ignores
+                                    the name): either combination stops the worker
+``MDHUB_RATESCALCS_ALLOW_PLAINTEXT_CREDENTIALS`` set to ``true`` to send the Ratescalcs
+                                    credentials over a plain ``http`` base URL (they travel
+                                    unencrypted; default false = such a combination stops the
+                                    worker); not combinable with the TLS server name
 ``CBONDS_LOGIN`` / ``CBONDS_PASSWORD``  Cbonds JSON API
 ``OTC_MONITOR_TOKEN``               OTC Monitor bearer token (``swaps_otc_monitor``)
 ``MDHUB_SNAPSHOT_STATIC_TIME``      daily static snapshot, MSK ``HH:MM``, default 07:45
@@ -118,8 +124,11 @@ from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = [
+    "BASE_URL_PLACEHOLDER",
     "CURVE_DATASETS",
+    "PLAINTEXT_OPT_IN",
     "RATESCALCS_DEFAULT_BASE_URL",
+    "SERVER_NAME_PLACEHOLDER",
     "ConfigError",
     "Settings",
     "clock_window_start",
@@ -157,6 +166,11 @@ class ConfigError(RuntimeError):
     """A required setting is missing or invalid."""
 
 
+PLAINTEXT_OPT_IN: Final = "MDHUB_RATESCALCS_ALLOW_PLAINTEXT_CREDENTIALS"
+BASE_URL_PLACEHOLDER: Final = "<MDHUB_RATESCALCS_BASE_URL>"
+SERVER_NAME_PLACEHOLDER: Final = "<server name>"
+
+
 def parse_base_url(value: str, name: str) -> str:
     """A base URL setting: ``http`` / ``https``, a host (a name or an IP address) with an
     optional port and an optional path prefix, nothing else. Returns it without a trailing ``/``.
@@ -167,9 +181,11 @@ def parse_base_url(value: str, name: str) -> str:
         raise ValueError(f"{name}: expected a URL like https://host[:port][/prefix] (no spaces)")
     try:
         parts = urlsplit(text)
-        parts.port  # noqa: B018 - raises ValueError for a bad port
+        port = parts.port
     except ValueError:
         raise ValueError(f"{name}: not a valid URL (check the host and the port)") from None
+    if port == 0 or parts.netloc.endswith(":"):  # ':0' and an empty ':' port
+        raise ValueError(f"{name}: not a valid URL (the port must be 1-65535 or left out)")
     if parts.scheme.lower() not in ("http", "https"):
         raise ValueError(f"{name}: the scheme must be http or https")
     if not parts.hostname:
@@ -568,6 +584,12 @@ class Settings(BaseSettings):
         default=RATESCALCS_DEFAULT_BASE_URL,
         validation_alias=AliasChoices("MDHUB_RATESCALCS_BASE_URL", "ratescalcs_base_url"),
     )
+    ratescalcs_allow_plaintext_credentials: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "MDHUB_RATESCALCS_ALLOW_PLAINTEXT_CREDENTIALS", "ratescalcs_allow_plaintext_credentials"
+        ),
+    )
     cbonds_login: SecretStr | None = _env("CBONDS_LOGIN")
     cbonds_password: SecretStr | None = _env("CBONDS_PASSWORD")
     otc_monitor_token: SecretStr | None = _env("OTC_MONITOR_TOKEN")
@@ -699,6 +721,81 @@ class Settings(BaseSettings):
     def proxy_url(self) -> str | None:
         """Egress proxy URL (secret: may contain credentials) or ``None``."""
         return self.http_proxy.get_secret_value() if self.http_proxy else None
+
+    # ------------------------------------------------------------- Ratescalcs address checks
+
+    def ratescalcs_plain_http(self) -> bool:
+        """Whether the Ratescalcs base URL is plain ``http``."""
+        return urlsplit(self.ratescalcs_base_url).scheme.lower() == "http"
+
+    def ratescalcs_plaintext_credentials(self) -> bool:
+        """Whether Ratescalcs credentials are set **and** would travel over plain ``http``."""
+        return (
+            self.ratescalcs_plain_http()
+            and self.ratescalc_username is not None
+            and self.ratescalc_password is not None
+        )
+
+    def ratescalcs_config_errors(self) -> list[str]:
+        """Why the Ratescalcs address settings cannot work (texts name settings, never values).
+        Credentials set in the console are not in a startup copy of the settings: the loader and
+        the probe ask again with the settings of the run."""
+        errors: list[str] = []
+        if self.ratescalcs_tls_server_name and self.ratescalcs_plain_http():
+            errors.append(
+                "MDHUB_RATESCALCS_TLS_SERVER_NAME is set but MDHUB_RATESCALCS_BASE_URL is plain "
+                "http: no certificate would be checked and no name sent (use an https base URL "
+                "or unset the server name)"
+            )
+        if (
+            self.ratescalcs_tls_server_name
+            and not self.ratescalcs_plain_http()
+            and self.http_proxy is not None
+        ):
+            errors.append(
+                "MDHUB_RATESCALCS_TLS_SERVER_NAME is set while MDHUB_HTTP_PROXY is set: the "
+                "proxy tunnel presents the host of the base URL, not the server name, so the "
+                "name would be ignored and the certificate checked against the address (the "
+                "proxy serves every source: unset the server name or the proxy)"
+            )
+        if (
+            self.ratescalcs_plaintext_credentials()
+            and not self.ratescalcs_allow_plaintext_credentials
+        ):
+            errors.append(
+                "MDHUB_RATESCALCS_BASE_URL is plain http and the Ratescalcs credentials are set: "
+                "they would be sent unencrypted (use an https base URL, or accept it on a trusted "
+                f"network with {PLAINTEXT_OPT_IN}=true)"
+            )
+        return errors
+
+    def require_ratescalcs_config(self) -> None:
+        """:raises ConfigError: :meth:`ratescalcs_config_errors` is not empty."""
+        errors = self.ratescalcs_config_errors()
+        if errors:
+            raise ConfigError("; ".join(errors))
+
+    def ratescalcs_plaintext_warning(self) -> str | None:
+        """The loud warning while credentials are sent over plain http by explicit opt-in."""
+        if self.ratescalcs_plaintext_credentials() and self.ratescalcs_allow_plaintext_credentials:
+            return (
+                "Ratescalcs: credentials are sent unencrypted (plain http base URL, accepted by "
+                f"{PLAINTEXT_OPT_IN})"
+            )
+        return None
+
+    def hidden_addresses(self) -> list[tuple[str, str]]:
+        """``(value, placeholder)`` pairs of the configured Ratescalcs address (base URL, host,
+        TLS server name): what must not appear in a text that the read API can serve (job errors,
+        :mod:`mdhub.core.redact`). The full text goes to the log only."""
+        parts = urlsplit(self.ratescalcs_base_url)
+        pairs = [
+            (self.ratescalcs_base_url, BASE_URL_PLACEHOLDER),
+            (parts.netloc, BASE_URL_PLACEHOLDER),
+            (parts.hostname or "", BASE_URL_PLACEHOLDER),
+            (self.ratescalcs_tls_server_name or "", SERVER_NAME_PLACEHOLDER),
+        ]
+        return [(v, ph) for v, ph in pairs if len(v) >= 4]
 
     def api_token_entries(self) -> list[tuple[str, str]]:
         """``(name, token)`` per entry of the comma-separated ``MDHUB_API_TOKENS``.

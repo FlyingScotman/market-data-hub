@@ -342,6 +342,15 @@ http/https, credentials, query or fragment in it) stops the start. `MDHUB_RATESC
 hub connects to the base URL, sends the name as SNI and `Host` and verifies the certificate against
 it; unset, against the host of the base URL; there is no switch that turns verification off. A failed
 certificate check is not retried and is reported in plain words (job error, source probe row).
+The address is not published: `ops.job_run.error` (served by `/v1/runs` and `/v1/runs/health` to
+any `read` token) carries the base URL and its host as `<MDHUB_RATESCALCS_BASE_URL>` and the server
+name as `<server name>`; the worker log and the console's source probe row (not served by the API)
+keep the full text. The worker refuses to start (and the loader and the probe send nothing) when the
+base URL is plain `http` and the Ratescalcs credentials are set, unless
+`MDHUB_RATESCALCS_ALLOW_PLAINTEXT_CREDENTIALS=true` (then a WARNING at the worker start and in every
+probe result: "credentials are sent unencrypted"), when the server name goes with a plain `http` base
+URL, and when it goes with `MDHUB_HTTP_PROXY` (a proxy tunnel ignores the name; the proxy serves every
+source). Credentials set in the console are checked again at every run.
 Empty values count as unset (`env_ignore_empty`).
 
 ## 8. Read API (v1, bearer token)

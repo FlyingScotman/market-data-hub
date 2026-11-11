@@ -65,6 +65,9 @@ Archive layout (one top-level directory `mdhub/`):
    published). Backend consumers on other hosts use the HTTPS API or an SSH tunnel
    (`ssh -L 5432:127.0.0.1:5432 vps`) with the read-only role.
 4. Optional egress proxy for sources that need a fixed IP: set `MDHUB_HTTP_PROXY`.
+   The proxy serves every source and cannot be combined with `MDHUB_RATESCALCS_TLS_SERVER_NAME`
+   (a proxy tunnel presents the host of the URL, not the name): the worker refuses to start with
+   both. A Ratescalcs address reached by a bare IP needs the name, so it needs the proxy unset.
 
 ## 2. Copy the archive and configure
 

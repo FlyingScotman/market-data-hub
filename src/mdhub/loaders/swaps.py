@@ -279,6 +279,10 @@ def swaps_ratescalcs(ctx: JobContext) -> dict[str, str]:
     user, password = ctx.settings.ratescalc_username, ctx.settings.ratescalc_password
     if user is None or password is None:
         raise SourceNotConfigured("RATESCALC_USERNAME/RATESCALC_PASSWORD not configured")
+    # credentials over plain http, a server name that nothing would verify: no request is sent
+    ctx.settings.require_ratescalcs_config()
+    if (warning := ctx.settings.ratescalcs_plaintext_warning()) is not None:
+        ctx.logger.warning("swaps_ratescalcs: %s", warning)
     auth = httpx.BasicAuth(user.get_secret_value(), password.get_secret_value())
     status: dict[str, str] = {}
     failures: list[str] = []
@@ -301,9 +305,13 @@ def swaps_ratescalcs(ctx: JobContext) -> dict[str, str]:
                 with ctx.connection() as conn:
                     status.update(_store_if_changed(ctx, conn, endpoint, resp, curves, fetched_at))
             except (MdhubError, psycopg.Error) as exc:
-                # never include page bodies in errors (credentials may appear in page text)
-                ctx.logger.error("swaps_ratescalcs %s failed: %s", endpoint, type(exc).__name__)
-                failures.append(f"{endpoint}: {type(exc).__name__}: {str(exc)[:400]}")
+                # never include page bodies in errors (credentials may appear in page text). The
+                # text keeps the configured address here (it goes to the log); the run records
+                # it with the address replaced by a placeholder (mdhub.core.capture.job_run), as
+                # it is served by /v1/runs
+                text = f"{type(exc).__name__}: {str(exc)[:400]}"
+                ctx.logger.error("swaps_ratescalcs %s failed: %s", endpoint, text)
+                failures.append(f"{endpoint}: {text}")
                 status[endpoint] = "failed"
     if failures and len(failures) == len(targets):
         raise MdhubError("swaps_ratescalcs: all pages failed: " + "; ".join(failures))

@@ -438,10 +438,14 @@ class HttpClient:
                 cert = _certificate_failure(exc)
                 if cert is not None:
                     expected = tls_server_name or req.url.host
+                    reason = str(cert.verify_message or cert)
+                    # a mismatch already says which name the certificate is not valid for
+                    checked = (
+                        "" if "not valid for" in reason else f" (checked against '{expected}')"
+                    )
                     raise TransportFailure(
                         f"TLS certificate check failed for {redact_url(req.url)}: "
-                        f"{cert.verify_message or cert} (the certificate must be valid for "
-                        f"'{expected}')",
+                        f"{reason}{checked}",
                         url=redact_url(req.url),
                         tls_certificate=True,
                     ) from None

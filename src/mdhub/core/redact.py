@@ -11,6 +11,7 @@ import httpx
 
 __all__ = [
     "SecretRedactingFilter",
+    "hide_values",
     "is_sensitive_param",
     "redact_url",
     "register_secrets",
@@ -84,6 +85,18 @@ def sanitize_text(text: str, secrets: Iterable[str] = ()) -> str:
     out = _URL_IN_TEXT.sub(_url, text)
     for s in sorted({s for s in secrets if s} | _registered, key=len, reverse=True):
         out = out.replace(s, REDACTED)
+    return out
+
+
+def hide_values(text: str, pairs: Iterable[tuple[str, str]]) -> str:
+    """Replace every ``value`` of ``pairs`` (``(value, placeholder)``) in ``text`` by its
+    placeholder, ignoring case, longest value first. For texts that are stored where the read API
+    can serve them: the configured address of a source must not leave the hub that way (the log
+    keeps the full text)."""
+    out = text
+    for value, placeholder in sorted(pairs, key=lambda p: len(p[0]), reverse=True):
+        if value:
+            out = re.sub(re.escape(value), placeholder.replace("\\", "\\\\"), out, flags=re.I)
     return out
 
 

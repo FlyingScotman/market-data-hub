@@ -93,6 +93,11 @@ class ProbeRequest:
     configured: bool | None = None
     tls_server_name: str | None = None
     """Present this name as SNI / ``Host`` and verify the certificate against it (URL is an IP)."""
+    problem: str | None = None
+    """The settings cannot work (:meth:`mdhub.config.Settings.ratescalcs_config_errors`): nothing is
+    sent, the probe fails with this text."""
+    warning: str | None = None
+    """Recorded with the result (the probe still runs), e.g. credentials sent unencrypted."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -135,12 +140,24 @@ def _apim(settings: Settings) -> ProbeRequest:
 def _ratescalcs(settings: Settings) -> ProbeRequest:
     url = ratescalcs.page_url(settings.ratescalcs_base_url, ratescalcs.SNAPSHOT_PATH)
     name = settings.ratescalcs_tls_server_name
+    errors = settings.ratescalcs_config_errors()
+    problem = "; ".join(errors) if errors else None
+    warning = settings.ratescalcs_plaintext_warning()
     user, password = settings.ratescalc_username, settings.ratescalc_password
     if user is None or password is None:
-        return ProbeRequest(url=url, configured=False, tls_server_name=name)
+        return ProbeRequest(
+            url=url, configured=False, tls_server_name=name, problem=problem, warning=warning
+        )
     pair = f"{user.get_secret_value()}:{password.get_secret_value()}".encode()
     headers = {"Authorization": "Basic " + base64.b64encode(pair).decode("ascii")}
-    return ProbeRequest(url=url, headers=headers, configured=True, tls_server_name=name)
+    return ProbeRequest(
+        url=url,
+        headers=headers,
+        configured=True,
+        tls_server_name=name,
+        problem=problem,
+        warning=warning,
+    )
 
 
 def _otc_monitor(settings: Settings) -> ProbeRequest:
@@ -247,6 +264,14 @@ def probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult:
     req = spec.build(settings)
     endpoint = redact_url(req.url)
     auth = "n/a" if req.configured is None else "ok" if req.configured else "not_configured"
+    if req.problem is not None:  # nothing is sent: the settings would leak or verify nothing
+        return ProbeResult(
+            source=spec.source,
+            endpoint=endpoint,
+            ok=False,
+            auth=auth,
+            error=req.problem[:_MAX_ERROR],
+        )
     started = time.perf_counter()
     try:
         response = http.request(
@@ -261,6 +286,8 @@ def probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult:
         if spec.source == "ratescalcs" and isinstance(exc, TransportFailure):
             exc = ratescalcs.tls_hint(exc, req.tls_server_name)
         text = sanitize_text(f"{type(exc).__name__}: {exc}", settings.secret_values())
+        if req.warning:
+            text = f"{text}; {req.warning}"
         return ProbeResult(
             source=spec.source,
             endpoint=endpoint,
@@ -295,6 +322,8 @@ def probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult:
         ok = 200 <= status < 400
     if not ok and error is None:
         error = f"HTTP {status}"
+    if req.warning:  # the probe itself worked: the result still says what is wrong with the setup
+        error = f"{error}; {req.warning}" if error else req.warning
     return ProbeResult(
         source=spec.source,
         endpoint=endpoint,
