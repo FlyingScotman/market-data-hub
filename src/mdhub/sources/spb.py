@@ -29,6 +29,7 @@ ARCHIVE_PATH: Final = "/api/reader/marketdata/archive/cb/active-days"
 HISTORY_PATH: Final = "/api/reader/marketdata/charts/chistory"
 PARSER_VERSION: Final = "1"
 MAX_LOAD_DAYS: Final = 31
+SKIP_SHARE_DENOMINATOR: Final = 5
 VENUE: Final = "SPB"
 PRICE_BASIS: Final = "chart_close"
 _ISIN: Final = re.compile(r"^RU[A-Z0-9]{9}[0-9]$")
@@ -42,6 +43,17 @@ class Candidate:
     ticker: str
     name: str
     category: str
+
+
+def skip_limit(total: int) -> int:
+    """Most bonds a run may skip (one that fails validation is skipped with a diagnostic and the
+    run ends ``partial``); one more is treated as format drift and fails the run.
+
+    A single odd bond is routine (a new issue not yet in yesterday's report, an unexpected card
+    category, one malformed chart), while a changed format breaks every card, report row or chart
+    alike. One fifth of the discovered bonds (at least one) separates the two: 4 of today's 21,
+    1 of a universe of 2-9."""
+    return max(1, total // SKIP_SHARE_DENOMINATOR)
 
 
 def json_body(payload: bytes) -> Any:
@@ -167,13 +179,18 @@ def parse_report_archive(payload: bytes, *, today: date) -> tuple[date, str]:
 
 
 def parse_unit_report(
-    payload: bytes, report_date: date, identities: dict[str, str]
+    payload: bytes,
+    report_date: date,
+    identities: dict[str, str],
+    *,
+    missing_ok: bool = False,
 ) -> dict[tuple[str, str], tuple[str, str]]:
     """Ticker+ISIN -> price-unit code, settlement currency from fixed report columns.
 
     This parser deliberately ignores price values after checking the numeric column boundary.
     It requires complete ticker/ISIN rows; wrapped or missing rows fail closed. Units are
-    never guessed from an instrument name.
+    never guessed from an instrument name. With ``missing_ok`` a discovered bond without a row
+    (a new issue) is left out of the result for the caller to skip; malformed rows still raise.
     """
     try:
         pdf = PdfReader(io.BytesIO(payload), strict=True)
@@ -213,7 +230,7 @@ def parse_unit_report(
             if key in out:
                 raise FormatDriftError("SPB: duplicate ticker/ISIN in unit report")
             out[key] = unit, currency
-    if len(out) != len(identities):
+    if len(out) != len(identities) and not missing_ok:
         raise FormatDriftError("SPB: unit report lacks discovered ticker/ISIN rows")
     return out
 

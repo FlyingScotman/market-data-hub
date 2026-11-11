@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import shutil
 from collections.abc import Callable
 from datetime import UTC, date, datetime
 from decimal import Decimal
@@ -14,15 +15,17 @@ from typing import Any
 import httpx
 import psycopg
 import pytest
+from psycopg.conninfo import make_conninfo
 from psycopg.rows import DictRow
 
 from mdhub.config import Settings
 from mdhub.core.errors import FormatDriftError
 from mdhub.core.http import HttpClient, RateLimiter
+from mdhub.db.migrate import discover_migrations, migrate
 from mdhub.db.pool import Database
 from mdhub.jobs import JobOutcome, JobParamError, run_job
 from mdhub.loaders.spb_bonds import DATASET, load_range
-from mdhub.quality.checks import queue_range, reconcile_gaps, scan_dataset
+from mdhub.quality.checks import queue_backfill, queue_range, scan_dataset
 from mdhub.quality.history_load import eligible
 from mdhub.schedule import RULES, rule_applies
 from mdhub.sources import spb
@@ -284,6 +287,8 @@ class MockSpb:
         self.card_override: dict[str, Any] = {}
         self.requests: list[httpx.Request] = []
         self.report_payload = _bytes("unit-reference-2026-11-10.pdf")
+        self.extra_rows: list[dict[str, Any]] = []
+        self.extra_cards: dict[str, dict[str, Any]] = {}
 
     def __call__(self, **kwargs: Any) -> HttpClient:
         return HttpClient(
@@ -298,16 +303,23 @@ class MockSpb:
         self.requests.append(request)
         path = request.url.path
         if path == spb.UNIVERSE_PATH:
-            data = _bytes("russian-market.json")
+            data = _encode([*_json("russian-market.json"), *self.extra_rows])
         elif path == spb.ARCHIVE_PATH:
             data = _bytes("archive.json")
         elif path.startswith("/api/listing/"):
-            candidate = next(c for c in _candidates() if str(c.security_id) == path.split("/")[-1])
-            data = (
-                _encode(self.card_override[candidate.ticker])
-                if candidate.ticker in (self.card_override)
-                else _bytes(f"card-{candidate.ticker}.json")
+            security_id = path.split("/")[-1]
+            extra = next(
+                (r for r in self.extra_rows if str(r["idSecurities"]) == security_id), None
             )
+            if extra is not None:
+                data = _encode(self.extra_cards[extra["srtsCode"]])
+            else:
+                candidate = next(c for c in _candidates() if str(c.security_id) == security_id)
+                data = (
+                    _encode(self.card_override[candidate.ticker])
+                    if candidate.ticker in (self.card_override)
+                    else _bytes(f"card-{candidate.ticker}.json")
+                )
         elif path.endswith(".pdf"):
             return httpx.Response(
                 200, content=self.report_payload, headers={"content-type": "application/pdf"}
@@ -328,6 +340,12 @@ class MockSpb:
 @pytest.fixture
 def source() -> MockSpb:
     return MockSpb()
+
+
+def _error(conn: Conn, outcome: JobOutcome) -> str:
+    conn.rollback()
+    row = conn.execute("SELECT error FROM ops.job_run WHERE id=%s", (outcome.run_id,)).fetchone()
+    return str(row["error"]) if row and row["error"] else ""
 
 
 def _run(settings: Settings, db: Database, source: MockSpb, **params: Any) -> JobOutcome:
@@ -395,7 +413,59 @@ def test_discovery_load_idempotence_corrections_and_provenance(
     ).fetchone() == {"n": 1}
 
 
-def test_empty_per_isin_evidence_and_event_calendar_no_synthetic_gaps(
+def test_day_without_a_bar_is_normal_no_gap_no_backfill_task(
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    source: MockSpb,
+    today_is: Callable[[date], None],
+) -> None:
+    """Weekends, holidays and a bond that did not trade have no bar: that is not a gap, so the
+    quality check queues no backfill task that would rerun the whole load."""
+    today_is(TODAY)
+    source.chart_payload["XMED1P1"] = []
+    outcome = _run(settings, db, source, date_from=date(2026, 11, 7), date_to=DAY)
+    assert outcome.status == "succeeded"
+    assert outcome.result["instruments"][XMED]["missing_dates"] == 4
+    assert outcome.result["instruments"][XMED]["rows"] == 0
+    # the empty answer itself is kept as raw evidence, but nothing is recorded as missing
+    assert conn.execute(
+        "SELECT count(*) AS n FROM ops.raw_capture WHERE run_id=%s AND endpoint='bond_chart_daily'",
+        (outcome.run_id,),
+    ).fetchone() == {"n": 21}
+    assert conn.execute(
+        "SELECT count(*) AS n FROM ops.data_gap WHERE dataset='spb_bonds_daily'"
+    ).fetchone() == {"n": 0}
+    never = lambda *_: False  # noqa: E731 - no exchange calendar for this dataset
+    assert queue_backfill(conn, DATASET, never, today=TODAY) == []
+    assert conn.execute("SELECT count(*) AS n FROM ops.backfill_task").fetchone() == {"n": 0}
+    check = scan_dataset(conn, DATASET, today=TODAY, calendar=never)
+    assert check.gaps == [] and DATASET.calendar is None and not eligible(DATASET)
+    (rule,) = RULES[DATASET.name]
+    # the chart has no bar for the current day, so one run a day (07:40, last three dates) reads
+    # everything there is; more runs would only repeat the requests
+    assert rule.cron == "40 7 * * *" and rule.days == "all"
+    assert rule_applies(rule, date(2026, 11, 7), never)
+    task = queue_range(conn, DATASET, date(2026, 9, 1), date(2026, 11, 10))
+    assert len(task) == 3 and all((b - a).days < 31 for _, a, b in task)
+
+
+def _new_issue(source: MockSpb, ticker: str = "NEWISS1") -> str:
+    """A valid, well-formed bond that yesterday's full report does not list yet."""
+    row = copy.deepcopy(next(r for r in _json("russian-market.json") if r["srtsCode"] == "MGKL1P1"))
+    card = _json("card-MGKL1P1.json")
+    serial = len(source.extra_rows) + 1
+    isin = next(
+        f"RU000A10{serial}QQ{k}" for k in range(10) if spb.valid_isin(f"RU000A10{serial}QQ{k}")
+    )
+    row.update(idSecurities=90000 + serial, srtsCode=ticker)
+    card.update(idSecurities=90000 + serial, srtsCode=ticker, sisinCode=isin)
+    source.extra_rows.append(row)
+    source.extra_cards[ticker] = card
+    return isin
+
+
+def test_new_issue_missing_from_report_is_skipped_others_load(
     settings: Settings,
     db: Database,
     conn: Conn,
@@ -403,38 +473,21 @@ def test_empty_per_isin_evidence_and_event_calendar_no_synthetic_gaps(
     today_is: Callable[[date], None],
 ) -> None:
     today_is(TODAY)
-    source.chart_payload["XMED1P1"] = []
-    outcome = _run(settings, db, source, date_from=date(2026, 11, 7), date_to=DAY)
-    assert outcome.status == "succeeded"
-    gaps = conn.execute(
-        "SELECT * FROM ops.data_gap WHERE dataset='spb_bonds_daily' AND key->>'isin'=%s", (XMED,)
-    ).fetchall()
-    assert len(gaps) == 4 and all("no session/trade completeness" in g["note"] for g in gaps)
-    assert all(g["status"] != "backfilled" for g in gaps)
-    # Another ISIN's rows cannot close XMED's no-data evidence in the generic backfill path.
-    reconcile_gaps(
-        conn,
-        DATASET,
-        date(2026, 11, 7),
-        DAY,
-        run_id=outcome.run_id,
-        mark_unfillable=True,
-        today=TODAY,
-    )
+    new_isin = _new_issue(source)
+    outcome = _run(settings, db, source, day=DAY)
+    assert outcome.status == "partial"
+    assert list(outcome.result["skipped"]) == ["NEWISS1"]
+    assert "unit report" in outcome.result["skipped"]["NEWISS1"]
+    assert "NEWISS1" in _error(conn, outcome)
+    assert conn.execute("SELECT count(*) AS n FROM ref.spb_bond").fetchone() == {"n": 21}
     assert conn.execute(
-        "SELECT count(*) AS n FROM ops.data_gap WHERE dataset='spb_bonds_daily' "
-        "AND key->>'isin'=%s AND status='backfilled'",
-        (XMED,),
+        "SELECT count(*) AS n FROM ref.spb_bond WHERE isin=%s", (new_isin,)
     ).fetchone() == {"n": 0}
-    check = scan_dataset(conn, DATASET, today=TODAY, calendar=lambda *_: False)
-    assert check.gaps == [] and DATASET.calendar is None and not eligible(DATASET)
-    (rule,) = RULES[DATASET.name]
-    assert rule.days == "all" and rule_applies(rule, date(2026, 11, 7), lambda *_: False)
-    task = queue_range(conn, DATASET, date(2026, 9, 1), date(2026, 11, 10))
-    assert len(task) == 3 and all((b - a).days < 31 for _, a, b in task)
+    assert conn.execute("SELECT count(*) AS n FROM md.spb_bond_daily").fetchone() == {"n": 2}
+    assert not any(r.url.params.get("symbol") == "NEWISS1" for r in source.requests)
 
 
-def test_malformed_metadata_prevents_all_chart_writes(
+def test_odd_card_is_skipped_others_load(
     settings: Settings,
     db: Database,
     conn: Conn,
@@ -445,16 +498,14 @@ def test_malformed_metadata_prevents_all_chart_writes(
     card = _json("card-XMED1P1.json")
     card["sgroupSec"] = "Иностранные ценные бумаги"
     source.card_override["XMED1P1"] = card
-    with pytest.raises(FormatDriftError):
-        _run(settings, db, source, day=DAY)
-    assert not any(r.url.path == spb.HISTORY_PATH for r in source.requests)
-    assert conn.execute("SELECT count(*) AS n FROM md.spb_bond_daily").fetchone() == {"n": 0}
-    assert conn.execute("SELECT status FROM ops.job_run ORDER BY id DESC LIMIT 1").fetchone() == {
-        "status": "failed"
-    }
+    outcome = _run(settings, db, source, day=DAY)
+    assert outcome.status == "partial" and list(outcome.result["skipped"]) == ["XMED1P1"]
+    assert conn.execute("SELECT count(*) AS n FROM ref.spb_bond").fetchone() == {"n": 20}
+    assert conn.execute("SELECT isin FROM md.spb_bond_daily").fetchall() == [{"isin": MGKL}]
+    assert not any(r.url.params.get("symbol") == "XMED1P1" for r in source.requests)
 
 
-def test_malformed_chart_atomic_per_instrument(
+def test_malformed_chart_skips_that_bond_only_and_keeps_evidence(
     settings: Settings,
     db: Database,
     conn: Conn,
@@ -465,7 +516,204 @@ def test_malformed_chart_atomic_per_instrument(
     valid = _json("chart-MGKL1P1.json")[-1]
     invalid = {**valid, "close": 0}
     source.chart_payload["MGKL1P1"] = [valid, invalid]
-    with pytest.raises(FormatDriftError):
-        _run(settings, db, source, day=DAY)
-    assert conn.execute("SELECT count(*) AS n FROM md.spb_bond_daily").fetchone() == {"n": 0}
+    outcome = _run(settings, db, source, day=DAY)
+    assert outcome.status == "partial" and list(outcome.result["skipped"]) == ["MGKL1P1"]
+    # atomic per instrument: nothing of the malformed array, the other bond is stored
+    assert conn.execute("SELECT isin FROM md.spb_bond_daily").fetchall() == [{"isin": XMED}]
     assert conn.execute("SELECT count(*) AS n FROM ref.spb_bond").fetchone() == {"n": 21}
+    assert conn.execute(
+        "SELECT count(*) AS n FROM ops.raw_capture WHERE run_id=%s AND endpoint='bond_chart_daily'",
+        (outcome.run_id,),
+    ).fetchone() == {"n": 21}
+
+
+def test_bar_outside_requested_dates_skips_the_bond(
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    source: MockSpb,
+    today_is: Callable[[date], None],
+) -> None:
+    today_is(TODAY)
+    stray = {**_json("chart-MGKL1P1.json")[-1]}
+    stray["bar_unixtime"] -= 5 * 86400
+    source.chart_payload["MGKL1P1"] = [stray]
+    outcome = _run(settings, db, source, day=DAY)
+    assert outcome.status == "partial" and "outside" in outcome.result["skipped"]["MGKL1P1"]
+
+
+def test_many_failures_are_format_drift_and_stop_the_run(
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    source: MockSpb,
+    today_is: Callable[[date], None],
+) -> None:
+    """21 bonds: 4 skipped is an odd bond or two, 5 is a changed format."""
+    today_is(TODAY)
+    assert spb.skip_limit(21) == 4 and spb.skip_limit(2) == 1 and spb.skip_limit(5) == 1
+    tickers = [c.ticker for c in _candidates()]
+    for ticker in tickers[:4]:
+        card = _json(f"card-{ticker}.json")
+        card["sgroupSec"] = "Иностранные ценные бумаги"
+        source.card_override[ticker] = card
+    assert _run(settings, db, source, day=DAY).status == "partial"
+    source.requests.clear()
+    card = _json(f"card-{tickers[4]}.json")
+    card["sgroupSec"] = "Иностранные ценные бумаги"
+    source.card_override[tickers[4]] = card
+    with pytest.raises(FormatDriftError, match="5 of 21 bonds failed validation"):
+        _run(settings, db, source, day=DAY)
+    assert not any(r.url.path == spb.HISTORY_PATH for r in source.requests)
+    assert conn.execute("SELECT status FROM ops.job_run ORDER BY id DESC LIMIT 1").fetchone() == {
+        "status": "failed"
+    }
+
+
+def test_chart_drift_in_most_bonds_fails_the_run(
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    source: MockSpb,
+    today_is: Callable[[date], None],
+) -> None:
+    today_is(TODAY)
+    for candidate in _candidates()[:6]:
+        source.chart_payload[candidate.ticker] = {"error": "format changed"}
+    with pytest.raises(FormatDriftError, match="failed validation"):
+        _run(settings, db, source, day=DAY)
+    assert conn.execute("SELECT status FROM ops.job_run ORDER BY id DESC LIMIT 1").fetchone() == {
+        "status": "failed"
+    }
+
+
+def test_report_unit_row_drift_still_stops_the_run(
+    settings: Settings,
+    db: Database,
+    source: MockSpb,
+    today_is: Callable[[date], None],
+) -> None:
+    today_is(TODAY)
+    source.report_payload = b"not a PDF"
+    with pytest.raises(FormatDriftError, match="unreadable"):
+        _run(settings, db, source, day=DAY)
+
+
+def test_report_without_the_discovered_bonds_is_drift(
+    settings: Settings,
+    db: Database,
+    source: MockSpb,
+    monkeypatch: pytest.MonkeyPatch,
+    today_is: Callable[[date], None],
+) -> None:
+    today_is(TODAY)
+    monkeypatch.setattr(spb, "parse_unit_report", lambda *_a, **_kw: {})
+    with pytest.raises(FormatDriftError, match=r"5 of 21 bonds failed validation \(limit 4\)"):
+        _run(settings, db, source, day=DAY)
+    assert not any(r.url.path == spb.HISTORY_PATH for r in source.requests)
+
+
+def test_report_is_downloaded_once_per_report_date(
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    source: MockSpb,
+    today_is: Callable[[date], None],
+) -> None:
+    """A rerun on the same day (retry, backfill task, Run now) reads the units it already
+    validated against the dated report; the request count is the cheap part of the run."""
+    today_is(TODAY)
+
+    def pdfs() -> int:
+        return sum(r.url.path.endswith(".pdf") for r in source.requests)
+
+    first = _run(settings, db, source, day=DAY)
+    assert first.result["report_downloaded"] is True and pdfs() == 1
+    # universe + 21 cards + archive (one year) + report + 21 charts
+    assert first.result["requests"] == len(source.requests) == 1 + 21 + 1 + 1 + 21
+    unit_capture = conn.execute(
+        "SELECT unit_capture_id FROM ref.spb_bond WHERE isin=%s", (MGKL,)
+    ).fetchone()
+    conn.commit()
+    source.requests.clear()
+    again = _run(settings, db, source, day=DAY)
+    assert again.status == "succeeded" and pdfs() == 0
+    assert again.result["report_downloaded"] is False
+    assert again.result["requests"] == len(source.requests) == 1 + 21 + 1 + 21
+    assert conn.execute("SELECT count(*) AS n FROM ref.spb_bond").fetchone() == {"n": 21}
+    assert (
+        conn.execute("SELECT unit_capture_id FROM ref.spb_bond WHERE isin=%s", (MGKL,)).fetchone()
+        == unit_capture
+    )
+    assert conn.execute(
+        "SELECT rows_inserted, rows_updated, rows_unchanged FROM ops.job_run WHERE id=%s",
+        (again.run_id,),
+    ).fetchone() == {"rows_inserted": 0, "rows_updated": 0, "rows_unchanged": 23}
+    assert conn.execute(
+        "SELECT count(*) AS n FROM ops.row_history WHERE "
+        "table_name IN ('ref.spb_bond','md.spb_bond_daily')"
+    ).fetchone() == {"n": 0}
+    conn.commit()
+    # a changed card (settlement currency) is not trusted: the report is read again, and the
+    # bond whose card now contradicts the report is skipped
+    card = _json("card-MGKL1P1.json")
+    card["scurrencyCalc"] = "USD"
+    source.card_override["MGKL1P1"] = card
+    source.requests.clear()
+    third = _run(settings, db, source, day=DAY)
+    assert pdfs() == 1 and third.status == "partial"
+    assert "settlement currency" in third.result["skipped"]["MGKL1P1"]
+
+
+def test_switched_off_job_and_no_request(
+    db_url: str,
+    db: Database,
+    conn: Conn,
+    source: MockSpb,
+    today_is: Callable[[date], None],
+) -> None:
+    today_is(TODAY)
+    off = Settings(database_url=db_url, enable_spb_bonds=False)
+    outcome = _run(off, db, source, day=DAY)
+    assert outcome.status == "skipped" and "MDHUB_ENABLE_SPB_BONDS" in _error(conn, outcome)
+    assert source.requests == []
+    assert conn.execute("SELECT count(*) AS n FROM ref.spb_bond").fetchone() == {"n": 0}
+    assert Settings(database_url=db_url).enable_spb_bonds is True
+
+
+SPB_MIGRATIONS = {
+    "0130_spb_bond_reference",
+    "0290_spb_bond_daily",
+    "0570_spb_bond_known_at",
+    "0680_spb_job_source",
+    "0690_spb_licence_note",
+}
+
+
+def test_upgrade_from_main_applies_only_the_spb_migrations_with_role_grants(
+    template_db: str, empty_db_url: str, tmp_path: Path
+) -> None:
+    """A database at ``main`` (no SPB migration) takes exactly the SPB files, and the read API
+    role (it reads md and ref schema-wide, migration 0800) sees the new tables. ``template_db``
+    creates the service roles of the test cluster. The read-only role gets its SELECT from
+    ``deploy/sql/grant_readonly.sql`` for every table, so the new ones need nothing of their own."""
+    main_dir = tmp_path / "main"
+    main_dir.mkdir()
+    for m in discover_migrations():
+        if m.version not in SPB_MIGRATIONS:
+            shutil.copy(m.path, main_dir / m.path.name)
+    assert len(list(main_dir.glob("*.sql"))) == len(discover_migrations()) - len(SPB_MIGRATIONS)
+    migrate(empty_db_url, directory=main_dir)
+    report = migrate(empty_db_url)
+    assert report.applied == sorted(SPB_MIGRATIONS)
+    with psycopg.connect(make_conninfo(empty_db_url, user="mdhub_api")) as c:
+        for table in ("ref.spb_bond", "md.spb_bond_daily"):
+            assert c.execute(f"SELECT count(*) FROM {table}").fetchone() == (0,)
+        assert c.execute(
+            "SELECT count(*) FROM md.spb_bond_daily_known_at(now(), %s, %s)", (DAY, DAY)
+        ).fetchone() == (0,)
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            c.execute("DELETE FROM md.spb_bond_daily")
+    with psycopg.connect(empty_db_url) as owner:
+        note = owner.execute("SELECT licence_note FROM ops.source WHERE code = 'spb'").fetchone()
+    assert note and "2026-11-11" in note[0] and "Chart close is not official" in note[0]

@@ -47,7 +47,7 @@ labels. Load only dates strictly before **today in Moscow**, including after Mos
 while UTC is still on the previous date. This excludes the current-date unfinished bar; an
 older chart bar remains revisable and is never described as official-final data.
 
-The job re-reads the last three completed calendar dates at 07:40 Moscow every calendar day.
+The job re-reads the last three completed calendar dates at 07:40 Moscow every calendar day (one run a day, see below).
 It does not borrow MOEX holidays, filter weekends, or infer a session calendar from whether
 an instrument happened to trade. `spb_bonds_daily` is registered as an event dataset: quality
 checks freshness but creates no synthetic session gaps, and automatic history-head loading
@@ -60,12 +60,51 @@ range of at most 31 calendar days. Use additional bounded ranges for deeper hist
 existing job-request worker, backfill queue and retry controls run the same idempotent job.
 No separate process or owner command line is needed.
 
-A successful requested range records source-confirmed missing bars per ISIN in `ops.data_gap`
-and captures the empty response; it makes no assertion that a session or a trade should have
-occurred. Generic no-data grace/retry bookkeeping uses weekdays with no MOEX calendar. A row
-for one ISIN cannot close another ISIN's no-data record. Missing dates are not zeroes and are
-not forward-filled. Parsing is atomic per instrument/range, metadata is validated before
-price loading, and a later source error fails the run while retaining earlier committed
-instruments and discovery evidence. Changed source bars create ordinary revision history.
+A calendar date without a bar (weekend, holiday, a bond that did not trade) is normal for this
+dataset: nothing is recorded in `ops.data_gap`, no backfill task is queued, and the chart
+response stays captured as evidence. The run result counts `missing_dates` per ISIN; they are
+not zeroes and are not forward-filled. Parsing is atomic per instrument/range and metadata is
+validated before price loading. Changed source bars create ordinary revision history.
+
+## A bond that fails validation, and format drift
+
+One awkward bond does not stop the load. A bond is skipped, with a diagnostic in the run result
+(`skipped`) and in the log, and the run ends `partial` (the reason lists the tickers), when
+
+- its card contradicts the Russian-bond identity or classification, or its ISIN is invalid;
+- it is missing from the dated unit report (typically a new issue the previous day's report does
+  not list yet) or the card and the report disagree on the settlement currency;
+- its chart answer is malformed (a bar outside the requested dates, a duplicate, non-positive or
+  inconsistent prices). The response itself is kept in `ops.raw_capture`; no row is written.
+
+The other bonds are loaded. A changed format breaks every card, report row or chart alike, so
+more than one fifth of the discovered bonds (at least one; 4 of today's 21) skipped in one run is
+treated as format drift: the run fails with the list of reasons. A malformed or unreadable
+report, a changed column layout or an ambiguous row still fail the run at once.
+
+## Reading the site: how often, and what costs a request
+
+The owner allowed reading the public SPB Exchange website on 2026-11-11, up to several times
+a day. Setting `MDHUB_ENABLE_SPB_BONDS` (default `true`) switches the reads off: the job then
+ends `skipped` and the `spb` source probe sends nothing; stored prices stay and are served.
+
+**What the site gives inside a trading day.** The daily chart (`chistory`, `resolution=1440`)
+returns completed dates only: a request that included the current date (2026-11-11, saved in
+`tests/fixtures/spb/chart-*.json`) answered up to the previous date, and the loader never asks
+for the current date. Another run during the day therefore finds no new bar, so the job stays
+**one run a day at 07:40 Moscow time**, which re-reads the last three completed dates (late
+corrections of a bar are picked up there). The instrument list (`default/rus`) also carries
+session aggregates of the current day (first, lowest, highest and last price, volumes) in
+text form, but with no date and from a different endpoint than the chart; they are captured
+with the list and are not stored as prices. Storing them as a separate, explicitly preliminary
+series needs a check of their meaning against the live site (when they restart, which session
+they cover) and an owner decision; see the open question in the pull request.
+
+**Requests.** One run reads the list (1), every discovered bond's card (N), the report archive
+(1, 2 around New Year) and the dated unit report (1, a PDF), then one chart per bond (N):
+45 requests for the 21 bonds seen on 2026-11-11, paced at 1 request per second. The unit report
+is dated and does not change: a rerun for the same report date (a retry, "Run now", a backfill
+task) reads the units already stored and skips the PDF (44 requests) unless a card changed.
+The `spb` probe sends one request an hour (24 a day, was 288) and none when switched off.
 
 Read through the authenticated, bounded [history API](HISTORY_API.md).
