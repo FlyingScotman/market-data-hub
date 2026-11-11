@@ -78,27 +78,28 @@ ls -d /opt/mdhub/releases/0.6.2
   unavailable (see 4.4); tell the owner before you go on. The second command is the rollback
   prerequisite (3.6): the console can only go back to a release directory that exists.
 
-**Step 2 — which files are in use.**
+**Step 2 — which files are in use.** The source is the label that Compose put on the running worker
+container; `docker compose ls` is the cross-check.
 
 ```bash
+docker inspect mdhub-worker-1 --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}'
 docker compose ls
 ```
 
+- `docker inspect` prints the details of a container; `--format '...'` is a Go template; `index .Config.Labels "..."`
+  takes one label, the one that holds the list of Compose files the project was started with (Compose writes
+  it on every container it creates). The project is named `mdhub` by `name:` in `docker-compose.yml`, so the worker
+  container is normally `mdhub-worker-1`; if that name does not exist (`docker ps` shows the container names), use
+  the name shown there for the `worker` service.
 - `docker compose ls` lists the running Compose projects: the project name, its state and the column
-  `CONFIG FILES`, the files with which it was started (Compose records them on the containers).
-- Expected: one project `mdhub`, state `running(N)`, and a comma-separated list such as
-  `/opt/mdhub/current/deploy/docker-compose.yml,/opt/mdhub/shared/compose.local.yaml`. The first file is the
-  release's `docker-compose.yml`; every file after it is a site file. Write the list down (section 9).
-- No project `mdhub`, or the list is cut off: read the labels of the worker container instead
-  (the project is named `mdhub` by `name:` in `docker-compose.yml`, so the container is `mdhub-worker-1`):
-
-  ```bash
-  docker inspect mdhub-worker-1 --format '{{index .Config.Labels "com.docker.compose.project.config_files"}}'
-  ```
-
-  `docker inspect` prints the details of a container; `--format '...'` is a Go template; `index .Config.Labels "..."`
-  takes one label, the one that holds the file list. If the name `mdhub-worker-1` does not exist
-  (`docker ps` shows the container names), use the name shown there for the `worker` service.
+  `CONFIG FILES`, the files with which it was started.
+- Expected: the label is a comma-separated list such as
+  `/opt/mdhub/current/deploy/docker-compose.yml,/opt/mdhub/shared/compose.local.yaml`, and `docker compose ls` shows
+  one project `mdhub`, state `running(N)`, with **the same list**. The first file is the release's `docker-compose.yml`;
+  every file after it is a site file. Write the list down (section 9).
+- **Stop and ask the owner** if the label is empty or the container does not exist, if the list holds **more than one**
+  `docker-compose.yml` (two releases mixed), if the first file belongs to a release other than 0.6.2, or if the two
+  sources differ in any way (a different file, a different order, a cut-off list).
 
 **Step 3 — fix the files for this shell.** Join the paths with a colon, **in the same order**, and use the
 release's `docker-compose.yml` through `current` (it follows the running release) as the first one:
@@ -119,21 +120,29 @@ export COMPOSE_FILE=/opt/mdhub/current/deploy/docker-compose.yml:/opt/mdhub/shar
 **Step 4 — check that Compose sees the same project.**
 
 ```bash
+docker compose version
 docker compose config --services | sort
 docker ps --filter label=com.docker.compose.project=mdhub --format '{{.Label "com.docker.compose.service"}}' | sort
 docker compose up -d --dry-run --no-deps worker
 ```
 
+- `docker compose version` prints the version of the Compose plugin. **`--dry-run` needs 2.17 or newer.** If it is
+  older, or the last command answers `unknown flag: --dry-run`: **stop and ask the owner. Do not "try the
+  command without the flag".**
+- **Never run the last command without `--dry-run`**: without it `up` really creates, re-creates and starts containers.
 - `docker compose config --services` prints the service names of the configuration Compose computes from
   `COMPOSE_FILE`; `| sort` sorts them. `docker ps` lists the running containers; `--filter label=...` keeps those of
   the project `mdhub`; `--format '{{.Label "..."}}'` prints one label of each, the service name.
 - Expected: every service of the second list is in the first; the first has also `migrate` (a one-shot
   that has finished) and nothing else. Differences: stop.
 - `docker compose up -d --dry-run --no-deps worker` only **shows** what a start of the worker would do and
-  changes nothing (`--dry-run`); `--no-deps` leaves out the services the worker depends on. Expected: the
-  worker is reported as running/unchanged and **no line about a network or any other container**. A line about
-  a network or about re-creating anything else means the files are wrong: stop and ask the owner. (A re-created worker alone means
-  `.env` changed since its last start: write it down and tell the owner.)
+  changes nothing (`--dry-run`); `--no-deps` leaves out the services the worker depends on. Read every line it prints:
+  - **Not a reason to stop:** lines with `Waiting`, `Healthy` or `Exited` about `postgres` or `migrate` (Compose prints
+    the dependency check even with `--no-deps`; the one-shot `migrate` has exited by design), and lines about the
+    `worker` itself (`Running`, or `Recreate`/`Recreated`/`Started`: a re-created worker alone means `.env` changed
+    since its last start; write it down and tell the owner).
+  - **Stop and ask the owner:** any line `Create`, `Recreate` or `Remove` for a container **other than the worker**,
+    and any line at all about a **network or a volume**. It means that the files are wrong.
 
 ### 0.4 Commands that come back several times
 
@@ -293,7 +302,7 @@ The right-hand column says what is expected of you in this upgrade.
 | `MDHUB_SNAPSHOT_HEAL_HISTORY` | `false` | history load of new datasets and the one-off reissue after it (works only with `repair` and only in the night window). Off: preview only | **switch on in section 6.2, only after the owner's yes** | **set later** |
 | `MDHUB_HISTORY_LOAD_WINDOW` | `00:30-06:00` | MSK hours in which the backfill worker takes the tasks of a history load; not the window of the cuts | to move the load | none |
 | `MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT` | `30` (1-1000) | history-load tasks taken per window (a task is up to 31 days of a daily dataset: 30 tasks are about 2.5 years) | slower or faster load | none |
-| `MDHUB_CURVE_CARRY_DATASETS` | `key_rate_swap,ruonia_ois` | curves that are carried forward when no source delivered them on a cut's day. **Unset or empty = this default**, not "no carry" (an empty value is ignored); a lone `,` (or a blank) gives an empty list = no carry. Valid names: `cny_futures_yields`, `cny_ruonia_xccy`, `cny_rusfar_ois`, `key_rate_swap`, `ruonia_ois`, `usd_futures_yields`; an unknown name stops the start (the reason, with the valid names, is printed by the check of 5.4, not by the worker) | to carry fewer or more curves | none |
+| `MDHUB_CURVE_CARRY_DATASETS` | `key_rate_swap,ruonia_ois` | curves that are carried forward when no source delivered them on a cut's day. **Unset or empty = this default**, not "no carry" (an empty value is ignored); only a lone `,` gives an empty list = no carry (compose strips trailing spaces from a line of an `env_file`, so a value of spaces becomes empty again = the default). Valid names: `cny_futures_yields`, `cny_ruonia_xccy`, `cny_rusfar_ois`, `key_rate_swap`, `ruonia_ois`, `usd_futures_yields`; an unknown name stops the start (the reason, with the valid names, is printed by the check of 5.4, not by the worker) | to carry fewer or more curves | none |
 | `MDHUB_CURVE_CARRY_MAX_AGE_DAYS` | `5` (0-3650) | working days after which a carried curve's marker says `age_limit_exceeded` (the curve is **still served**: it is a marker, not a cut-off) | - | none |
 
 New settings of 0.7.0 are only these; nothing else in `src/mdhub/config.py` or `deploy/env.example` changed
@@ -492,8 +501,9 @@ check and apply (5.4, one restart of the worker), check the source (5.5).
 The hub checks the certificate of the source against the address of the base URL. A bare IP address only
 passes if the certificate lists that IP; if it is issued for a **name**, the hub must be told the name. Look at
 the certificate from the server, so that you decide before the one edit of 5.3. Type the address when
-`read` waits for it (the line is shown on the screen, but it is neither in the shell history nor in a
-process list):
+`read` waits for it (the line is shown on the screen and does not get into the shell history; but the next
+command passes the address to `openssl` as an argument, so for the few seconds of the connection it is visible
+in the process list of **this server**, to anyone who can run `ps` here):
 
 ```bash
 read -r RC_HOSTPORT
@@ -851,24 +861,30 @@ psql puts the variable into the statement text **on its own side**: the server r
 With the settings of `deploy/postgres/postgresql.conf`, a statement that runs longer than 2 seconds
 (`log_min_duration_statement = 2000`) is written to the log of the postgres container **with its text**, and so is
 a statement that fails; the same happens for a statement that waits for a lock (`log_lock_waits`) or writes a large
-temporary file (`log_temp_files`). These counts read large tables and can pass 2 seconds. So first switch these four
-logs off **for this session only**, then type the address.
+temporary file (`log_temp_files`). These counts read large tables and can pass 2 seconds. A site may also log
+**every** statement (`log_statement = 'all'`) or all statements of a share of the transactions
+(`log_transaction_sample_rate`) in `postgresql.conf` or per database or role; the deployment file has neither, but
+a site file may. So first switch all six logs off **for this session only**, then type the address.
 
-Open an interactive session (0.4). First paste this block (the five statements) and look at the answer:
+Open an interactive session (0.4). First paste this block (the seven statements) and look at the answer:
 
 ```sql
 SET log_min_duration_statement = -1;
 SET log_min_error_statement = panic;
 SET log_lock_waits = off;
 SET log_temp_files = -1;
+SET log_statement = 'none';
+SET log_transaction_sample_rate = 0;
 SELECT current_setting('log_min_duration_statement') AS duration_log, current_setting('log_min_error_statement') AS error_stmt_log,
-       current_setting('log_lock_waits') AS lock_wait_log, current_setting('log_temp_files') AS temp_files_log;
+       current_setting('log_lock_waits') AS lock_wait_log, current_setting('log_temp_files') AS temp_files_log,
+       current_setting('log_statement') AS statement_log, current_setting('log_transaction_sample_rate') AS sample_rate_log;
 ```
 
-- `SET name = value` changes a setting for this session only; the four settings say: do not log slow statements
+- `SET name = value` changes a setting for this session only; the six settings say: do not log slow statements
   (`-1` = never), log the text of a failed statement only for a `panic` (practically never), do not log lock
-  waits, do not log temporary files. They need a superuser, which the owner role of 0.4 is.
-- Expected: four `SET` answers and the row `-1 | panic | off | -1`. **Any `ERROR`, or another row: stop and do not
+  waits, do not log temporary files, do not log statements by type (`none`), do not log the statements of sampled
+  transactions (`0`). They need a superuser, which the owner role of 0.4 is.
+- Expected: six `SET` answers and the row `-1 | panic | off | -1 | none | 0`. **Any `ERROR`, or another row: stop and do not
   go on** (leave with `\q`); do not type the address.
 
 Then enter this single psql command, type the address when asked and press Enter (do not paste it together with the
@@ -912,7 +928,9 @@ ORDER BY 1;
 - If a TLS server name is set (5.3), count it too: in the same session type `\prompt 'TLS server name: ' addr`
   (this replaces the variable), paste the statement again, and add the eight numbers to the report. The hub
   hides the name behind `<server name>` the same way.
-- Leave the session with `\q`: the four settings and the variable end with it. The statement leaves no other trace
+- Leave the session with `\q` **right after you have read the result**: while the session sits idle,
+  `pg_stat_activity.query` (visible to superusers and to the owner role) shows the text of its last statement,
+  with the address in it. The six settings and the variable end with the session. After `\q` the statement leaves no other trace
   with the address: `pg_stat_statements` stores the text with constants replaced by `$1`, `$2` (checked on PostgreSQL 16),
   and the hub's own monitoring keeps durations, not query text.
 
@@ -965,16 +983,20 @@ the checklist: every box below must be either filled in or explained.
 |---|---|
 | shell: root (`sudo -i`) used throughout (yes/no) | |
 | layout (release layout / plain); `releases/0.6.2` present (yes/no) | |
-| Compose files in use (the `CONFIG FILES` list of 0.3, file names), `COMPOSE_FILE` set and the check of 0.3 step 4 passed (yes/no) | |
+| Compose files in use (the container label and `docker compose ls` of 0.3 step 2, which agreed, file names), `COMPOSE_FILE` set and the check of 0.3 step 4 passed (yes/no) | |
+| owner warned about the first night and the re-download by consumers (yes/no, when; 3.7) | |
 | agreed install time; real start and end of the install (MSK), weekday | |
 | version before / after (`/health/ready`) | 0.6.2 / 0.7.0 |
 | migrations after: applied / known / pending / checksum_mismatch | 53 / 53 / 0 / 0 expected |
 | backup taken before the install (file name, size); `pre-update-*.dump` present after the install (yes/no) | |
 | install request: state, start and end time (UTC) | |
 | checkpoint 20:30 MSK: 4.3 to 5.6 closed (yes/no); `MDHUB_SNAPSHOT_HEAL=detect` set (yes/no, time, reason) | |
+| what the Sources row `ratescalcs` showed before the move (3.3), state of `RATESCALC_USERNAME` / `RATESCALC_PASSWORD` on Credentials | |
 | proxy configured anywhere before the move (yes/no) | |
 | address used before 0.7.0 (answer of the owner: never / yes / not sure) | |
 | TLS server name needed (yes/no); certificate issuer trusted by the hub (yes/no) | |
+| mode of `.env` after the edit (`ls -l` of 5.3; expected `-rw-------`) | |
+| the check of 5.4 printed `settings ok` before the worker was restarted (yes/no) | |
 | Check on Credentials after the move: pill and HTTP status; time | |
 | first `swaps_ratescalcs` run that `succeeded`: run id, time, `rows_inserted` | |
 | any error text seen (placeholder form only) and what fixed it | |
