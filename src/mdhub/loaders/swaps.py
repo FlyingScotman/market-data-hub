@@ -287,7 +287,12 @@ def swaps_ratescalcs(ctx: JobContext) -> dict[str, str]:
         targets.append(("snapshot", src.SNAPSHOT_PATH))
         for endpoint, path in targets:
             try:
-                resp = src.fetch(http, path, ctx.settings.ratescalcs_base_url)
+                resp = src.fetch(
+                    http,
+                    path,
+                    ctx.settings.ratescalcs_base_url,
+                    ctx.settings.ratescalcs_tls_server_name,
+                )
                 fetched_at = utc_now()
                 if endpoint == "snapshot":
                     curves = src.parse_snapshot(resp.content)
@@ -298,7 +303,7 @@ def swaps_ratescalcs(ctx: JobContext) -> dict[str, str]:
             except (MdhubError, psycopg.Error) as exc:
                 # never include page bodies in errors (credentials may appear in page text)
                 ctx.logger.error("swaps_ratescalcs %s failed: %s", endpoint, type(exc).__name__)
-                failures.append(f"{endpoint}: {type(exc).__name__}: {str(exc)[:200]}")
+                failures.append(f"{endpoint}: {type(exc).__name__}: {str(exc)[:400]}")
                 status[endpoint] = "failed"
     if failures and len(failures) == len(targets):
         raise MdhubError("swaps_ratescalcs: all pages failed: " + "; ".join(failures))

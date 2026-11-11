@@ -56,6 +56,12 @@ Environment variables (DESIGN §7 plus a few operational knobs):
                                     the source probe are requested from ``<base>/<page>``;
                                     http or https, no credentials / query / fragment in it;
                                     default ``https://ratescalcs.ru/cnyfuturesyields``
+``MDHUB_RATESCALCS_TLS_SERVER_NAME`` optional: the name the Ratescalcs certificate is issued
+                                    for, when the base URL is a bare IP address whose
+                                    certificate does not list it; the hub still connects to the
+                                    base URL, but sends this name as SNI and ``Host`` and checks
+                                    the certificate against it (verification stays on); unset =
+                                    checked against the host of the base URL
 ``CBONDS_LOGIN`` / ``CBONDS_PASSWORD``  Cbonds JSON API
 ``OTC_MONITOR_TOKEN``               OTC Monitor bearer token (``swaps_otc_monitor``)
 ``MDHUB_SNAPSHOT_STATIC_TIME``      daily static snapshot, MSK ``HH:MM``, default 07:45
@@ -101,6 +107,7 @@ collection schedule (DESIGN §6, §11) and can be changed without a code change.
 
 from __future__ import annotations
 
+import ipaddress
 import re
 from datetime import date, datetime, time, timedelta
 from typing import Any, Final, Literal
@@ -120,6 +127,7 @@ __all__ = [
     "parse_base_url",
     "parse_hhmm",
     "parse_name_list",
+    "parse_server_name",
     "parse_window",
 ]
 
@@ -171,6 +179,28 @@ def parse_base_url(value: str, name: str) -> str:
     if "?" in text or "#" in text:
         raise ValueError(f"{name}: no query string or fragment in the URL")
     return text.rstrip("/")
+
+
+_SERVER_NAME_RE: Final = re.compile(
+    r"^(?=.{1,253}$)[A-Za-z0-9_]([A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?"
+    r"(\.[A-Za-z0-9_]([A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?)*$"
+)
+
+
+def parse_server_name(value: str, name: str) -> str:
+    """A TLS server name (the DNS name a certificate is issued for): a host name, no scheme, port,
+    path or spaces, and not an IP address (SNI carries names only). Raises ``ValueError`` naming
+    the setting."""
+    text = value.strip().rstrip(".")
+    try:
+        ipaddress.ip_address(text.strip("[]"))
+    except ValueError:
+        pass
+    else:
+        raise ValueError(f"{name}: a host name is expected, not an IP address")
+    if not _SERVER_NAME_RE.fullmatch(text):
+        raise ValueError(f"{name}: expected a host name like host.example.org (no scheme or port)")
+    return text
 
 
 def parse_name_list(value: str) -> tuple[str, ...]:
@@ -528,6 +558,12 @@ class Settings(BaseSettings):
     moex_passport_password: SecretStr | None = _env("MOEX_PASSPORT_PASSWORD")
     ratescalc_username: SecretStr | None = _env("RATESCALC_USERNAME")
     ratescalc_password: SecretStr | None = _env("RATESCALC_PASSWORD")
+    ratescalcs_tls_server_name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "MDHUB_RATESCALCS_TLS_SERVER_NAME", "ratescalcs_tls_server_name"
+        ),
+    )
     ratescalcs_base_url: str = Field(
         default=RATESCALCS_DEFAULT_BASE_URL,
         validation_alias=AliasChoices("MDHUB_RATESCALCS_BASE_URL", "ratescalcs_base_url"),
@@ -577,6 +613,13 @@ class Settings(BaseSettings):
     @classmethod
     def _valid_ratescalcs_base_url(cls, value: str) -> str:
         return parse_base_url(value, "MDHUB_RATESCALCS_BASE_URL")
+
+    @field_validator("ratescalcs_tls_server_name")
+    @classmethod
+    def _valid_ratescalcs_tls_server_name(cls, value: str | None) -> str | None:
+        return (
+            None if value is None else parse_server_name(value, "MDHUB_RATESCALCS_TLS_SERVER_NAME")
+        )
 
     @field_validator("snapshot_intraday_window")
     @classmethod

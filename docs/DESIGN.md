@@ -337,8 +337,12 @@ credentials: `MOEX_API_KEY`, `MOEX_PASSPORT_LOGIN`, `MOEX_PASSPORT_PASSWORD`,
 `OTC_MONITOR_TOKEN`. `MDHUB_RATESCALCS_BASE_URL` is the one full base URL of the Ratescalcs source
 (scheme, host, optional port and path prefix; default `https://ratescalcs.ru/cnyfuturesyields`): the
 pages, the snapshot and the probe are requested from `<base>/<page>`; an invalid value (not
-http/https, credentials, query or fragment in it) stops the start. Empty values count as unset
-(`env_ignore_empty`).
+http/https, credentials, query or fragment in it) stops the start. `MDHUB_RATESCALCS_TLS_SERVER_NAME`
+(optional) is the name the certificate of a source reached by a bare IP address is issued for: the
+hub connects to the base URL, sends the name as SNI and `Host` and verifies the certificate against
+it; unset, against the host of the base URL; there is no switch that turns verification off. A failed
+certificate check is not retried and is reported in plain words (job error, source probe row).
+Empty values count as unset (`env_ignore_empty`).
 
 ## 8. Read API (v1, bearer token)
 

@@ -38,13 +38,14 @@ import httpx
 from mdhub.config import RATESCALCS_DEFAULT_BASE_URL
 from mdhub.core.decimalutil import to_decimal
 from mdhub.core.errors import FormatDriftError
-from mdhub.core.http import HttpClient
+from mdhub.core.http import HttpClient, TransportFailure
 
 __all__ = [
     "DEFAULT_BASE_URL",
     "PAGES",
     "PARSER_VERSION",
     "SNAPSHOT_PATH",
+    "TLS_HINT",
     "CurveQuote",
     "ParsedCurve",
     "content_hash",
@@ -53,6 +54,7 @@ __all__ = [
     "parse_snapshot",
     "parse_textarea_page",
     "tenor_parts",
+    "tls_hint",
 ]
 
 DEFAULT_BASE_URL: Final = RATESCALCS_DEFAULT_BASE_URL
@@ -336,17 +338,41 @@ def page_url(base_url: str, path: str) -> str:
     return base_url.rstrip("/") + path
 
 
-def fetch(http: HttpClient, path: str, base_url: str = DEFAULT_BASE_URL) -> httpx.Response:
+TLS_HINT: Final = (
+    "if the certificate is issued for a name and not for the IP address of the base URL, set "
+    "MDHUB_RATESCALCS_TLS_SERVER_NAME to that name"
+)
+"""Added to a failed certificate check of this source: what the owner can set."""
+
+
+def tls_hint(exc: TransportFailure, tls_server_name: str | None) -> TransportFailure:
+    """``exc`` with :data:`TLS_HINT` appended when it is a failed certificate check and no server
+    name is set (the owner may need one); any other failure is returned unchanged."""
+    if not exc.tls_certificate or tls_server_name:
+        return exc
+    return TransportFailure(f"{exc} ({TLS_HINT})", url=exc.url, tls_certificate=True)
+
+
+def fetch(
+    http: HttpClient,
+    path: str,
+    base_url: str = DEFAULT_BASE_URL,
+    tls_server_name: str | None = None,
+) -> httpx.Response:
     """GET one of the allow-listed Ratescalcs pages of ``base_url`` (``http`` must carry the Basic
-    auth).
+    auth). ``tls_server_name``: the name the certificate is checked against and sent as SNI /
+    ``Host`` when ``base_url`` is an IP address (never switches verification off).
 
     The snapshot must be JSON (an HTML answer raises ``EntitlementError``); editor pages must
     be ``text/html``."""
-    if path == SNAPSHOT_PATH:
-        return http.get_json(page_url(base_url, path)).response
-    if path not in {p.path for p in PAGES}:
+    if path != SNAPSHOT_PATH and path not in {p.path for p in PAGES}:
         raise ValueError(f"refusing Ratescalcs path {path!r} (GET allow-list only)")
-    resp = http.get(page_url(base_url, path))
+    try:
+        if path == SNAPSHOT_PATH:
+            return http.get_json(page_url(base_url, path), tls_server_name=tls_server_name).response
+        resp = http.get(page_url(base_url, path), tls_server_name=tls_server_name)
+    except TransportFailure as exc:
+        raise tls_hint(exc, tls_server_name) from None
     if "text/html" not in resp.headers.get("content-type", ""):
         raise FormatDriftError(f"Ratescalcs {path}: unexpected content type")
     return resp

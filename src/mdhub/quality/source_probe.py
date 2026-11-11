@@ -50,7 +50,7 @@ import httpx
 
 from mdhub.config import Settings
 from mdhub.core.errors import FormatDriftError
-from mdhub.core.http import HttpClient, HttpError
+from mdhub.core.http import HttpClient, HttpError, TransportFailure
 from mdhub.core.iss import APIM_BASE_URL, ISS_BASE_URL
 from mdhub.core.redact import redact_url, sanitize_text
 from mdhub.core.timeutil import MSK
@@ -91,6 +91,8 @@ class ProbeRequest:
     headers: dict[str, str] | None = None
     json: Any = None
     configured: bool | None = None
+    tls_server_name: str | None = None
+    """Present this name as SNI / ``Host`` and verify the certificate against it (URL is an IP)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,12 +134,13 @@ def _apim(settings: Settings) -> ProbeRequest:
 
 def _ratescalcs(settings: Settings) -> ProbeRequest:
     url = ratescalcs.page_url(settings.ratescalcs_base_url, ratescalcs.SNAPSHOT_PATH)
+    name = settings.ratescalcs_tls_server_name
     user, password = settings.ratescalc_username, settings.ratescalc_password
     if user is None or password is None:
-        return ProbeRequest(url=url, configured=False)
+        return ProbeRequest(url=url, configured=False, tls_server_name=name)
     pair = f"{user.get_secret_value()}:{password.get_secret_value()}".encode()
     headers = {"Authorization": "Basic " + base64.b64encode(pair).decode("ascii")}
-    return ProbeRequest(url=url, headers=headers, configured=True)
+    return ProbeRequest(url=url, headers=headers, configured=True, tls_server_name=name)
 
 
 def _otc_monitor(settings: Settings) -> ProbeRequest:
@@ -247,9 +250,16 @@ def probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult:
     started = time.perf_counter()
     try:
         response = http.request(
-            req.method, req.url, headers=req.headers, json=req.json, raise_for_status=False
+            req.method,
+            req.url,
+            headers=req.headers,
+            json=req.json,
+            raise_for_status=False,
+            tls_server_name=req.tls_server_name,
         )
     except (HttpError, httpx.HTTPError, OSError) as exc:
+        if spec.source == "ratescalcs" and isinstance(exc, TransportFailure):
+            exc = ratescalcs.tls_hint(exc, req.tls_server_name)
         text = sanitize_text(f"{type(exc).__name__}: {exc}", settings.secret_values())
         return ProbeResult(
             source=spec.source,
