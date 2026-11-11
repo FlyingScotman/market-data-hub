@@ -29,7 +29,7 @@ from typing import Any, Final, Literal
 
 from mdhub.config import Settings
 from mdhub.core.bizday import CalendarPredicate
-from mdhub.core.redact import sanitize_text
+from mdhub.core.redact import sanitize_text, stored_text
 from mdhub.db.pool import Database
 from mdhub.jobs import (
     REGISTRY,
@@ -190,11 +190,14 @@ def run_request(
             trigger="admin",
         )
     except (UnknownJobError, JobParamError) as exc:
-        _finish(db, request, "failed", run_id=None, error=str(exc))
+        _finish(db, request, "failed", run_id=None, error=stored_text(str(exc), settings))
         return "failed"
     except Exception as exc:  # recorded as a failed run by run_job
         detail = sanitize_text(f"{type(exc).__name__}: {exc}", settings.secret_values())
-        _finish(db, request, "failed", run_id=_run_of(db, request), error=detail)
+        # ops.job_request.error is readable by the read-only role: no configured source address
+        _finish(
+            db, request, "failed", run_id=_run_of(db, request), error=stored_text(detail, settings)
+        )
         return "failed"
     state: Literal["done", "failed"] = "failed" if outcome.status == "failed" else "done"
     _finish(db, request, state, run_id=outcome.run_id, error=None)

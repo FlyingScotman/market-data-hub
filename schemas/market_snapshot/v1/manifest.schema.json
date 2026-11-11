@@ -8,7 +8,7 @@
       "type": "object",
       "properties": {
         "schema_version": {
-          "const": "market_snapshot/1.6"
+          "const": "market_snapshot/1.7"
         },
         "kind": {
           "enum": [
@@ -223,6 +223,13 @@
               }
             }
           }
+        },
+        "carried_curves": {
+          "description": "1.7: present only when the snapshot carries at least one curve forward (otherwise the field is absent and the snapshot is what a 1.6 hub published, apart from schema_version). Permanent notice: a carried curve must never be shown as fresh data",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/carried_curve"
+          }
         }
       }
     },
@@ -324,6 +331,63 @@
           "$ref": "common.schema.json#/$defs/label"
         }
       }
+    },
+    "carried_curve": {
+      "description": "A curve carried forward from an earlier day (1.7): no source stored it on the business date, so this snapshot holds the quote set of source_day instead. One entry per carried quote set; the same facts sit in CurveQuoteSet.carried_forward",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dataset",
+        "source",
+        "quote_set_id",
+        "source_day",
+        "age_working_days",
+        "age_limit_working_days",
+        "age_limit_exceeded",
+        "reason"
+      ],
+      "properties": {
+        "dataset": {
+          "description": "Hub quote-set code of the carried curve (ruonia_ois, key_rate_swap, ...)",
+          "type": "string"
+        },
+        "source": {
+          "type": "string"
+        },
+        "quote_set_id": {
+          "description": "quote_set_id of the carried CurveQuoteSet in data.curve_quote_sets",
+          "type": "integer"
+        },
+        "source_day": {
+          "description": "The earlier day the curve was taken from: the latest day before the business date with a stored quote set of this curve",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/date"
+            }
+          ]
+        },
+        "age_working_days": {
+          "description": "Working days (MOEX_STOCK) after source_day up to the business date; grows while the gap lasts",
+          "type": "integer",
+          "minimum": 0
+        },
+        "age_limit_working_days": {
+          "description": "The age limit in force (hub setting): a curve older than this is still served, with age_limit_exceeded true",
+          "type": "integer",
+          "minimum": 0
+        },
+        "age_limit_exceeded": {
+          "type": "boolean"
+        },
+        "reason": {
+          "description": "no_quote_set_on_business_date: no source stored a quote set of this curve on the business date",
+          "allOf": [
+            {
+              "$ref": "common.schema.json#/$defs/label"
+            }
+          ]
+        }
+      }
     }
   },
   "type": "object",
@@ -355,7 +419,7 @@
       ]
     },
     "schema_version": {
-      "const": "market_snapshot/1.6"
+      "const": "market_snapshot/1.7"
     },
     "kind": {
       "enum": [
@@ -569,6 +633,13 @@
             "$ref": "common.schema.json#/$defs/label"
           }
         }
+      }
+    },
+    "carried_curves": {
+      "description": "1.7: present only when the snapshot carries at least one curve forward (otherwise the field is absent and the snapshot is what a 1.6 hub published, apart from schema_version). Permanent notice: a carried curve must never be shown as fresh data",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/carried_curve"
       }
     }
   },

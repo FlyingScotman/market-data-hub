@@ -1,7 +1,7 @@
 # market-data-hub — design
 
 Status: living design, first written 2026-10-15 (v0.1) and kept current with `main` (contract
-`market_snapshot/1.6`, 46 migrations; production v0.4.0 = contract 1.5). Owner: FiveLimaGolf. Target: a single VPS that is the
+`market_snapshot/1.7`, 46 migrations; production v0.4.0 = contract 1.5). Owner: FiveLimaGolf. Target: a single VPS that is the
 market data hub for the trading desk backend (trading_desk_monitor + rub-fixed-income-core).
 
 Inputs to this design (audits, 2026-10-15): market-data-store (curves/FX/fixings loaders),
@@ -33,8 +33,11 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
   change of a non-meta column on an existing key writes the previous row image to
   `ops.row_history` (generic trigger) → bitemporal "as known at" reconstruction.
   Identical re-loads are no-ops (no history row, no churn).
-- **Missing ≠ zero ≠ stale.** Never forward-fill. A failed/empty fetch is recorded as a
-  failed run / `ops.data_gap`, never as a value.
+- **Missing ≠ zero ≠ stale.** Never forward-fill silently. A failed/empty fetch is recorded as a
+  failed run / `ops.data_gap`, never as a value. The one exception is an owner decision (2026-11-11):
+  a curve of the carried set (RUONIA OIS, key-rate swaps) that no source stored for the day of a
+  market cut is taken from the latest earlier day and **flagged** in the snapshot (contract 1.7,
+  §11); stored tables are never filled.
 - **Fail closed on format drift.** Parsers validate columns/types and raise; the run is
   marked `failed` with the error; nothing partial is committed for that capture.
 - **Separate clocks.** `source_ts` (source's own time, e.g. UPDATETIME/SYSTIME), `fetched_at`
@@ -58,7 +61,7 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
 | MOEX APIM `apim.moex.com/iss` | `MOEX_API_KEY` (Bearer) | realtime futures (FX futures bid/offer/last/OI), AlgoPack FO tradestats + FUTOI (rolling 90-day window; order-book obstats not collected, dropped in 0423) | futures realtime; bonds/FX delayed |
 | MOEX Passport | `MOEX_PASSPORT_LOGIN/PASSWORD` | optional; login works, account currently **not** realtime-entitled | delayed |
 | MOEX SDFI swap curves `/iss/sdfi/curves` | subscription | catalogue only; loader ready behind feature flag `MDHUB_ENABLE_SDFI` | — |
-| Ratescalcs `ratescalcs.ru` | `RATESCALC_USERNAME/PASSWORD` (Basic, GET only) | RUONIA OIS, KRS (IRS vs key rate), CNY xccy vs RUONIA, CNY futures-implied yields snapshot | dealer runs, 08:50–23:00 MSK |
+| Ratescalcs (`MDHUB_RATESCALCS_BASE_URL`, default `ratescalcs.ru`) | `RATESCALC_USERNAME/PASSWORD` (Basic, GET only) | RUONIA OIS, KRS (IRS vs key rate), CNY xccy vs RUONIA, CNY futures-implied yields snapshot | dealer runs, 08:50–23:00 MSK |
 | CBR `cbr.ru` | — | key rate, RUONIA, term RUONIA, official FX (all ccy, from 1998), liquidity, meeting calendar, refinancing rate 1992–2015 (closed series) | daily |
 | Rosstat `rosstat.gov.ru` | — | monthly CPI to the previous month since 1991 (`ipc_mes_MM-YYYY.xlsx`, sheet `01`; the TLS chain omits the Russian Trusted Sub CA, bundled in `mdhub/certs`) | monthly, mid next month |
 | ECB eurofxref | — | G7 crosses (EUR base) daily + history since 1999; **does not answer from the hub VPS** (WEB-4) | daily ~16:00 CET |
@@ -84,7 +87,7 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
 ### `ops` — provenance and operations
 - `ops.source(code PK, name, base_url, licence_note)`
 - `ops.job_run(id, job, started_at, finished_at, status ∈ {running, succeeded, partial, failed, skipped}, params jsonb, rows_inserted, rows_updated, rows_unchanged, error text, host, trigger ∈ {schedule, catch_up, backfill, cli, api, other})` — `trigger` (0421; NULL for older rows) records who started the run; job health counts only `schedule`/`catch_up` (and NULL) runs as "the scheduled fire ran".
-- `ops.raw_capture(id, run_id, source, endpoint, url_redacted, http_status, content_type, fetched_at, source_ts, parser_version, sha256, payload_gz bytea, size_bytes)` — unique (sha256, endpoint, fetched_at). Retention: intraday raw 90 days (configurable), AlgoPack raw (all its endpoints, incl. backfill `*_history`) the AlgoPack rolling window (§6), other EOD/static raw forever.
+- `ops.raw_capture(id, run_id, source, endpoint, url_redacted (the configured Ratescalcs address is replaced, §7), http_status, content_type, fetched_at, source_ts, parser_version, sha256, payload_gz bytea, size_bytes)` — unique (sha256, endpoint, fetched_at). Retention: intraday raw 90 days (configurable), AlgoPack raw (all its endpoints, incl. backfill `*_history`) the AlgoPack rolling window (§6), other EOD/static raw forever.
 - `ops.row_history(id, table_name, row_key jsonb, old_row jsonb, replaced_at, replaced_by_run)` — written by trigger `ops.track_changes()` (`AFTER UPDATE` only: deletes, e.g. retention, write no history). Images of AlgoPack rows before the rolling window are deleted with the rows.
 - `ops.data_gap(dataset, key jsonb, gap_date, detected_at, status ∈ {open, backfilled, unfillable, not_expected}, note)` — `unfillable` is terminal (the source confirmed "no data" and at least one **business day** of the dataset's calendar has passed since the day, `mdhub.core.gaps`); data that appears later still turns it `backfilled`. A gap the scan no longer reports becomes `backfilled` only when the table has ≥ `min_rows_per_day` rows for it, otherwise `not_expected` (calendar corrected, e.g. a holiday; re-opened if expected and missing again). An `open` gap of a rolling-window dataset dated before its window also becomes `not_expected` (note "outside the rolling N-day window"; §6), never `unfillable` (the source may have the data) nor `backfilled`; `unfillable` gaps stay. `ops.v_coverage` counts `open_gaps`, `unfillable_gaps`, `not_expected_gaps`; `ops.v_open_gaps` lists `open` only.
 - `ops.backfill_task(id, dataset, params jsonb {date_from, date_to}, status, attempts, last_error, created_at, done_at, not_before, started_at, last_run_id, source)` — one task per (backfill job, range): datasets sharing a job share tasks.
@@ -243,6 +246,7 @@ Migration ownership (to avoid conflicts): `0001-0099` core/ops; `0100-0199` ref 
 | `maintenance` | 02:00 `backup` (pg_dump, keep 14); 03:00 `retention` (all days) | DB | observability rows (`ops.api_request`, `ops.source_probe`, `ops.worker_heartbeat`) older than `MDHUB_OPS_LOG_RETENTION_DAYS` (90); raw retention of `intraday:reread:` captures (7 days, `MDHUB_RAW_RETENTION_DAYS_REREAD`) and other `intraday:` captures (90 days); intraday market snapshots (30 days, `MDHUB_SNAPSHOT_RETENTION_DAYS_INTRADAY`; static and EOD snapshots are kept forever); AlgoPack rolling window (`MDHUB_ALGOPACK_RETENTION_DAYS`, 90 calendar days): tradestats/FUTOI rows with `trade_date` before the window start (one date per committed delete), their `ops.row_history` images, AlgoPack raw captures (all `algopack_fx_futures` endpoints, incl. `*_history`) fetched before 00:00 MSK of the window start, plus backfill `*_history` captures whose requested range (`till=`) ends before the window start whenever they were fetched; orphaned `running` job runs (>12 h) → failed, VACUUM ANALYZE |
 | `snapshot_static` | 07:45 `daily` (`MDHUB_SNAPSHOT_STATIC_TIME`) | DB | static snapshot after `bonds_static` 06:30 and `cbonds_enrich` 07:30 (§11); static changes during the day are published by the next market cut (`change`) |
 | `snapshot_market` | 19:45 `eod_preliminary` (D), 08:00 `eod_final` (D-1), every 30 min 10:00–19:00 `intraday` (`MDHUB_SNAPSHOT_*`) | DB | market cuts (§11); three lock classes (`snapshot_market:intraday`, `:eod`, `:rebuild` = explicit `day`/`known_at`) so a manual rebuild never blocks a scheduled cut (0.3.1, review §6.5); EOD rules wait for the lock and are caught up; an intraday cut waits up to half its slot (≤ 10 min), and a cut that still cannot run opens an `ops.data_gap` `snapshot_market_intraday` (key `cut`), closed when the cut is replayed; `eod_final` waits up to `MDHUB_SNAPSHOT_EOD_FINAL_WAIT_MINUTES` (30) for the final `bonds_eod` / `zcyc` runs of D (§11 "Input readiness") |
+| `snapshot_heal` | every 30 min (all days); builds only 21:00-06:00 MSK (`MDHUB_SNAPSHOT_HEAL_*`) | DB | self-healing of the `eod_final` history (#138, [SNAPSHOT_HEAL.md](SNAPSHOT_HEAL.md)): business days without an `eod_final` are published, current cuts of 2026-01-05..2026-10-21 that sit on the static of their build day are reissued on the static as of the date; outdated carried-curve cuts are reissued (contract 1.7); the history of a dataset new to the hub is backfilled through the ordinary backfill queue and the cuts of the last 12 months are then reissued once (`ops.dataset_history_load`); gaps in `/v1/gaps` datasets `snapshot_cut_missing` / `snapshot_cut_reissue` / `snapshot_cut_carried` / `snapshot_history_load` / `snapshot_cut_new_series`; nothing to do = `skipped` |
 | `snapshot_rebuild` | not scheduled: the backfill job of dataset `snapshot_eod_final` | DB | rebuilds published `eod_final` cuts of `date_from..date_to` (correction only when the content changed); queued by the backfill worker after a backfill that changed inputs of such a day (§11 "Corrections after backfills") |
 
 **Curve gaps (WEB-15, review §6.2).** The per-source curve datasets (`ratescalcs_*`, `otc_monitor_*`) are `event` datasets (freshness only). The curves every market cut requires are also registered dataset-level: `curves_ruonia_ois` and `curves_key_rate_swap` (`md.curve_snapshot`, `business_daily` on MOEX_STOCK from 2026-01-05, max lag 1): a business day without a stored snapshot from **any** source is an `ops.data_gap` (`/v1/gaps`) and makes the dataset stale. No backfill job (the live sources have no history): the gap stays `open` until a snapshot of that day is stored (history import), which closes it as `backfilled`. Dataset `snapshot_eod_final` (`ops.published_snapshot`, `event`, lag 4 days) shows the freshness of the published `eod_final` cuts in `/v1/coverage`.
@@ -318,7 +322,9 @@ snapshot cuts (§11; owner decision DEC04, defaults): `MDHUB_SNAPSHOT_STATIC_TIM
 `MDHUB_SNAPSHOT_INTRADAY_MINUTES=30` (divides 60; 0 = off), `MDHUB_SNAPSHOT_INTRADAY_WINDOW=10:00-19:00`,
 `MDHUB_SNAPSHOT_RETENTION_DAYS_INTRADAY=30`, `MDHUB_SNAPSHOT_EOD_FINAL_WAIT_MINUTES=30` (`eod_final` input
 readiness, 0 = no wait), `MDHUB_SNAPSHOT_AUTOCORRECT=true` (rebuild published `eod_final` cuts after
-backfills that changed their inputs),
+backfills that changed their inputs), `MDHUB_SNAPSHOT_HEAL=repair` (+ `_FROM`, `_WINDOW`, `_MAX_PER_RUN`,
+`_PAUSE_S`: self-healing of missing / outdated `eod_final` cuts, SNAPSHOT_HEAL.md; `MDHUB_SNAPSHOT_HEAL_HISTORY=false`
+and `MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT=30`: the history load of new datasets, off by default = preview only),
 `MDHUB_ISS_RPS=3`, `MDHUB_RAW_RETENTION_DAYS_INTRADAY=90`, `MDHUB_RAW_RETENTION_DAYS_REREAD=7`
 (`intraday:reread:` captures), `MDHUB_ALGOPACK_FULL_REREAD_MINUTES=30`,
 `MDHUB_ALGOPACK_RETENTION_DAYS=90` (AlgoPack rolling window, calendar days, §6), `MDHUB_API_TOKENS` (comma list,
@@ -328,7 +334,42 @@ read API bearer tokens: `token` → name `env:N`, or `name=token`; §8), `MDHUB_
 (read-API connection pool), `MDHUB_LOG_LEVEL=INFO`, `MDHUB_HTTP_TIMEOUT=30`, plus source
 credentials: `MOEX_API_KEY`, `MOEX_PASSPORT_LOGIN`, `MOEX_PASSPORT_PASSWORD`,
 `RATESCALC_USERNAME`, `RATESCALC_PASSWORD`, `CBONDS_LOGIN`, `CBONDS_PASSWORD`,
-`OTC_MONITOR_TOKEN`. Empty values count as unset (`env_ignore_empty`).
+`OTC_MONITOR_TOKEN`. `MDHUB_RATESCALCS_BASE_URL` is the one full base URL of the Ratescalcs source
+(scheme, host, optional port and path prefix; default `https://ratescalcs.ru/cnyfuturesyields`): the
+pages, the snapshot and the probe are requested from `<base>/<page>`; an invalid value (not
+http/https, credentials, query or fragment in it) stops the start. `MDHUB_RATESCALCS_TLS_SERVER_NAME`
+(optional) is the name the certificate of a source reached by a bare IP address is issued for: the
+hub connects to the base URL, sends the name as SNI and `Host` and verifies the certificate against
+it; unset, against the host of the base URL; there is no switch that turns verification off. A failed
+certificate check is not retried and is reported in plain words (job error, source probe row).
+The address is not stored. It is in two places only: the worker's settings (the environment file
+that sets `MDHUB_RATESCALCS_BASE_URL`) and the worker log, which has the full text of every error.
+The database has none of it, because the read-only role reads every table of `ops`, `md` and `ref`
+(`deploy/sql/grant_readonly.sql`) and the read API serves `ops.job_run` and `ops.v_open_gaps`: every
+text that carries a URL or an error of the source is written with the base URL, its host (with and
+without the port, in unicode and punycode, an IP address in either form) and the host with the path
+prefix replaced by `<MDHUB_RATESCALCS_BASE_URL>`, and the server name by `<server name>`
+(`mdhub.core.redact.stored_text`, `stored_url`, built from `Settings.hidden_addresses()`; the page
+path stays: `<MDHUB_RATESCALCS_BASE_URL>/snapshot`). The columns are `ops.job_run.error`,
+`ops.raw_capture.url_redacted`, `ops.source_probe.endpoint` and `.error`, `ops.job_request.error`,
+`ops.backfill_task.last_error` and `ops.data_gap.note`; the default public address is replaced the
+same way. The stored error of a Ratescalcs request does not keep the error page (the body of the
+answer) or the target of a redirect: the status (`HTTP 503 for <...>/snapshot`) without the start of
+the error page, and "refusing cross-host redirect from <...>" without the target
+(`HttpError.stored_message`); the log has both. Values from an answer that was read (the
+`FormatDriftError` message, a content type) can be in the stored error; they carry no address. A test
+(`tests/test_stored_address.py`) reads every column of every table and view that the read-only role
+can read, after a load, a probe, a console request and a backfill task, and looks for the address.
+The other sources keep the text of their errors as it was. The console shows the same placeholders:
+to see the address, read the settings or the worker log.
+
+The worker refuses to start (and the loader and the probe send nothing) when the
+base URL is plain `http` and the Ratescalcs credentials are set, unless
+`MDHUB_RATESCALCS_ALLOW_PLAINTEXT_CREDENTIALS=true` (then a WARNING at the worker start and in every
+probe result: "credentials are sent unencrypted"), when the server name goes with a plain `http` base
+URL, and when it goes with `MDHUB_HTTP_PROXY` (a proxy tunnel ignores the name; the proxy serves every
+source). Credentials set in the console are checked again at every run.
+Empty values count as unset (`env_ignore_empty`).
 
 ## 8. Read API (v1, bearer token)
 
@@ -453,7 +494,9 @@ The hub's dispatch layer (system ADR-002, doc 02 §3/§6; milestone M1). The des
 only immutable snapshots; the TDM CSV export stays until it does.
 
 **Contract.** JSON Schema and golden fixtures in `schemas/market_snapshot/v1/` (see its
-README; `schema_version` `market_snapshot/1.6` since TDM brief H17: the calendars of RUB swaps and
+README; `schema_version` `market_snapshot/1.7` since market-data-hub#143: curves carried forward
+from the latest earlier day, flagged (`carried_forward` per quote set, `carried_curves` in the
+manifest); 1.6 since TDM brief H17: the calendars of RUB swaps and
 fixings `MOEX_SPFI`, `CBR_RUONIA`, `MOEX_RUSFAR` in `calendars`; 1.5 since package P6 (TDM brief H10-H13): FX value
 dates (`fx_rates.settle_date`, `settlement_calendars`; `md.fx_settle_date` from the selt / CETS
 listings), MOEX FX swaps (`fx_swaps`), FORTS futures (`futures_prices`,
@@ -518,8 +561,15 @@ swaps in `fx_swaps`, before excluded), indicative 14:00/19:00, ECB of [D-7, D] p
 ZCYC, fixings of [D-200, D+7] (floater coupon-period history, TDM HR3; was D-7), FX, the latest
 FX futures quotes of D (1.5), CPI. Coverage (expected/missing curve series, `required_without_any_source` for
 `ruonia_ois`/`key_rate_swap` — stale when a cut has neither source —, latest
-fixing dates, universe without quote) and stale reasons are per dataset in the manifest; no
-forward fill.
+fixing dates, universe without quote) and stale reasons are per dataset in the manifest. No
+forward fill, except the flagged **carried curves** (1.7, `src/mdhub/snapshot/carry.py`): a curve of
+`MDHUB_CURVE_CARRY_DATASETS` (default `ruonia_ois`, `key_rate_swap`) that no source stored on D is
+taken from the latest earlier day that has it - any gap length - with `carried_forward` (source
+day, age in `MOEX_STOCK` working days, reason, age-limit flag from `MDHUB_CURVE_CARRY_MAX_AGE_DAYS`),
+the label `carried_forward`, the manifest list `carried_curves` and the stale reason; at the start
+of the history nothing is carried. `snapshot_heal` reissues a carried `eod_final` once newer data
+of the curve is stored (`docs/SNAPSHOT_HEAL.md`); `GET /v1/carried-curves` and the `quality` report
+list what is carried now.
 
 **Schedule (DEC04 open: defaults, configurable, §7).**
 
@@ -573,8 +623,9 @@ feeds the `eod_final` cut of its own date (`bonds_eod`, `zcyc`, `indices_eod`, `
 backfill worker queues the published `eod_final` cuts of the business dates in the task's range
 (dataset `snapshot_eod_final`, job `snapshot_rebuild`, tasks of at most 5 days). `snapshot_rebuild`
 rebuilds each current cut with its own `cut_ts` as known now: unchanged content publishes nothing,
-changed content publishes a correction that `supersedes` it. Days without a published `eod_final`
-are never built automatically. Known limit: windowed inputs (the 400-day fixing window, the CBR FX
+changed content publishes a correction that `supersedes` it. `snapshot_rebuild` itself never builds
+a day without a published `eod_final`; `snapshot_heal` does (owner decision of 2026-11-10, #138,
+[SNAPSHOT_HEAL.md](SNAPSHOT_HEAL.md)). Known limit: windowed inputs (the 400-day fixing window, the CBR FX
 forward window, ECB lookback) of *later* cuts are not followed; rebuild those with
 `mdhub run snapshot_rebuild -p date_from=... -p date_to=...`.
 

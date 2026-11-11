@@ -21,6 +21,7 @@ from mdhub.jobs import (
     JobContext,
     JobRegistry,
     UnknownJobError,
+    _job_lock,
     coerce_params,
     discover_jobs,
     job,
@@ -152,6 +153,29 @@ def test_run_job_is_exclusive(db_url: str, db: Database, settings: Settings) -> 
         )
     assert run_job("unit_lock", settings=settings, db=db, registry=reg).status == "succeeded"
     assert calls == [1, 1]
+
+
+def test_job_lock_released_at_once_take_release_retake(db: Database) -> None:
+    """#139: the lock is released explicitly, not left to the server's asynchronous cleanup of a
+    closed session, so a job that starts right after the previous one never sees ``lock_busy``
+    (it was seen in ~2 % of back-to-back cycles when the lock was released by the close only)."""
+    for i in range(300):
+        with _job_lock(db, "unit_retake") as busy:
+            assert busy is None, f"cycle {i}: {busy}"
+        with _job_lock(db, "unit_retake", yield_to_waiters=True) as busy:
+            assert busy is None, f"cycle {i} (yielding): {busy}"
+
+
+def test_job_lock_released_when_the_job_raises(db: Database) -> None:
+    def fail_while_locked() -> None:
+        with _job_lock(db, "unit_raise") as busy:
+            assert busy is None
+            raise RuntimeError("kaput")
+
+    with pytest.raises(RuntimeError, match="kaput"):
+        fail_while_locked()
+    with _job_lock(db, "unit_raise") as busy:
+        assert busy is None
 
 
 @pytest.fixture

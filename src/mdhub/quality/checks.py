@@ -50,7 +50,7 @@ import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta
-from typing import Any, Final
+from typing import Any, Final, cast
 
 import psycopg
 from psycopg import sql
@@ -77,6 +77,7 @@ __all__ = [
     "day_predicate",
     "expected_days",
     "expected_latest",
+    "first_stored_day",
     "gap_series",
     "job_datasets",
     "max_task_days",
@@ -117,8 +118,15 @@ def _next_month(d: date) -> date:
     return date(d.year + 1, 1, 1) if d.month == 12 else date(d.year, d.month + 1, 1)
 
 
-def day_predicate(spec: DatasetSpec, calendar: CalendarPredicate) -> DayPredicate:
-    """Which days are expected to have data for ``spec``."""
+def day_predicate(
+    spec: DatasetSpec,
+    calendar: CalendarPredicate,
+    start: date | None = None,
+    end: date | None = None,
+) -> DayPredicate:
+    """Which days are expected to have data for ``spec``. With ``start`` and ``end`` the
+    calendar is loaded once for that range (:meth:`CalendarPredicate.for_range`) instead of
+    once per tested day; the answers are the same."""
     if spec.frequency == "daily":
         return lambda _d: True
     if spec.frequency == "monthly":
@@ -126,6 +134,11 @@ def day_predicate(spec: DatasetSpec, calendar: CalendarPredicate) -> DayPredicat
     if spec.calendar is None:
         return is_weekday
     cal = spec.calendar
+    for_range = getattr(
+        calendar, "for_range", None
+    )  # a plain ``(day, calendar)`` function works too
+    if start is not None and end is not None and for_range is not None:
+        return cast(DayPredicate, for_range(start, end, cal))
     return lambda d: calendar(d, cal)
 
 
@@ -161,7 +174,7 @@ def expected_days(
             out.append(cur)
             cur = _next_month(cur)
         return out
-    pred = day_predicate(spec, calendar)
+    pred = day_predicate(spec, calendar, start, end)
     return [d for d in date_range(start, end) if pred(d)]
 
 
@@ -347,6 +360,21 @@ def _bounds(conn: Conn, info: TableInfo) -> tuple[date | None, date | None, int]
         row = cur.execute(q, []).fetchone()  # params given: '%%' in `where` is unescaped
     assert row is not None
     return info.to_day(row[0]), info.to_day(row[1]), int(row[2])
+
+
+def first_stored_day(conn: Conn, spec: DatasetSpec) -> date | None:
+    """Earliest stored date of ``spec`` (all series; its ``where`` applies); ``None`` for an empty
+    or missing table. One index-friendly ``min()``, cheap on a large table (unlike
+    :func:`_bounds`, which counts)."""
+    info = probe_table(conn, spec)
+    if info is None:
+        return None
+    q = sql.SQL("SELECT min({c}) FROM {t} WHERE true{w}").format(
+        c=info.col, t=info.table, w=info.where_extra()
+    )
+    with conn.cursor(row_factory=tuple_row) as cur:
+        row = cur.execute(q, []).fetchone()
+    return info.to_day(row[0]) if row else None
 
 
 def _series_bounds(
@@ -752,7 +780,10 @@ def queue_backfill(
     covered = _task_ranges(conn, job_datasets(spec))
     todo = [d for d in days if not any(lo <= d <= hi for lo, hi in covered)]
     inserted: list[tuple[date, date]] = []
-    for lo, hi in compress_ranges(todo, day_predicate(spec, calendar), max_task_days(spec)):
+    if not todo:
+        return inserted
+    is_expected = day_predicate(spec, calendar, todo[0], todo[-1])
+    for lo, hi in compress_ranges(todo, is_expected, max_task_days(spec)):
         if _insert_task(conn, spec.name, lo, hi, "quality") is not None:
             inserted.append((lo, hi))
     return inserted

@@ -16,7 +16,8 @@ the next 10-minute trigger) or ``max_tasks`` is used up. For a task the worker:
    range) -> ``not_expected``. A ``partial`` run whose range still has open gaps counts as a failed
    attempt (step 4), so a persistently failing day ends ``failed`` instead of looping; a
    ``partial`` run that filled the range marks the task done,
-   After a done task whose run changed rows of a job that feeds the ``eod_final`` cut
+   After a done task (not one of a history load, whose reissue is a single pass of
+   ``snapshot_heal``) whose run changed rows of a job that feeds the ``eod_final`` cut
    (:data:`mdhub.snapshot.readiness.SNAPSHOT_INPUT_JOBS`), the published ``eod_final`` cuts of
    the business dates in the range are queued for a rebuild (dataset ``snapshot_eod_final``,
    job ``snapshot_rebuild``; ``MDHUB_SNAPSHOT_AUTOCORRECT``): a cut whose content changed is
@@ -29,6 +30,17 @@ the next 10-minute trigger) or ``max_tasks`` is used up. For a task the worker:
    scheduled run is waiting for that lock (backfills yield to scheduled runs) - the attempt
    is not counted and the task is retried in 5 minutes.
 
+Tasks of a history load (source ``history_load``, :mod:`mdhub.quality.history_load`) are taken only
+while the load is switched on (``MDHUB_SNAPSHOT_HEAL_HISTORY``), inside the history-load window
+(``MDHUB_HISTORY_LOAD_WINDOW``, default 00:30-06:00, after the MOEX evening session) and at most
+``MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT`` per window (counted by ``started_at``; a deferral
+gives its slot back), so a history of years never runs in trading hours or the evening session and
+cannot starve scheduled or minute jobs through the job lock; they also
+come after the tasks of every other source. When such a task's job was skipped because its source
+is not configured (:data:`mdhub.core.errors.NOT_CONFIGURED`), the task is not a failed attempt: it
+stays ``pending`` (attempt refunded, tried again after :data:`NOT_CONFIGURED_RETRY`, its siblings
+of the job with it) and the history load shows that it waits for the source.
+
 Tasks left ``running`` by a crashed worker for more than ``stale_minutes`` are reset to
 ``pending`` at the start of each invocation.
 """
@@ -37,20 +49,23 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, field
-from datetime import date, timedelta
+from dataclasses import dataclass, field, replace
+from datetime import date, datetime, timedelta
 from typing import Any, Final
 
 from psycopg.rows import tuple_row
 
-from mdhub.config import Settings
+from mdhub.config import Settings, clock_window_start, parse_clock_window
 from mdhub.core.bizday import CalendarPredicate
+from mdhub.core.errors import NOT_CONFIGURED
 from mdhub.core.http import HttpClient
-from mdhub.core.redact import sanitize_text
+from mdhub.core.redact import sanitize_text, stored_text
+from mdhub.core.timeutil import utc_now
 from mdhub.datasets import DatasetSpec, get_dataset
 from mdhub.db.pool import Database
 from mdhub.jobs import REGISTRY, JobContext, JobParamError, JobRegistry, job, run_job
 from mdhub.quality.checks import compress_ranges, job_datasets, queue_range, reconcile_gaps
+from mdhub.quality.history_load import HISTORY_SOURCE
 from mdhub.snapshot.readiness import EOD_FINAL_DATASET, SNAPSHOT_INPUT_JOBS, eod_final_cuts
 
 __all__ = [
@@ -61,6 +76,7 @@ __all__ = [
     "WorkerSummary",
     "backfill_worker",
     "claim_task",
+    "history_slots",
     "process_tasks",
     "queue_snapshot_corrections",
     "run_backfill_range",
@@ -70,6 +86,9 @@ MAX_ATTEMPTS: Final = 5
 TIME_BUDGET_S: Final = 480.0
 BACKOFF_BASE: Final = timedelta(minutes=10)
 LOCK_RETRY: Final = timedelta(minutes=5)
+NOT_CONFIGURED_RETRY: Final = timedelta(hours=6)
+"""A history-load task whose source is not configured is looked at again after this (in practice:
+the next night window, the only time such tasks are taken)."""
 _ERR_CHARS: Final = 2000
 
 
@@ -79,6 +98,8 @@ class Task:
     dataset: str
     params: dict[str, Any]
     attempts: int
+    source: str = "quality"
+    """Who queued it (``ops.backfill_task.source``)."""
 
 
 @dataclass(slots=True)
@@ -127,15 +148,43 @@ def reset_stale(db: Database, stale_minutes: int) -> int:
         return cur.rowcount
 
 
-def claim_task(db: Database) -> Task | None:
-    """Atomically take the oldest due pending task (``running``, ``attempts + 1``)."""
+# indirection for tests (a fixed clock)
+_now: Callable[[], datetime] = utc_now
+
+
+def history_slots(db: Database, settings: Settings, now: datetime) -> int:
+    """How many more tasks of a history load may be taken now: 0 while the load is switched off
+    (``MDHUB_SNAPSHOT_HEAL_HISTORY`` false, or ``MDHUB_SNAPSHOT_HEAL`` not ``repair``: switching it
+    off stops a load that has started), 0 outside the history-load window
+    (``MDHUB_HISTORY_LOAD_WINDOW``, local time of ``MDHUB_TZ``; not the window of the cuts), else
+    the nightly cap (``MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT``)
+    minus the tasks already started in this window."""
+    if not settings.snapshot_heal_history or settings.snapshot_heal != "repair":
+        return 0
+    start = clock_window_start(
+        now.astimezone(settings.zone), parse_clock_window(settings.history_load_window)
+    )
+    if start is None:
+        return 0
+    with db.connection() as conn, conn.cursor(row_factory=tuple_row) as cur:
+        row = cur.execute(
+            "SELECT count(*) FROM ops.backfill_task WHERE source = %s AND started_at >= %s",
+            (HISTORY_SOURCE, start),
+        ).fetchone()
+    return max(0, settings.history_load_max_tasks_per_night - (int(row[0]) if row else 0))
+
+
+def claim_task(db: Database, *, history: bool = True) -> Task | None:
+    """Atomically take the oldest due pending task (``running``, ``attempts + 1``); the tasks of a
+    history load come last and only when ``history`` (:func:`history_slots`)."""
     with db.connection() as conn, conn.cursor(row_factory=tuple_row) as cur:
         row = cur.execute(
             """
             WITH c AS (
                 SELECT id FROM ops.backfill_task
                 WHERE status = 'pending' AND (not_before IS NULL OR not_before <= now())
-                ORDER BY created_at, id
+                  AND (%s OR source <> 'history_load')
+                ORDER BY (source = 'history_load'), created_at, id
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
             )
@@ -143,12 +192,19 @@ def claim_task(db: Database) -> Task | None:
             SET status = 'running', attempts = t.attempts + 1, started_at = now(),
                 not_before = NULL
             FROM c WHERE t.id = c.id
-            RETURNING t.id, t.dataset, t.params, t.attempts
-            """
+            RETURNING t.id, t.dataset, t.params, t.attempts, t.source
+            """,
+            (history,),
         ).fetchone()
     if row is None:
         return None
-    return Task(id=int(row[0]), dataset=str(row[1]), params=dict(row[2]), attempts=int(row[3]))
+    return Task(
+        id=int(row[0]),
+        dataset=str(row[1]),
+        params=dict(row[2]),
+        attempts=int(row[3]),
+        source=str(row[4]),
+    )
 
 
 def _finish(
@@ -171,7 +227,8 @@ def _finish(
                 done_at = CASE WHEN %s IN ('done', 'failed') THEN now() END,
                 not_before = CASE WHEN %s::interval IS NULL THEN NULL
                                   ELSE now() + %s::interval END,
-                attempts = CASE WHEN %s THEN greatest(attempts - 1, 0) ELSE attempts END
+                attempts = CASE WHEN %s THEN greatest(attempts - 1, 0) ELSE attempts END,
+                started_at = CASE WHEN %s THEN NULL ELSE started_at END
             WHERE id = %s
             """,
             (
@@ -181,6 +238,7 @@ def _finish(
                 status,
                 retry_in,
                 retry_in,
+                refund,
                 refund,
                 task.id,
             ),
@@ -273,7 +331,7 @@ def run_backfill_range(
         raise
     except Exception as exc:
         err = sanitize_text(f"{type(exc).__name__}: {exc}", settings.secret_values())
-        return RangeOutcome(status="failed", run_id=None, error=err)
+        return RangeOutcome(status="failed", run_id=None, error=stored_text(err, settings))
     if outcome.status not in ("succeeded", "partial"):
         return RangeOutcome(
             status=outcome.status, run_id=outcome.run_id, error=_run_error(db, outcome.run_id)
@@ -352,6 +410,31 @@ def _task_range(task: Task) -> tuple[date, date]:
     return d1, d2
 
 
+def _wait_for_source(
+    db: Database, task: Task, spec: DatasetSpec, error: str, run_id: int | None
+) -> None:
+    """Keep a history-load task whose source is not configured: ``pending``, attempt and night slot
+    given back, tried again after :data:`NOT_CONFIGURED_RETRY`; the other pending history tasks of
+    the same job wait with it (one skipped run per job and night instead of one per task)."""
+    _finish(
+        db,
+        task,
+        "pending",
+        error=error,
+        run_id=run_id,
+        retry_in=NOT_CONFIGURED_RETRY,
+        refund=True,
+    )
+    with db.connection() as conn:
+        conn.execute(
+            """
+            UPDATE ops.backfill_task SET not_before = now() + %s::interval, last_error = %s
+            WHERE source = %s AND status = 'pending' AND dataset = ANY(%s) AND id <> %s
+            """,
+            (NOT_CONFIGURED_RETRY, error[:_ERR_CHARS], HISTORY_SOURCE, job_datasets(spec), task.id),
+        )
+
+
 def process_task(
     task: Task,
     *,
@@ -375,6 +458,7 @@ def process_task(
             raise JobParamError(f"dataset {spec.name} has no backfill_job")
     except (KeyError, JobParamError) as exc:
         msg = f"unknown dataset {task.dataset!r}" if isinstance(exc, KeyError) else str(exc)
+        msg = stored_text(msg, settings)
         _finish(db, task, "failed", error=msg)
         summary.failed += 1
         entry.update(status="failed", error=msg)
@@ -392,12 +476,19 @@ def process_task(
             http_factory=http_factory,
         )
     except JobParamError as exc:  # job does not accept date_from/date_to: permanent
-        _finish(db, task, "failed", error=str(exc))
+        msg = stored_text(str(exc), settings)
+        _finish(db, task, "failed", error=msg)
         summary.failed += 1
-        entry.update(status="failed", error=str(exc))
+        entry.update(status="failed", error=msg)
         return "failed"
     except Exception as exc:  # e.g. UnknownJobError (loader failed to import): retry
-        res = RangeOutcome(status="failed", run_id=None, error=f"{type(exc).__name__}: {exc}")
+        text = sanitize_text(f"{type(exc).__name__}: {exc}", settings.secret_values())
+        res = RangeOutcome(status="failed", run_id=None, error=text)
+    # Every sink below (ops.backfill_task.last_error, ops.data_gap.note, the summary) is readable
+    # by the read-only role and the notes by the read API (/v1/gaps): the configured address of a
+    # source is replaced by a placeholder in the text once, here; the log has the full text.
+    if res.error is not None:
+        res = replace(res, error=stored_text(res.error, settings))
 
     entry.update(run_id=res.run_id, job_status=res.status)
     if res.status == "partial" and res.remaining_open:
@@ -418,7 +509,13 @@ def process_task(
         summary.gaps_backfilled += res.backfilled
         summary.gaps_unfillable += res.unfillable
         entry.update(status="done", backfilled=res.backfilled, unfillable=res.unfillable)
-        corrections = queue_snapshot_corrections(db, settings, spec, d1, d2, res.run_id)
+        # the history load of a new dataset is followed by one reissue pass of the cuts
+        # (snapshot_heal), not by a rebuild per task
+        corrections = (
+            []
+            if task.source == HISTORY_SOURCE
+            else queue_snapshot_corrections(db, settings, spec, d1, d2, res.run_id)
+        )
         if corrections:
             entry["snapshot_rebuilds_queued"] = [
                 [a.isoformat(), b.isoformat()] for a, b in corrections
@@ -426,6 +523,16 @@ def process_task(
         return "done"
     error = res.error or res.status
     lock_busy = res.status == "skipped" and ("already running" in error or "lock_busy" in error)
+    if (
+        task.source == HISTORY_SOURCE
+        and res.status == "skipped"
+        and error.startswith(NOT_CONFIGURED)
+    ):
+        # not a failed attempt: the history waits until the source is configured
+        _wait_for_source(db, task, spec, error, res.run_id)
+        summary.deferred += 1
+        entry.update(status="pending", error=error)
+        return "pending"
     if lock_busy:
         _finish(
             db, task, "pending", error=error, run_id=res.run_id, retry_in=LOCK_RETRY, refund=True
@@ -462,7 +569,7 @@ def process_tasks(
     summary = WorkerSummary(reset_stale=reset_stale(db, stale_minutes))
     deadline = clock() + time_budget_s
     while summary.processed < max_tasks and clock() < deadline:
-        task = claim_task(db)
+        task = claim_task(db, history=history_slots(db, settings, _now()) > 0)
         if task is None:
             break
         process_task(

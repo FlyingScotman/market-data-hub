@@ -14,7 +14,7 @@ are in [`docs/DESIGN.md`](../../../docs/DESIGN.md) §11.
 | `common.schema.json` | Shared definitions: decimal strings, dates, UTC instants, sha256, labels |
 | `fixtures/` | Golden bundles built from public data (`index.json` lists their ids) |
 
-`schema_version` is `market_snapshot/1.6`. Every schema object has
+`schema_version` is `market_snapshot/1.7`. Every schema object has
 `additionalProperties: false`: a new field is a schema version bump, so a consumer pinned to
 an older version fails its conformance tests instead of silently ignoring it.
 
@@ -23,7 +23,7 @@ never removes, renames or changes the meaning or unit of an existing field. A co
 reads `1.x` and ignores unknown additive fields stays correct; a new major (`2.0`) is refused.
 
 First hub release with each version: 1.0 = 0.1.3, 1.1 = 0.1.7, 1.2 = 0.2.0, 1.3 = 0.3.2,
-1.4 = 0.3.4, 1.5 = 0.4.0 (in production since 2026-10-23); 1.6 is in `main`, planned for 0.5.0.
+1.4 = 0.3.4, 1.5 = 0.4.0 (in production since 2026-10-23); 1.6 and 1.7 are in `main`, planned for 0.5.0.
 
 | Version | Change (all additive) |
 |---|---|
@@ -35,6 +35,7 @@ First hub release with each version: 1.0 = 0.1.3, 1.1 = 0.1.7, 1.2 = 0.2.0, 1.3 
 | 1.4, static part (KBD floaters) | FloaterFormula `benchmark_tenor_years`, `fixing_anchor`, `fixing_offset`, `fixing_offset_unit`, `rate_rounding_decimals`, `fixing_basis`, `spread_schedule` (SpreadStep `effective_from`, `spread_bp`, `basis`, `evidence_document_url`), `reproduction` (ZcycReproduction): the terms of floaters on the MOEX KBD (benchmark `ZCYC`) and the hub's reproduction of their published coupon rates; null for other benchmarks; `spread_bp` stays the current margin. Coverage of floater formulas: `zcyc_floaters`, `zcyc_floaters_with_tenor`, `zcyc_floaters_curated`, `zcyc_floaters_reproduced`, `zcyc_coupon_periods_checked` / `_matched` |
 | 1.5 (package P6, TDM brief H10-H13; FX forwards H1-H4) | FxRate `settle_date` (MOEX SETTLEDATE of the trade date's session, `md.fx_settle_date`) and `settlement_calendars`; dataset `fx_swaps` (FxSwap: MOEX X/RUB swaps with the swap price as published, `near_settle_date` / `far_settle_date`, `settlement_calendars`; 1.0-1.3 excluded them with reason `fx_swap`, now unused); datasets `futures_prices` (FuturesPrice: FORTS EOD settlement price, OHLC, open interest and contract static) and `futures_prices_intraday` (FuturesPriceIntraday: latest FORTS FX futures quote); dataset `cpi` (Fixing objects: Rosstat `CPI_RU_MOM` and CBR `CPI_RU_YOY` from `parameters.cpi_from`, label `published_on_unknown`); `fixings` coverage `ruonia_unpublished_days`; calendars `CN_INTERBANK`, `US_FED`, `CH_ZURICH` (`calendar_code`); exclusion reasons `non_rub_pair` / `precious_metal` also for `fx_swaps`; labels `settle_date_not_observed`, `foreign_calendar_unknown`, `near_settle_date_not_observed`, `far_settle_date_not_observed`, `far_settle_date_not_published`, `contract_static_unknown`, `perpetual`, `no_settle_price`, `published_on_unknown`. Data only: fixings `SARON` (source `snb`, `unit = pct`) |
 | 1.6 (TDM brief H17, market-data-hub#38) | Calendars `MOEX_SPFI`, `CBR_RUONIA`, `MOEX_RUSFAR` (`calendar_code`): the calendars the MOEX RUB swap specifications name besides MOSCOW (= `RU_PRODUCTION`; MOEX OIS RUONIA: joint SPFI + MOSCOW + RUONIA), derived by documented rules with curated exceptions; Calendar `provisional_from` also counts the derived calendars' provisional days (sources `rule_*_unverified`) |
+| 1.7 (market-data-hub#143; owner decision of 2026-11-11) | **Curves carried forward.** When no source stored a curve of the carried set (default `ruonia_ois`, `key_rate_swap`; setting `MDHUB_CURVE_CARRY_DATASETS`) on the business date of a market cut, the cut holds that curve - every quote set of it, per source - from the latest earlier day that has it, flagged. New optional fields, present **only** when something is carried: CurveQuoteSet `carried_forward` (`source_day`, `age_working_days`, `age_limit_working_days`, `age_limit_exceeded`, `reason` = `no_quote_set_on_business_date`; also the label `carried_forward`; `snapshot_date` is the source day) and the snapshot-level list `carried_curves` (envelope and manifest: `dataset`, `source`, `quote_set_id` and the same marker fields); the manifest parameters then also record `curve_carry_datasets` and `curve_carry_max_age_working_days`; `curve_quote_sets` coverage gains `carried_forward` (the datasets). A snapshot of a day without a gap has none of these and is byte for byte what a 1.6 hub published, apart from `schema_version` |
 
 ## Identity
 
@@ -135,13 +136,51 @@ Rule for consumers: the face outstanding **before** the redemptions of day `D` i
 redemption; an earlier `face_value_date` means it is still **before** it. The golden static
 fixture carries a payment-day amortizer (see `fixtures/index.json`).
 
+## Curves carried forward (1.7)
+
+Owner decision of 2026-11-10 / 11: an approximate, clearly flagged curve is better than none, and
+gaps are not restored by hand. Until 1.6 a market cut without a quote set of `ruonia_ois` or
+`key_rate_swap` simply lacked the curve (`coverage.required_without_any_source`, dataset stale).
+From 1.7 the hub **carries the curve forward** instead:
+
+* **When.** No source stored the curve (any quote set of that `dataset`, from any source) on the
+  cut's business date, and the curve is in the carried set (`MDHUB_CURVE_CARRY_DATASETS`, default
+  `ruonia_ois`, `key_rate_swap`; empty = no carry). A curve one source delivered is never carried
+  for the other source (`coverage.missing` shows it as before).
+* **From where.** The latest day before the business date that has a non-empty quote set of the
+  curve known at the cut (`known_at`), whatever the gap length: there is no refusal by age. All
+  quote sets of that day per source are carried, chosen by the same rule as a quote set of the
+  business date (the EOD rule in EOD cuts, the latest in intraday cuts). Nothing earlier in the
+  history: nothing is carried, the curve stays absent (as in 1.6).
+* **Marker, per quote set** (`CurveQuoteSet.carried_forward`, plus the label `carried_forward`):
+  `source_day`; `age_working_days` = `MOEX_STOCK` business days after `source_day` up to the
+  business date (grows while the gap lasts: a gap of three days carries the same `source_day` with
+  ages 1, 2, 3 in the cuts of consecutive days); `age_limit_working_days` and `age_limit_exceeded`
+  (`MDHUB_CURVE_CARRY_MAX_AGE_DAYS`, default 5: the curve is **still served**, only the flag
+  changes); `reason` = `no_quote_set_on_business_date`.
+* **Marker, per snapshot** (`carried_curves`, envelope and manifest): one entry per carried quote
+  set, so a consumer sees a substitution without reading the data.
+* **Never fresh.** `curve_quote_sets` stays `stale` with the reasons `<dataset>: no quote set from
+  any source on <date>` (unchanged) and `<dataset>: carried forward from <source day> (age <n> working
+  day(s)...)`. A consumer must show a carried curve as carried, permanently, wherever it is used.
+* **Reissue.** A carried cut is outdated when real data of a day after its `source_day` up to its
+  business date is stored later (a history import). `snapshot_heal` then rebuilds the cut
+  (a correction that `supersedes` it, the old snapshot stays readable): the new cut holds the real
+  curve or a newer carry source. See `docs/SNAPSHOT_HEAL.md`.
+* **Hub status.** `GET /v1/carried-curves` lists the curves carried in the current market
+  snapshots; the `quality` report names them (`summary.carried_curves`).
+
+A consumer of 1.6 that ignores unknown additive fields keeps working: it reads the carried quote
+set as any other and sees `snapshot_date` earlier than the business date, the label and the stale
+reason; it cannot tell the age without reading the new fields.
+
 ## Market objects (`data`)
 
 | Array | Object | Notes |
 |---|---|---|
 | `bond_quotes` | BondQuote (EOD) | `md.bond_eod` + `md.bond_eod_yield` of the business date; empty in intraday cuts. Coverage `basis`: `moex_history`, or in `eod_preliminary` before ISS publishes the history of D (overnight) `intraday_close` - the latest intraday marketdata of D in the same shape (`legal_close_pct` = LCLOSEPRICE, `close_pct` = LAST, `market_price3_pct` = MARKETPRICETODAY; accrued, face, `market_price2_pct` null), dataset stale (hub 0.3.1, no schema change). 1.2: `source_analytics.duration_waprice_days` (MOEX DURATIONWAPRICE), `yield_last_coupon_pct` (yields endpoint, else the history row), `icpi`, `ir`, `bei`, `cbr` (MOEX yields fields verbatim, not interpreted by the hub) |
 | `bond_quotes_intraday` | BondQuote (intraday) | latest stored quote per (secid, board) on the business date; empty in EOD cuts |
-| `curve_quote_sets` | CurveQuoteSet | per (source, dataset) fetched on the business date: intraday cuts the latest snapshot; EOD cuts (hub 0.3.1) the latest one with bid/ask whose source clock is on the date at or before the cutoff (`coverage.eod_cutoff_msk`, default 19:00), else the latest one; `labels`: `mid_only`, `market_closed`, `source_clock_not_on_business_date`, and (1.3 data) `proxy_ust_par` / `proxy_ecb_aaa_par` / `proxy_bund_par` for the government par-yield proxies `usd_ust_par` / `eur_aaa_par` / `eur_bund_par` (not OIS; one end-of-day set per curve date). `coverage.required_without_any_source` lists `ruonia_ois` / `key_rate_swap` when no source delivered it on the date (the dataset is then `stale`) |
+| `curve_quote_sets` | CurveQuoteSet | per (source, dataset) fetched on the business date: intraday cuts the latest snapshot; EOD cuts (hub 0.3.1) the latest one with bid/ask whose source clock is on the date at or before the cutoff (`coverage.eod_cutoff_msk`, default 19:00), else the latest one; `labels`: `mid_only`, `market_closed`, `source_clock_not_on_business_date`, and (1.3 data) `proxy_ust_par` / `proxy_ecb_aaa_par` / `proxy_bund_par` for the government par-yield proxies `usd_ust_par` / `eur_aaa_par` / `eur_bund_par` (not OIS; one end-of-day set per curve date). `coverage.required_without_any_source` lists `ruonia_ois` / `key_rate_swap` when no source delivered it on the date (the dataset is then `stale`) 1.7: such a curve is **carried forward** (see "Curves carried forward" below): its quote sets of the latest earlier day sit in the array with `carried_forward`, the coverage and the stale reason still say that no source delivered it on the date and name the day it was taken from |
 | `zcyc_params` | ZcycParams | EOD cuts: the end-of-day publication (else the latest, flagged stale); intraday: the latest |
 | `fixings` | Fixing | `md.fixing` and the RUSFAR family from `md.index_eod` (`origin`). 1.5: coverage `ruonia_unpublished_days` = the `RU_PRODUCTION` business days between the first and the latest CBR RUONIA fixing of the window without a fixing (CBR did not publish them, e.g. the last business day of a year; core's rate futures need them declared); `SARON` (source `snb`, % p.a., Zurich business days) is a 1.5 data addition. 1.2: RUSFAR rates (`RUSFAR`, `RUSFAR1W`, `RUSFAR2W`, `RUSFAR1M`, `RUSFAR3M`, `RUSFARCNY`, `RUSFARCN1W` and the 18:00 / compound variants `RUSFARRT`, `RUSFAR1WRT`, `RUSFAR2WRT`, `RUSFAR1MRT`, `RUSFAR3MRT`, `RUSFARCNRT`, `RUSFARC1WR`, `RUSFARN`, `RUSFAR1WN`, `RUSFAR2WN`, `RUSFAR1MN`, `RUSFAR3MN`, `RUSFARCNN`, `RUSFARC1WN`) `unit = pct`, `RUSFARIND` `unit = index`, others excluded; `hub_ingested_at` = when the hub first stored the published value (`md.fixing.ingested_at`; `md.index_eod`: `updated_at`, else `ingested_at`), UTC — not a publication time: `published_at` stays `null` unless the source states one |
 | `fx_rates` | FxRate | RUB per 1 unit: `cbr_official`, `moex_eod` (raw price, `quote_units`, exact per-unit value), `moex_indicative_14` / `_19`. 1.5: `moex_eod` `settle_date` = the instrument's value date for trades of `trade_date` (MOEX SETTLEDATE of that session; null + label `settle_date_not_observed` when the hub did not read that session's listing - never computed) and `settlement_calendars` = the hub calendars whose joint business days the pair settles on (`MOEX_FX` + `CN_INTERBANK` / `US_FED` / `TARGET` / `CH_ZURICH`; other currencies `[MOEX_FX]` + label `foreign_calendar_unknown`); coverage `moex_eod_with_settle_date` / `_without_` |

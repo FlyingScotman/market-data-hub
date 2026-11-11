@@ -29207,7 +29207,7 @@
   "name": "market-data-hub",
   "version": "0.1.0"
  },
- "schema_version": "market_snapshot/1.6",
+ "schema_version": "market_snapshot/1.7",
  "sources": [
   {
    "dataset": "bond_quotes",
@@ -29350,6 +29350,6 @@
    "source": "moex_iss"
   }
  ],
- "static_snapshot_id": "45ee8838bdec10cfbdc2e2bfaa8b27537990c203a556afdd2028355130fb840a",
+ "static_snapshot_id": "2b3062afdac159fd49530683c99bf6d12e79581aee548b0fb882a491dd2f0169",
  "supersedes": null
 }

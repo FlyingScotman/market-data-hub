@@ -38,10 +38,11 @@ their ``robots.txt``, at most hourly.
 from __future__ import annotations
 
 import base64
+import logging
 import ssl
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from datetime import time as dtime
 from typing import Any, Final
@@ -50,9 +51,9 @@ import httpx
 
 from mdhub.config import Settings
 from mdhub.core.errors import FormatDriftError
-from mdhub.core.http import HttpClient, HttpError
+from mdhub.core.http import HttpClient, HttpError, TransportFailure, stored_message
 from mdhub.core.iss import APIM_BASE_URL, ISS_BASE_URL
-from mdhub.core.redact import redact_url, sanitize_text
+from mdhub.core.redact import redact_url, sanitize_text, stored_text
 from mdhub.core.timeutil import MSK
 from mdhub.credentials import REGISTRY as CREDENTIALS
 from mdhub.jobs import JobContext, JobParamError, job
@@ -78,6 +79,8 @@ from mdhub.sources.moex_apim import apim_headers
 
 __all__ = ["PROBES", "PROBE_TIMEOUT_S", "ProbeRequest", "ProbeResult", "ProbeSpec", "probe"]
 
+log = logging.getLogger(__name__)
+
 PROBE_TIMEOUT_S: Final = 15.0
 _MAX_ERROR = 500
 
@@ -91,6 +94,13 @@ class ProbeRequest:
     headers: dict[str, str] | None = None
     json: Any = None
     configured: bool | None = None
+    tls_server_name: str | None = None
+    """Present this name as SNI / ``Host`` and verify the certificate against it (URL is an IP)."""
+    problem: str | None = None
+    """The settings cannot work (:meth:`mdhub.config.Settings.ratescalcs_config_errors`): nothing is
+    sent, the probe fails with this text."""
+    warning: str | None = None
+    """Recorded with the result (the probe still runs), e.g. credentials sent unencrypted."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,13 +141,26 @@ def _apim(settings: Settings) -> ProbeRequest:
 
 
 def _ratescalcs(settings: Settings) -> ProbeRequest:
-    url = ratescalcs.BASE_URL + ratescalcs.SNAPSHOT_PATH
+    url = ratescalcs.page_url(settings.ratescalcs_base_url, ratescalcs.SNAPSHOT_PATH)
+    name = settings.ratescalcs_tls_server_name
+    errors = settings.ratescalcs_config_errors()
+    problem = "; ".join(errors) if errors else None
+    warning = settings.ratescalcs_plaintext_warning()
     user, password = settings.ratescalc_username, settings.ratescalc_password
     if user is None or password is None:
-        return ProbeRequest(url=url, configured=False)
+        return ProbeRequest(
+            url=url, configured=False, tls_server_name=name, problem=problem, warning=warning
+        )
     pair = f"{user.get_secret_value()}:{password.get_secret_value()}".encode()
     headers = {"Authorization": "Basic " + base64.b64encode(pair).decode("ascii")}
-    return ProbeRequest(url=url, headers=headers, configured=True)
+    return ProbeRequest(
+        url=url,
+        headers=headers,
+        configured=True,
+        tls_server_name=name,
+        problem=problem,
+        warning=warning,
+    )
 
 
 def _otc_monitor(settings: Settings) -> ProbeRequest:
@@ -240,24 +263,59 @@ def tls_expiry(response: httpx.Response) -> datetime | None:
 
 
 def probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult:
-    """Send ``spec``'s request once and classify the answer (never raises for HTTP errors)."""
+    """Send ``spec``'s request once and classify the answer (never raises for HTTP errors).
+
+    The result is what ``ops.source_probe`` stores, and the read-only role can read that table:
+    the configured address of a source is replaced by a placeholder in ``endpoint`` and ``error``
+    (:func:`~mdhub.core.redact.stored_text`), and the error of Ratescalcs has no text the server
+    chose (:func:`~mdhub.core.http.stored_message`); the log keeps the full text."""
+    result = _probe(http, spec, settings)
+    return replace(
+        result,
+        endpoint=stored_text(result.endpoint, settings),
+        # the address is replaced before the cut: a cut inside it would leave its start
+        error=None if result.error is None else stored_text(result.error, settings)[:_MAX_ERROR],
+    )
+
+
+def _probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult:
     req = spec.build(settings)
     endpoint = redact_url(req.url)
     auth = "n/a" if req.configured is None else "ok" if req.configured else "not_configured"
+    if req.problem is not None:  # nothing is sent: the settings would leak or verify nothing
+        return ProbeResult(
+            source=spec.source,
+            endpoint=endpoint,
+            ok=False,
+            auth=auth,
+            error=req.problem,
+        )
     started = time.perf_counter()
     try:
         response = http.request(
-            req.method, req.url, headers=req.headers, json=req.json, raise_for_status=False
+            req.method,
+            req.url,
+            headers=req.headers,
+            json=req.json,
+            raise_for_status=False,
+            tls_server_name=req.tls_server_name,
         )
     except (HttpError, httpx.HTTPError, OSError) as exc:
-        text = sanitize_text(f"{type(exc).__name__}: {exc}", settings.secret_values())
+        if spec.source == "ratescalcs" and isinstance(exc, TransportFailure):
+            exc = ratescalcs.tls_hint(exc, req.tls_server_name)
+        if spec.source == "ratescalcs":
+            log.warning("source probe %s failed: %s: %s", spec.source, type(exc).__name__, exc)
+        message = stored_message(exc) if spec.source == "ratescalcs" else str(exc)
+        text = sanitize_text(f"{type(exc).__name__}: {message}", settings.secret_values())
+        if req.warning:
+            text = f"{text}; {req.warning}"
         return ProbeResult(
             source=spec.source,
             endpoint=endpoint,
             ok=False,
             auth=auth,
             latency_ms=round((time.perf_counter() - started) * 1000, 1),
-            error=text[:_MAX_ERROR],
+            error=text,
         )
     latency_ms = round((time.perf_counter() - started) * 1000, 1)
     status = response.status_code
@@ -274,7 +332,7 @@ def probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult:
             ok = False
             if isinstance(exc, cbonds.CbondsAuthError):
                 auth = "rejected"
-            error = sanitize_text(str(exc), settings.secret_values())[:_MAX_ERROR]
+            error = sanitize_text(str(exc), settings.secret_values())
     elif req.configured is None:
         ok = 200 <= status < 400
     elif not req.configured:
@@ -285,6 +343,8 @@ def probe(http: HttpClient, spec: ProbeSpec, settings: Settings) -> ProbeResult:
         ok = 200 <= status < 400
     if not ok and error is None:
         error = f"HTTP {status}"
+    if req.warning:  # the probe itself worked: the result still says what is wrong with the setup
+        error = f"{error}; {req.warning}" if error else req.warning
     return ProbeResult(
         source=spec.source,
         endpoint=endpoint,

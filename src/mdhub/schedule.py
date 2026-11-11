@@ -134,6 +134,7 @@ KNOWN_JOBS: Final = (
     "source_probe",
     "snapshot_static",
     "snapshot_market",
+    "snapshot_heal",
 )
 """All scheduled job names. Loaders must register exactly these names."""
 
@@ -439,6 +440,14 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
         Rule(cron="30 20 * * *", catch_up=False),
     ),
     "backfill_worker": (_poll("*/10 * * * *", days="all", note="DB-driven; runs on all days"),),
+    "snapshot_heal": (
+        _poll(
+            "*/30 * * * *",
+            days="all",
+            note="detects missing / outdated eod_final cuts every 30 min; builds only in "
+            "MDHUB_SNAPSHOT_HEAL_WINDOW (night); nothing to do = skipped",
+        ),
+    ),
     "source_probe": (
         _poll(
             "*/5 * * * *",

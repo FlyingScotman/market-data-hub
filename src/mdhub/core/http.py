@@ -41,6 +41,7 @@ from functools import lru_cache
 from importlib import resources
 from types import TracebackType
 from typing import Any, Final, Self
+from urllib.parse import urlsplit
 
 import certifi
 import httpx
@@ -65,6 +66,7 @@ __all__ = [
     "build_ssl_context",
     "default_rate_limits",
     "redact_url",
+    "stored_message",
 ]
 
 log = logging.getLogger(__name__)
@@ -82,15 +84,34 @@ DEFAULT_HOST_RPS: Final = 5.0
 
 
 class HttpError(MdhubError):
-    """Base class for HTTP failures. ``url`` is always redacted."""
+    """Base class for HTTP failures. ``url`` is always redacted.
 
-    def __init__(self, message: str, *, url: str = "") -> None:
+    ``stored_message`` is the message **without anything the remote side chose** (the start of
+    an error page, the target of a redirect): the text for the database, where the read-only role
+    and the read API can see it; ``str(exc)`` (with it) goes to the log. Callers that store the
+    error of a source whose server is not public (Ratescalcs) store ``stored_message``."""
+
+    def __init__(self, message: str, *, url: str = "", stored_message: str | None = None) -> None:
         super().__init__(message)
         self.url = url
+        self.stored_message = message if stored_message is None else stored_message
+
+
+def stored_message(exc: BaseException) -> str:
+    """The message of ``exc`` for the database: :attr:`HttpError.stored_message` (no error-page
+    text, no redirect target), ``str(exc)`` for any other exception."""
+    return exc.stored_message if isinstance(exc, HttpError) else str(exc)
 
 
 class TransportFailure(HttpError):  # noqa: N818 - "failure" reads better than "error" here
-    """Connection/timeout/protocol error after all retries."""
+    """Connection/timeout/protocol error after all retries.
+
+    ``tls_certificate`` is true when the cause is the check of the server certificate (wrong
+    name, unknown issuer, expired): it is not retried, and the message says why in plain words."""
+
+    def __init__(self, message: str, *, url: str = "", tls_certificate: bool = False) -> None:
+        super().__init__(message, url=url)
+        self.tls_certificate = tls_certificate
 
 
 class HttpStatusError(HttpError):
@@ -98,9 +119,10 @@ class HttpStatusError(HttpError):
 
     def __init__(self, status_code: int, *, url: str, body_snippet: str = "") -> None:
         msg = f"HTTP {status_code} for {url}"
+        stored = msg
         if body_snippet:
             msg += f": {body_snippet}"
-        super().__init__(msg, url=url)
+        super().__init__(msg, url=url, stored_message=stored)
         self.status_code = status_code
         self.body_snippet = body_snippet
 
@@ -242,7 +264,7 @@ GLOBAL_RATE_LIMITER: Final = RateLimiter()
 
 def default_rate_limits(settings: Settings) -> dict[str, float]:
     """Per-host request rates (requests/second) used by :class:`HttpClient`."""
-    return {
+    limits = {
         "iss.moex.com": settings.iss_rps,
         "apim.moex.com": settings.iss_rps,
         "passport.moex.com": 1.0,
@@ -267,6 +289,11 @@ def default_rate_limits(settings: Settings) -> dict[str, float]:
         "data.snb.ch": 1.0,
         "home.treasury.gov": 1.0,
     }
+    # the Ratescalcs address is a setting: its host is as polite as the default one
+    host = urlsplit(settings.ratescalcs_base_url).hostname
+    if host:
+        limits[host.lower()] = 1.0
+    return limits
 
 
 # --------------------------------------------------------------------------- client
@@ -377,8 +404,13 @@ class HttpClient:
         raise_for_status: bool = True,
         retry: bool | None = None,
         timeout: float | None = None,
+        tls_server_name: str | None = None,
     ) -> httpx.Response:
         """Send a request with rate limiting, retries and redirect policy.
+
+        :param tls_server_name: connect to ``url`` (e.g. an IP address) but present this name as
+            the TLS server name (SNI) and in the ``Host`` header, and verify the certificate
+            against it. Verification is never switched off.
 
         :param expect_json: verify the final 2xx response is JSON; raise
             :class:`EntitlementError` for 200 ``text/html`` and
@@ -392,11 +424,18 @@ class HttpClient:
         extensions: dict[str, Any] = {}
         if timeout is not None:
             extensions["timeout"] = httpx.Timeout(timeout).as_dict()
+        all_headers = dict(headers or {})
+        if tls_server_name:
+            # httpcore: the "sni_hostname" extension is the server_hostname of the TLS handshake,
+            # which is also what the certificate is verified against (httpcore 1.0.9)
+            extensions["sni_hostname"] = tls_server_name
+            if not any(k.lower() == "host" for k in all_headers):
+                all_headers["Host"] = _host_header(httpx.URL(str(url)), tls_server_name)
         req = self._client.build_request(
             method,
             url,
             params=_clean_params(params),
-            headers=headers,
+            headers=all_headers or None,
             content=content,
             data=data,
             json=json,
@@ -410,6 +449,20 @@ class HttpClient:
             try:
                 response = self._client.send(req)
             except httpx.TransportError as exc:
+                cert = _certificate_failure(exc)
+                if cert is not None:
+                    expected = tls_server_name or req.url.host
+                    reason = str(cert.verify_message or cert)
+                    # a mismatch already says which name the certificate is not valid for
+                    checked = (
+                        "" if "not valid for" in reason else f" (checked against '{expected}')"
+                    )
+                    raise TransportFailure(
+                        f"TLS certificate check failed for {redact_url(req.url)}: "
+                        f"{reason}{checked}",
+                        url=redact_url(req.url),
+                        tls_certificate=True,
+                    ) from None
                 if retry_enabled and attempt < self.max_retries:
                     delay = self._backoff(attempt)
                     log.warning(
@@ -471,6 +524,7 @@ class HttpClient:
         expect_json: bool = False,
         raise_for_status: bool = True,
         timeout: float | None = None,
+        tls_server_name: str | None = None,
     ) -> httpx.Response:
         """GET (see :meth:`request`)."""
         return self.request(
@@ -481,6 +535,7 @@ class HttpClient:
             expect_json=expect_json,
             raise_for_status=raise_for_status,
             timeout=timeout,
+            tls_server_name=tls_server_name,
         )
 
     def get_json(
@@ -490,9 +545,17 @@ class HttpClient:
         params: Mapping[str, Any] | None = None,
         headers: Mapping[str, str] | None = None,
         timeout: float | None = None,
+        tls_server_name: str | None = None,
     ) -> JsonResult:
         """GET a JSON document; raises :class:`EntitlementError` on an HTML 200."""
-        response = self.get(url, params=params, headers=headers, expect_json=True, timeout=timeout)
+        response = self.get(
+            url,
+            params=params,
+            headers=headers,
+            expect_json=True,
+            timeout=timeout,
+            tls_server_name=tls_server_name,
+        )
         try:
             data = response.json()
         except ValueError as exc:
@@ -528,6 +591,8 @@ class HttpClient:
             raise RedirectError(
                 f"refusing cross-host redirect {redact_url(req.url)} -> {redact_url(target)}",
                 url=redact_url(req.url),
+                # the target is the server's choice, perhaps an internal name: log only
+                stored_message=f"refusing cross-host redirect from {redact_url(req.url)}",
             )
         if req.method not in {"GET", "HEAD"}:
             raise RedirectError(
@@ -539,6 +604,9 @@ class HttpClient:
                 f"too many redirects from {redact_url(origin)}", url=redact_url(origin)
             )
         headers = {k: v for k, v in req.headers.items() if k.lower() != "host"}
+        sni = req.extensions.get("sni_hostname")
+        if isinstance(sni, str) and sni:
+            headers["Host"] = _host_header(target, sni)
         return self._client.build_request(
             req.method, target, headers=headers, extensions=req.extensions
         )
@@ -558,10 +626,29 @@ def check_json_response(response: httpx.Response) -> None:
         raise EntitlementError(
             f"HTML instead of JSON from {url} (entitlement missing?): {_snippet(response)}",
             url=url,
+            stored_message=f"HTML instead of JSON from {url} (entitlement missing?)",
         )
     raise ResponseFormatError(
         f"expected JSON from {url}, got {ctype or 'no content-type'}", url=url
     )
+
+
+def _host_header(url: httpx.URL, name: str) -> str:
+    """``Host`` of a request to ``url`` that presents ``name`` (port only when not the default)."""
+    default = 443 if url.scheme == "https" else 80
+    return name if url.port in (None, default) else f"{name}:{url.port}"
+
+
+def _certificate_failure(exc: BaseException) -> ssl.SSLCertVerificationError | None:
+    """The failed certificate check behind a transport error (httpx -> httpcore -> ssl), if any."""
+    seen: set[int] = set()
+    cur: BaseException | None = exc
+    while cur is not None and id(cur) not in seen:
+        if isinstance(cur, ssl.SSLCertVerificationError):
+            return cur
+        seen.add(id(cur))
+        cur = cur.__cause__ or cur.__context__
+    return None
 
 
 def _clean_params(params: Mapping[str, Any] | None) -> dict[str, Any] | None:

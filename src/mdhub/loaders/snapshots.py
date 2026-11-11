@@ -20,6 +20,8 @@ skips a scheduled cut. A scheduled intraday cut that still cannot run opens an `
   known now: unchanged content publishes nothing, different content publishes a correction
   (``supersedes``). Queued by the backfill worker after a backfill run that changed inputs of
   such a day (``MDHUB_SNAPSHOT_AUTOCORRECT``, :mod:`mdhub.snapshot.readiness`).
+* ``snapshot_heal`` (:mod:`mdhub.loaders.snapshot_heal`; scheduled) - publishes the ``eod_final``
+  cuts that are missing and reissues the old ones on the static as of their date, by itself.
 
 Parameters: ``day`` (explicit business date), ``days_back`` (business-day offsets, defaults
 per mode), ``cut`` (nominal cut time ``HH:MM`` MSK on the business date, ``eod_final`` on the
@@ -38,7 +40,7 @@ from collections.abc import Callable, Mapping
 from datetime import date, datetime, time
 from typing import Any, Final
 
-from mdhub.config import parse_hhmm
+from mdhub.config import parse_hhmm, parse_name_list
 from mdhub.core.gaps import close_gap
 from mdhub.core.timeutil import MSK, add_business_days, utc_now
 from mdhub.core.upsert import UpsertResult
@@ -75,7 +77,8 @@ register_dataset(
         table="ops.published_snapshot",
         date_column="business_date",
         calendar=BOND_CALENDAR,
-        # freshness only: a missing eod_final is not built automatically (owner decision, HR5)
+        # freshness only; a missing eod_final is built by snapshot_heal (owner decision of
+        # 2026-11-10, #138; before that it was a manual decision, HR5)
         frequency="event",
         max_lag_days=4,
         backfill_job="snapshot_rebuild",
@@ -147,10 +150,13 @@ def _wait_for_inputs(ctx: JobContext, day: date, wait_minutes: int) -> list[Inpu
 
 
 def market_params(ctx: JobContext) -> MarketParams:
-    """Builder parameters from the settings (prelim bond threshold, curve EOD cutoff)."""
+    """Builder parameters from the settings (prelim bond threshold, curve EOD cutoff, the curves
+    carried forward and the age limit of their marker)."""
     return MarketParams(
         prelim_bond_min_rows=ctx.settings.bonds_eod_prelim_min_rows,
         curve_eod_cutoff=ctx.settings.curve_eod_cutoff,
+        curve_carry_datasets=parse_name_list(ctx.settings.curve_carry_datasets),
+        curve_carry_max_age=ctx.settings.curve_carry_max_age_days,
     )
 
 
@@ -330,8 +336,8 @@ def snapshot_rebuild(
 ) -> dict[str, Any]:
     """Rebuild, as known now, every published ``eod_final`` cut of the business dates in the
     range; a cut whose content is unchanged publishes nothing, a changed one publishes a
-    correction that supersedes it. Days without a published ``eod_final`` are not built (a
-    missing cut is an owner decision, ``mdhub run snapshot_market -p mode=eod_final -p day=``).
+    correction that supersedes it. Days without a published ``eod_final`` are not built here
+    (``snapshot_heal`` builds them).
     A day before the previous business day binds a static built for that day (terms as known
     now, time-varying values as of the day; market-data-hub#102), like ``snapshot_market``."""
     dates = resolve_trade_dates(

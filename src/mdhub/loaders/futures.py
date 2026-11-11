@@ -52,6 +52,7 @@ import psycopg
 from psycopg.rows import dict_row, tuple_row
 
 from mdhub.core.capture import record_capture
+from mdhub.core.errors import SourceNotConfigured
 from mdhub.core.gaps import close_gap, record_no_data
 from mdhub.core.http import HttpClient, HttpError
 from mdhub.core.iss import (
@@ -65,7 +66,7 @@ from mdhub.core.iss import (
 from mdhub.core.timeutil import MSK, msk_now
 from mdhub.core.upsert import UpsertResult, touch_last_seen, upsert_rows
 from mdhub.datasets import DatasetSpec, register_dataset, rolling_window_start
-from mdhub.jobs import JobContext, JobParamError, JobSkipped, job
+from mdhub.jobs import JobContext, JobParamError, job
 from mdhub.loaders.fx_moex import only_changed, resolve_dates
 from mdhub.sources.moex_apim import (
     ALGOPACK_FO_TRADESTATS,
@@ -777,7 +778,7 @@ def algopack_fx_futures(
     """
     span = _backfill_span(ctx, date_from, date_to)
     if not ctx.settings.moex_api_key:
-        raise JobSkipped("MOEX_API_KEY not set (AlgoPack needs APIM)")
+        raise SourceNotConfigured("MOEX_API_KEY not set (AlgoPack needs APIM)")
     headers = apim_headers(ctx.settings.moex_api_key.get_secret_value())
     with ctx.connection() as conn:
         specs = load_specs(conn)

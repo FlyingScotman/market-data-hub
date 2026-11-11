@@ -18,9 +18,10 @@ Dedup (both jobs): each payload is parsed first; a dataset whose normalized cont
 equals the latest stored snapshot of ``(source, dataset)`` - legacy-mapped history included -
 is counted as ``unchanged`` and nothing is written - neither a snapshot nor the raw capture -
 unless that latest snapshot is of an earlier Moscow date: the first poll of a day stores the
-curve again (``snapshot_date`` = today), because a market cut of the day reads only snapshots
-fetched on its business date (no forward fill) and an unchanged illiquid curve (KRS) would
-otherwise be missing from it.
+curve again (``snapshot_date`` = today), because a market cut of the day reads the snapshots
+fetched on its business date: this loader never fills a day itself, a curve that is missing on a
+day is carried forward by the snapshot build, flagged (contract 1.7, ``mdhub.snapshot.carry``),
+and an unchanged illiquid curve (KRS) would otherwise be carried instead of observed.
 Changed content stores the raw capture (one per fetch, shared by the curves parsed from it) and
 a new snapshot with its quotes (mid recomputed as (bid+ask)/2; mid-only quotes keep the quoted
 mid with bid/ask NULL). Without credentials a job ends ``skipped``.
@@ -48,7 +49,9 @@ from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 
 from mdhub.core.capture import record_capture
-from mdhub.core.errors import JobSkipped, MdhubError
+from mdhub.core.errors import MdhubError, SourceNotConfigured
+from mdhub.core.http import stored_message
+from mdhub.core.redact import stored_text
 from mdhub.core.timeutil import MSK, utc_now
 from mdhub.core.upsert import UpsertResult, upsert_rows
 from mdhub.datasets import DatasetSpec, register_dataset
@@ -226,7 +229,8 @@ def _store_if_changed(
     """Write the capture + snapshots for curves whose content changed, or whose latest
     snapshot is of an earlier Moscow date: the first observation of each day is stored even
     when the quotes did not change, so the market snapshot of that day (which reads the
-    snapshots fetched on its business date, no forward fill) has the quote set."""
+    snapshots fetched on its business date) has the quote set of the day itself; this loader
+    does not fill a missing day, the snapshot build carries it forward with a marker (1.7)."""
     day = fetched_at.astimezone(MSK).date()
     changed: list[tuple[src.ParsedCurve, str, bool]] = []
     for c in curves:
@@ -251,6 +255,7 @@ def _store_if_changed(
         parser_version,
         source_ts=source_ts,
         fetched_at=fetched_at,
+        settings=ctx.settings,
     )
     for curve, digest, same_content in changed:
         store_curve(
@@ -276,7 +281,11 @@ def _store_if_changed(
 def swaps_ratescalcs(ctx: JobContext) -> dict[str, str]:
     user, password = ctx.settings.ratescalc_username, ctx.settings.ratescalc_password
     if user is None or password is None:
-        raise JobSkipped("RATESCALC_USERNAME/RATESCALC_PASSWORD not configured")
+        raise SourceNotConfigured("RATESCALC_USERNAME/RATESCALC_PASSWORD not configured")
+    # credentials over plain http, a server name that nothing would verify: no request is sent
+    ctx.settings.require_ratescalcs_config()
+    if (warning := ctx.settings.ratescalcs_plaintext_warning()) is not None:
+        ctx.logger.warning("swaps_ratescalcs: %s", warning)
     auth = httpx.BasicAuth(user.get_secret_value(), password.get_secret_value())
     status: dict[str, str] = {}
     failures: list[str] = []
@@ -285,7 +294,12 @@ def swaps_ratescalcs(ctx: JobContext) -> dict[str, str]:
         targets.append(("snapshot", src.SNAPSHOT_PATH))
         for endpoint, path in targets:
             try:
-                resp = src.fetch(http, path)
+                resp = src.fetch(
+                    http,
+                    path,
+                    ctx.settings.ratescalcs_base_url,
+                    ctx.settings.ratescalcs_tls_server_name,
+                )
                 fetched_at = utc_now()
                 if endpoint == "snapshot":
                     curves = src.parse_snapshot(resp.content)
@@ -294,9 +308,19 @@ def swaps_ratescalcs(ctx: JobContext) -> dict[str, str]:
                 with ctx.connection() as conn:
                     status.update(_store_if_changed(ctx, conn, endpoint, resp, curves, fetched_at))
             except (MdhubError, psycopg.Error) as exc:
-                # never include page bodies in errors (credentials may appear in page text)
-                ctx.logger.error("swaps_ratescalcs %s failed: %s", endpoint, type(exc).__name__)
-                failures.append(f"{endpoint}: {type(exc).__name__}: {str(exc)[:200]}")
+                # The log gets the full text. The text that goes into the run (ops.job_run.error,
+                # served by /v1/runs) has no part the server chose (start of an error page, target
+                # of a redirect: stored_message) and, in job_run, the configured address replaced
+                # by a placeholder (mdhub.core.redact.stored_text)
+                ctx.logger.error(
+                    "swaps_ratescalcs %s failed: %s: %s",
+                    endpoint,
+                    type(exc).__name__,
+                    str(exc)[:1000],
+                )
+                # the address is replaced before the cut: a cut inside it would leave its start
+                message = stored_text(stored_message(exc), ctx.settings)[:400]
+                failures.append(f"{endpoint}: {type(exc).__name__}: {message}")
                 status[endpoint] = "failed"
     if failures and len(failures) == len(targets):
         raise MdhubError("swaps_ratescalcs: all pages failed: " + "; ".join(failures))
@@ -312,7 +336,7 @@ def swaps_ratescalcs(ctx: JobContext) -> dict[str, str]:
 def swaps_otc_monitor(ctx: JobContext) -> dict[str, str]:
     token = ctx.settings.otc_monitor_token
     if token is None:
-        raise JobSkipped("OTC_MONITOR_TOKEN not configured")
+        raise SourceNotConfigured("OTC_MONITOR_TOKEN not configured")
     with ctx.http() as http:
         try:
             res = otc.fetch(http, token.get_secret_value())

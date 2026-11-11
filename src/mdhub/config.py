@@ -51,6 +51,23 @@ Environment variables (DESIGN §7 plus a few operational knobs):
 ``MOEX_API_KEY``                    MOEX APIM bearer token
 ``MOEX_PASSPORT_LOGIN`` / ``_PASSWORD`` MOEX Passport credentials
 ``RATESCALC_USERNAME`` / ``_PASSWORD``  Ratescalcs basic auth
+``MDHUB_RATESCALCS_BASE_URL``       full base URL of the Ratescalcs source, scheme + host
+                                    [+ port] [+ path prefix]; every page, the JSON snapshot and
+                                    the source probe are requested from ``<base>/<page>``;
+                                    http or https, no credentials / query / fragment in it;
+                                    default ``https://ratescalcs.ru/cnyfuturesyields``
+``MDHUB_RATESCALCS_TLS_SERVER_NAME`` optional: the name the Ratescalcs certificate is issued
+                                    for, when the base URL is a bare IP address whose
+                                    certificate does not list it; the hub still connects to the
+                                    base URL, but sends this name as SNI and ``Host`` and checks
+                                    the certificate against it (verification stays on); unset =
+                                    checked against the host of the base URL; needs an https
+                                    base URL and no ``MDHUB_HTTP_PROXY`` (a proxy tunnel ignores
+                                    the name): either combination stops the worker
+``MDHUB_RATESCALCS_ALLOW_PLAINTEXT_CREDENTIALS`` set to ``true`` to send the Ratescalcs
+                                    credentials over a plain ``http`` base URL (they travel
+                                    unencrypted; default false = such a combination stops the
+                                    worker); not combinable with the TLS server name
 ``CBONDS_LOGIN`` / ``CBONDS_PASSWORD``  Cbonds JSON API
 ``OTC_MONITOR_TOKEN``               OTC Monitor bearer token (``swaps_otc_monitor``)
 ``MDHUB_SNAPSHOT_STATIC_TIME``      daily static snapshot, MSK ``HH:MM``, default 07:45
@@ -65,6 +82,35 @@ Environment variables (DESIGN §7 plus a few operational knobs):
 ``MDHUB_SNAPSHOT_AUTOCORRECT``      a backfill that changes inputs of a day with an
                                     ``eod_final`` queues its rebuild (published only when
                                     the content changes); default true
+``MDHUB_SNAPSHOT_HEAL``             ``snapshot_heal`` job: ``repair`` (default) publishes the
+                                    ``eod_final`` cuts that are missing and reissues the
+                                    old cuts built on the static of their build day;
+                                    ``detect`` only records the gaps; ``off`` does nothing
+``MDHUB_SNAPSHOT_HEAL_FROM``        first business date the job looks at, default 2025-10-29
+``MDHUB_SNAPSHOT_HEAL_WINDOW``      MSK hours (``HH:MM-HH:MM``, may wrap midnight) in which it
+                                    builds, default 21:00-06:00
+``MDHUB_SNAPSHOT_HEAL_MAX_PER_RUN`` cuts built per run, default 10
+``MDHUB_SNAPSHOT_HEAL_PAUSE_S``     pause between two cuts in seconds, default 20
+``MDHUB_SNAPSHOT_HEAL_HISTORY``     ``snapshot_heal`` also loads the history of datasets new to
+                                    the hub and reissues the ``eod_final`` cuts of the last 12
+                                    months once afterwards (repair mode, night window only);
+                                    default **false**: it only records in ``/v1/gaps`` what it
+                                    would load (a preview) until the owner switches it on
+``MDHUB_HISTORY_LOAD_WINDOW``       MSK hours (``HH:MM-HH:MM``, may wrap midnight, zone of
+                                    ``MDHUB_TZ``) in which the worker takes backfill tasks of a
+                                    history load, default 00:30-06:00 (after the MOEX evening
+                                    session, which shares the ISS rate limit with the live jobs;
+                                    ``MDHUB_SNAPSHOT_HEAL_WINDOW`` is the window of the cuts and
+                                    stays as it is)
+``MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT`` backfill tasks of a history load the worker takes
+                                    per ``MDHUB_HISTORY_LOAD_WINDOW`` (never outside it),
+                                    default 30
+``MDHUB_CURVE_CARRY_DATASETS``      curves a market cut takes from the latest previous day that
+                                    has them when no source delivered them on its day, flagged
+                                    (contract 1.7); comma separated, empty = no carry; default
+                                    ``key_rate_swap,ruonia_ois``
+``MDHUB_CURVE_CARRY_MAX_AGE_DAYS``  working days after which a carried curve is still served but
+                                    its marker says the age limit is exceeded; default 5
 =================================== ====================================================
 
 Snapshot cut times are an owner decision (system DEC04); the defaults above follow the
@@ -73,22 +119,182 @@ collection schedule (DESIGN §6, §11) and can be changed without a code change.
 
 from __future__ import annotations
 
+import contextlib
+import functools
+import ipaddress
 import re
-from typing import Any
+from datetime import date, datetime, time, timedelta
+from typing import Any, Final, Literal
+from urllib.parse import unquote, urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import httpx
 from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-__all__ = ["ConfigError", "Settings", "get_settings", "parse_hhmm", "parse_window"]
+__all__ = [
+    "BASE_URL_PLACEHOLDER",
+    "CURVE_DATASETS",
+    "PLAINTEXT_OPT_IN",
+    "RATESCALCS_DEFAULT_BASE_URL",
+    "SERVER_NAME_PLACEHOLDER",
+    "ConfigError",
+    "Settings",
+    "clock_window_start",
+    "get_settings",
+    "parse_base_url",
+    "parse_hhmm",
+    "parse_name_list",
+    "parse_server_name",
+    "parse_window",
+]
 
 _NAMED_TOKEN_RE = re.compile(r"^([a-z0-9][a-z0-9._-]{0,63})=([^=].*)$")
 """``name=token`` entry of ``MDHUB_API_TOKENS``. The token part must not start with ``=``, so
 a padded base64 token (``abc==``) is never split."""
 
 
+CURVE_DATASETS: Final = (
+    "cny_futures_yields",
+    "cny_ruonia_xccy",
+    "cny_rusfar_ois",
+    "key_rate_swap",
+    "ruonia_ois",
+    "usd_futures_yields",
+)
+"""The curve datasets the hub stores quote sets of (the datasets of
+:data:`mdhub.snapshot.market.EXPECTED_CURVES`; a test keeps the two in step): the valid names of
+``MDHUB_CURVE_CARRY_DATASETS``."""
+
+RATESCALCS_DEFAULT_BASE_URL: Final = "https://ratescalcs.ru/cnyfuturesyields"
+"""Base URL of the Ratescalcs source (host and the path prefix of its pages); the pages are
+relative to it (:mod:`mdhub.sources.ratescalcs`)."""
+
+
 class ConfigError(RuntimeError):
     """A required setting is missing or invalid."""
+
+
+PLAINTEXT_OPT_IN: Final = "MDHUB_RATESCALCS_ALLOW_PLAINTEXT_CREDENTIALS"
+BASE_URL_PLACEHOLDER: Final = "<MDHUB_RATESCALCS_BASE_URL>"
+SERVER_NAME_PLACEHOLDER: Final = "<server name>"
+
+
+def parse_base_url(value: str, name: str) -> str:
+    """A base URL setting: ``http`` / ``https``, a host (a name or an IP address) with an
+    optional port and an optional path prefix, nothing else. Returns it without a trailing ``/``.
+    Raises ``ValueError`` naming the setting; the message never contains the value (it may hold
+    credentials that were put in it by mistake)."""
+    text = value.strip()
+    if not text or any(c.isspace() for c in text):
+        raise ValueError(f"{name}: expected a URL like https://host[:port][/prefix] (no spaces)")
+    try:
+        parts = urlsplit(text)
+        port = parts.port
+    except ValueError:
+        raise ValueError(f"{name}: not a valid URL (check the host and the port)") from None
+    if port == 0 or parts.netloc.endswith(":"):  # ':0' and an empty ':' port
+        raise ValueError(f"{name}: not a valid URL (the port must be 1-65535 or left out)")
+    if parts.scheme.lower() not in ("http", "https"):
+        raise ValueError(f"{name}: the scheme must be http or https")
+    if not parts.hostname:
+        raise ValueError(f"{name}: the URL has no host")
+    if "@" in parts.netloc:
+        raise ValueError(f"{name}: no user name or password in the URL (set them as credentials)")
+    if "?" in text or "#" in text:
+        raise ValueError(f"{name}: no query string or fragment in the URL")
+    return text.rstrip("/")
+
+
+def _name_forms(name: str) -> set[str]:
+    """``name`` and its punycode / unicode spelling (an IDN host shows up as either)."""
+    forms = {name} if name else set()
+    with contextlib.suppress(UnicodeError):  # not an IDN name
+        forms.add(name.encode("idna").decode("ascii"))
+    with contextlib.suppress(UnicodeError):
+        forms.add(name.encode("ascii").decode("idna"))
+    return forms
+
+
+@functools.lru_cache(maxsize=8)
+def _address_forms(base_url: str) -> frozenset[str]:
+    """Every spelling of the Ratescalcs base URL that a text can carry (see
+    :meth:`Settings.hidden_addresses`)."""
+    parts = urlsplit(base_url)
+    try:
+        url: httpx.URL | None = httpx.URL(base_url)
+    except httpx.InvalidURL:
+        url = None
+    schemes = {parts.scheme.lower()}
+    hosts = {parts.hostname or ""}
+    ports: set[int | None] = {parts.port}
+    netlocs = {parts.netloc}
+    paths = {parts.path}
+    if url is not None:
+        schemes.add(url.scheme)
+        hosts.add(url.host)
+        ports.add(url.port)
+        wire = url.netloc.decode("ascii")  # punycode, no default port
+        netlocs.add(wire)
+        hosts.add(urlsplit("//" + wire).hostname or "")
+        paths.update((url.path, url.raw_path.decode("ascii")))
+    for scheme in tuple(schemes):
+        ports.add({"http": 80, "https": 443}.get(scheme))
+    for host in tuple(hosts):
+        hosts |= _name_forms(host)
+    for host in tuple(h for h in hosts if h):
+        try:
+            ip = ipaddress.ip_address(host.strip("[]"))
+        except ValueError:
+            continue
+        hosts |= {ip.compressed, ip.exploded}
+    hosts.discard("")
+    for host in tuple(hosts):  # an IPv6 literal appears in brackets in a URL
+        bracketed = f"[{host}]" if ":" in host else host
+        netlocs.add(bracketed)
+        netlocs.update(f"{bracketed}:{p}" for p in ports if p is not None)
+        if ":" in host:
+            hosts.add(bracketed)
+    prefixes = {unquote(p).rstrip("/") for p in paths} | {p.rstrip("/") for p in paths}
+    prefixes.discard("")
+    netlocs.discard("")
+    forms: set[str] = {base_url.rstrip("/"), *hosts, *netlocs}
+    if url is not None:
+        forms.add(str(url).rstrip("/"))
+    for netloc in netlocs:
+        forms.update(netloc + prefix for prefix in prefixes)
+        forms.update(f"{scheme}://{netloc}" for scheme in schemes)
+        forms.update(f"{scheme}://{netloc}{prefix}" for scheme in schemes for prefix in prefixes)
+    forms.discard("")
+    return frozenset(forms)
+
+
+_SERVER_NAME_RE: Final = re.compile(
+    r"^(?=.{1,253}$)[A-Za-z0-9_]([A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?"
+    r"(\.[A-Za-z0-9_]([A-Za-z0-9_-]{0,61}[A-Za-z0-9_])?)*$"
+)
+
+
+def parse_server_name(value: str, name: str) -> str:
+    """A TLS server name (the DNS name a certificate is issued for): a host name, no scheme, port,
+    path or spaces, and not an IP address (SNI carries names only). Raises ``ValueError`` naming
+    the setting."""
+    text = value.strip().rstrip(".")
+    try:
+        ipaddress.ip_address(text.strip("[]"))
+    except ValueError:
+        pass
+    else:
+        raise ValueError(f"{name}: a host name is expected, not an IP address")
+    if not _SERVER_NAME_RE.fullmatch(text):
+        raise ValueError(f"{name}: expected a host name like host.example.org (no scheme or port)")
+    return text
+
+
+def parse_name_list(value: str) -> tuple[str, ...]:
+    """``"a, b,a"`` -> ``("a", "b")``: comma / space separated names, sorted, unique (the order
+    of the setting must not change what a snapshot says); empty text = no names."""
+    return tuple(sorted({n for n in re.split(r"[,\s]+", value.strip()) if n}))
 
 
 def parse_hhmm(value: str) -> tuple[int, int]:
@@ -111,6 +317,37 @@ def parse_window(value: str) -> tuple[int, int]:
     if m1 or m2 or h1 >= h2:
         raise ValueError(f"expected whole hours HH:00-HH:00 with start < end, got {value!r}")
     return h1, h2
+
+
+def parse_clock_window(value: str) -> tuple[time, time]:
+    """``"21:00-06:00"`` -> ``(21:00, 06:00)``; the window may wrap midnight (start > end).
+    Equal ends are refused (an empty or a whole-day window is ambiguous)."""
+    start, sep, end = value.partition("-")
+    if not sep:
+        raise ValueError(f"expected HH:MM-HH:MM, got {value!r}")
+    (h1, m1), (h2, m2) = parse_hhmm(start), parse_hhmm(end)
+    if (h1, m1) == (h2, m2):
+        raise ValueError(f"window start and end must differ, got {value!r}")
+    return time(h1, m1), time(h2, m2)
+
+
+def in_clock_window(now: time, window: tuple[time, time]) -> bool:
+    """Whether ``now`` is inside ``window`` (start inclusive, end exclusive; wraps midnight)."""
+    start, end = window
+    return start <= now < end if start < end else now >= start or now < end
+
+
+def clock_window_start(now: datetime, window: tuple[time, time]) -> datetime | None:
+    """Start of the occurrence of ``window`` that contains ``now`` (same time zone as ``now``,
+    which must be local time); ``None`` when ``now`` is outside the window. For a window that wraps
+    midnight, 03:00 belongs to the window that started the evening before."""
+    if not in_clock_window(now.time(), window):
+        return None
+    start, end = window
+    day = now.date()
+    if start >= end and now.time() < end:
+        day -= timedelta(days=1)
+    return datetime.combine(day, start, tzinfo=now.tzinfo)
 
 
 def _csv(value: str) -> list[str]:
@@ -142,6 +379,8 @@ class Settings(BaseSettings):
         case_sensitive=False,
         frozen=True,
         env_ignore_empty=True,
+        # a rejected value (a URL with credentials in it, a token) is never echoed in the error
+        hide_input_in_errors=True,
     )
 
     database_url: SecretStr | None = Field(
@@ -285,6 +524,48 @@ class Settings(BaseSettings):
         default=True,
         validation_alias=AliasChoices("MDHUB_SNAPSHOT_AUTOCORRECT", "snapshot_autocorrect"),
     )
+    snapshot_heal: Literal["off", "detect", "repair"] = Field(
+        default="repair",
+        validation_alias=AliasChoices("MDHUB_SNAPSHOT_HEAL", "snapshot_heal"),
+    )
+    snapshot_heal_from: date = Field(
+        default=date(2025, 10, 29),
+        validation_alias=AliasChoices("MDHUB_SNAPSHOT_HEAL_FROM", "snapshot_heal_from"),
+    )
+    snapshot_heal_window: str = Field(
+        default="21:00-06:00",
+        validation_alias=AliasChoices("MDHUB_SNAPSHOT_HEAL_WINDOW", "snapshot_heal_window"),
+    )
+    snapshot_heal_max_per_run: int = Field(
+        default=10,
+        ge=1,
+        le=200,
+        validation_alias=AliasChoices(
+            "MDHUB_SNAPSHOT_HEAL_MAX_PER_RUN", "snapshot_heal_max_per_run"
+        ),
+    )
+    snapshot_heal_pause_s: int = Field(
+        default=20,
+        ge=0,
+        le=600,
+        validation_alias=AliasChoices("MDHUB_SNAPSHOT_HEAL_PAUSE_S", "snapshot_heal_pause_s"),
+    )
+    snapshot_heal_history: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("MDHUB_SNAPSHOT_HEAL_HISTORY", "snapshot_heal_history"),
+    )
+    history_load_window: str = Field(
+        default="00:30-06:00",
+        validation_alias=AliasChoices("MDHUB_HISTORY_LOAD_WINDOW", "history_load_window"),
+    )
+    history_load_max_tasks_per_night: int = Field(
+        default=30,
+        ge=1,
+        le=1000,
+        validation_alias=AliasChoices(
+            "MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT", "history_load_max_tasks_per_night"
+        ),
+    )
     bonds_eod_prelim_min_rows: int = Field(
         default=1000,
         ge=1,
@@ -309,6 +590,16 @@ class Settings(BaseSettings):
     curve_eod_cutoff: str = Field(
         default="19:00",
         validation_alias=AliasChoices("MDHUB_CURVE_EOD_CUTOFF", "curve_eod_cutoff"),
+    )
+    curve_carry_datasets: str = Field(
+        default="key_rate_swap,ruonia_ois",
+        validation_alias=AliasChoices("MDHUB_CURVE_CARRY_DATASETS", "curve_carry_datasets"),
+    )
+    curve_carry_max_age_days: int = Field(
+        default=5,
+        ge=0,
+        le=3650,
+        validation_alias=AliasChoices("MDHUB_CURVE_CARRY_MAX_AGE_DAYS", "curve_carry_max_age_days"),
     )
 
     hostmon_mounts: str = Field(
@@ -359,6 +650,22 @@ class Settings(BaseSettings):
     moex_passport_password: SecretStr | None = _env("MOEX_PASSPORT_PASSWORD")
     ratescalc_username: SecretStr | None = _env("RATESCALC_USERNAME")
     ratescalc_password: SecretStr | None = _env("RATESCALC_PASSWORD")
+    ratescalcs_tls_server_name: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices(
+            "MDHUB_RATESCALCS_TLS_SERVER_NAME", "ratescalcs_tls_server_name"
+        ),
+    )
+    ratescalcs_base_url: str = Field(
+        default=RATESCALCS_DEFAULT_BASE_URL,
+        validation_alias=AliasChoices("MDHUB_RATESCALCS_BASE_URL", "ratescalcs_base_url"),
+    )
+    ratescalcs_allow_plaintext_credentials: bool = Field(
+        default=False,
+        validation_alias=AliasChoices(
+            "MDHUB_RATESCALCS_ALLOW_PLAINTEXT_CREDENTIALS", "ratescalcs_allow_plaintext_credentials"
+        ),
+    )
     cbonds_login: SecretStr | None = _env("CBONDS_LOGIN")
     cbonds_password: SecretStr | None = _env("CBONDS_PASSWORD")
     otc_monitor_token: SecretStr | None = _env("OTC_MONITOR_TOKEN")
@@ -385,10 +692,43 @@ class Settings(BaseSettings):
         parse_hhmm(value)
         return value.strip()
 
+    @field_validator("curve_carry_datasets")
+    @classmethod
+    def _valid_carry_datasets(cls, value: str) -> str:
+        names = parse_name_list(value)
+        bad = [n for n in names if not re.fullmatch(r"[a-z][a-z0-9_]*", n)]
+        if bad:
+            raise ValueError(f"invalid curve dataset name(s) {bad} (lower-case codes)")
+        unknown = [n for n in names if n not in CURVE_DATASETS]
+        if unknown:
+            raise ValueError(
+                f"MDHUB_CURVE_CARRY_DATASETS: unknown curve dataset(s) {unknown}; "
+                f"valid names: {', '.join(CURVE_DATASETS)}"
+            )
+        return ",".join(names)
+
+    @field_validator("ratescalcs_base_url")
+    @classmethod
+    def _valid_ratescalcs_base_url(cls, value: str) -> str:
+        return parse_base_url(value, "MDHUB_RATESCALCS_BASE_URL")
+
+    @field_validator("ratescalcs_tls_server_name")
+    @classmethod
+    def _valid_ratescalcs_tls_server_name(cls, value: str | None) -> str | None:
+        return (
+            None if value is None else parse_server_name(value, "MDHUB_RATESCALCS_TLS_SERVER_NAME")
+        )
+
     @field_validator("snapshot_intraday_window")
     @classmethod
     def _valid_window(cls, value: str) -> str:
         parse_window(value)
+        return value.strip()
+
+    @field_validator("snapshot_heal_window", "history_load_window")
+    @classmethod
+    def _valid_clock_window(cls, value: str) -> str:
+        parse_clock_window(value)
         return value.strip()
 
     @field_validator("snapshot_intraday_minutes")
@@ -457,6 +797,91 @@ class Settings(BaseSettings):
     def proxy_url(self) -> str | None:
         """Egress proxy URL (secret: may contain credentials) or ``None``."""
         return self.http_proxy.get_secret_value() if self.http_proxy else None
+
+    # ------------------------------------------------------------- Ratescalcs address checks
+
+    def ratescalcs_plain_http(self) -> bool:
+        """Whether the Ratescalcs base URL is plain ``http``."""
+        return urlsplit(self.ratescalcs_base_url).scheme.lower() == "http"
+
+    def ratescalcs_plaintext_credentials(self) -> bool:
+        """Whether Ratescalcs credentials are set **and** would travel over plain ``http``."""
+        return (
+            self.ratescalcs_plain_http()
+            and self.ratescalc_username is not None
+            and self.ratescalc_password is not None
+        )
+
+    def ratescalcs_config_errors(self) -> list[str]:
+        """Why the Ratescalcs address settings cannot work (texts name settings, never values).
+        Credentials set in the console are not in a startup copy of the settings: the loader and
+        the probe ask again with the settings of the run."""
+        errors: list[str] = []
+        if self.ratescalcs_tls_server_name and self.ratescalcs_plain_http():
+            errors.append(
+                "MDHUB_RATESCALCS_TLS_SERVER_NAME is set but MDHUB_RATESCALCS_BASE_URL is plain "
+                "http: no certificate would be checked and no name sent (use an https base URL "
+                "or unset the server name)"
+            )
+        if (
+            self.ratescalcs_tls_server_name
+            and not self.ratescalcs_plain_http()
+            and self.http_proxy is not None
+        ):
+            errors.append(
+                "MDHUB_RATESCALCS_TLS_SERVER_NAME is set while MDHUB_HTTP_PROXY is set: the "
+                "proxy tunnel presents the host of the base URL, not the server name, so the "
+                "name would be ignored and the certificate checked against the address (the "
+                "proxy serves every source: unset the server name or the proxy)"
+            )
+        if (
+            self.ratescalcs_plaintext_credentials()
+            and not self.ratescalcs_allow_plaintext_credentials
+        ):
+            errors.append(
+                "MDHUB_RATESCALCS_BASE_URL is plain http and the Ratescalcs credentials are set: "
+                "they would be sent unencrypted (use an https base URL, or accept it on a trusted "
+                f"network with {PLAINTEXT_OPT_IN}=true)"
+            )
+        return errors
+
+    def require_ratescalcs_config(self) -> None:
+        """:raises ConfigError: :meth:`ratescalcs_config_errors` is not empty."""
+        errors = self.ratescalcs_config_errors()
+        if errors:
+            raise ConfigError("; ".join(errors))
+
+    def ratescalcs_plaintext_warning(self) -> str | None:
+        """The loud warning while credentials are sent over plain http by explicit opt-in."""
+        if self.ratescalcs_plaintext_credentials() and self.ratescalcs_allow_plaintext_credentials:
+            return (
+                "Ratescalcs: credentials are sent unencrypted (plain http base URL, accepted by "
+                f"{PLAINTEXT_OPT_IN})"
+            )
+        return None
+
+    def hidden_addresses(self) -> list[tuple[str, str]]:
+        """``(value, placeholder)`` pairs of the configured Ratescalcs address: what must not
+        appear in a text that the read API (or the read-only role) can serve - job errors, source
+        probe rows, capture URLs, backfill notes; see :func:`mdhub.core.redact.stored_text`. The
+        full text goes to the log only.
+
+        Every spelling that a text can carry: the setting as written, the URL as ``httpx`` writes
+        it (host lower-cased, an IDN host in punycode, the default port dropped, the path
+        percent-encoded), the host in unicode and punycode, an IP address in its compressed and
+        expanded form, with and without the port (also the default port of the scheme); each of
+        them alone and followed by the path prefix, so a host cannot be replaced while ``/prefix``
+        stays visible next to the placeholder. Forms shorter than 4 characters are skipped (too
+        likely to hit unrelated text). No form ends with ``/``: the page path that follows stays.
+        The TLS server name gets its own placeholder."""
+        pairs = [
+            (v, BASE_URL_PLACEHOLDER) for v in sorted(_address_forms(self.ratescalcs_base_url))
+        ]
+        pairs.extend(
+            (v, SERVER_NAME_PLACEHOLDER)
+            for v in sorted(_name_forms(self.ratescalcs_tls_server_name or ""))
+        )
+        return [(v, ph) for v, ph in pairs if len(v) >= 4]
 
     def api_token_entries(self) -> list[tuple[str, str]]:
         """``(name, token)`` per entry of the comma-separated ``MDHUB_API_TOKENS``.

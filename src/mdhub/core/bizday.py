@@ -22,7 +22,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import date
 from types import MappingProxyType
 from typing import Final
@@ -102,6 +102,14 @@ class CalendarPredicate:
         implementation knows no weekend sessions (= business day)."""
         return self(day, calendar)
 
+    def for_range(
+        self, start: date, end: date, calendar: str = DEFAULT_CALENDAR
+    ) -> Callable[[date], bool]:
+        """Predicate of ``calendar`` for the days ``start..end``, for callers that test every day
+        of a long range. The base implementation just delegates; :class:`DbCalendar` loads the
+        whole range with one query."""
+        return lambda day: self(day, calendar)
+
 
 weekday_calendar: Final = CalendarPredicate()
 """Monday-Friday for every calendar."""
@@ -156,6 +164,23 @@ class DbCalendar(CalendarPredicate):
             self._sessions[key] = (now, result)
         return result
 
+    def for_range(
+        self, start: date, end: date, calendar: str = DEFAULT_CALENDAR
+    ) -> Callable[[date], bool]:
+        """Predicate of ``calendar`` backed by one snapshot of ``start..end`` (one connection and
+        one query, whatever the length of the range), same answers as ``self(day, calendar)``
+        (:meth:`_lookup_range` applies the per-day rule of :meth:`_lookup`). The snapshot is
+        taken now and bypasses the TTL cache; a day outside the range is answered by ``self``."""
+        values = self._lookup_range(start, end, calendar)
+
+        def predicate(day: date) -> bool:
+            if start <= day <= end:
+                value = values.get(day)
+                return is_weekday(day) if value is None else value
+            return self(day, calendar)
+
+        return predicate
+
     def _session_lookup(self, day: date, calendar: str) -> bool:
         try:
             with self._db.connection() as conn, conn.cursor(row_factory=tuple_row) as cur:
@@ -193,3 +218,29 @@ class DbCalendar(CalendarPredicate):
             log.warning("calendar lookup failed (%s); using weekday fallback", exc)
             return None
         return None if row is None or row[0] is None else bool(row[0])
+
+    def _lookup_range(self, start: date, end: date, calendar: str) -> dict[date, bool]:
+        """Days of ``start..end`` the calendar chain has a (non-NULL) flag for, by the rule of
+        :meth:`_lookup`; the other days (and every day on a database error) fall back to
+        weekdays in the caller."""
+        if start > end:
+            return {}
+        try:
+            with self._db.connection() as conn, conn.cursor(row_factory=tuple_row) as cur:
+                exists = cur.execute("SELECT to_regclass('ref.calendar_day')").fetchone()
+                if not exists or exists[0] is None:
+                    return {}
+                chain = list(calendar_chain(calendar))
+                rows = cur.execute(
+                    """
+                    SELECT DISTINCT ON (day) day, is_business_day FROM ref.calendar_day
+                    WHERE calendar = ANY(%s) AND day BETWEEN %s AND %s AND NOT is_deleted
+                    ORDER BY day, array_position(%s, calendar), ref.calendar_source_rank(source),
+                             known_at DESC NULLS LAST
+                    """,
+                    (chain, start, end, chain),
+                ).fetchall()
+        except psycopg.Error as exc:
+            log.warning("calendar lookup failed (%s); using weekday fallback", exc)
+            return {}
+        return {day: bool(flag) for day, flag in rows if flag is not None}

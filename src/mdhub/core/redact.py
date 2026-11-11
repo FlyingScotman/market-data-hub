@@ -5,16 +5,23 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import httpx
 
+if TYPE_CHECKING:
+    from mdhub.config import Settings
+
 __all__ = [
     "SecretRedactingFilter",
+    "hide_values",
     "is_sensitive_param",
     "redact_url",
     "register_secrets",
     "sanitize_text",
+    "stored_text",
+    "stored_url",
 ]
 
 _SENSITIVE_PARAM = re.compile(
@@ -85,6 +92,47 @@ def sanitize_text(text: str, secrets: Iterable[str] = ()) -> str:
     for s in sorted({s for s in secrets if s} | _registered, key=len, reverse=True):
         out = out.replace(s, REDACTED)
     return out
+
+
+def hide_values(text: str, pairs: Iterable[tuple[str, str]]) -> str:
+    """Replace every ``value`` of ``pairs`` (``(value, placeholder)``) in ``text`` by its
+    placeholder, ignoring case, longest value first, in one pass (a placeholder is never searched
+    again). For texts that are stored where the read API or the read-only role can serve them: the
+    configured address of a source must not leave the hub that way (the log keeps the full text)."""
+    entries: dict[str, tuple[str, str]] = {}
+    for value, placeholder in sorted(pairs, key=lambda p: len(p[0]), reverse=True):
+        if value:
+            entries.setdefault(value.lower(), (value, placeholder))
+    if not entries:
+        return text
+    pattern = re.compile("|".join(re.escape(v) for v, _ in entries.values()), re.IGNORECASE)
+
+    def _placeholder(m: re.Match[str]) -> str:
+        # The regex folds case by Unicode rules that ``str.lower`` does not follow (a long s, a
+        # Kelvin sign, a dotted capital I), so the match is looked up by the same rules; a match
+        # that belongs to no value cannot happen, but a stored text must never raise here.
+        for value, placeholder in entries.values():
+            if re.fullmatch(re.escape(value), m.group(0), re.IGNORECASE):
+                return placeholder
+        return REDACTED
+
+    return pattern.sub(_placeholder, text)
+
+
+def stored_text(text: str, settings: Settings | None) -> str:
+    """``text`` as it may be **stored in the database**: every column of ``ops`` / ``md`` / ``ref``
+    is readable by the read-only role and some by the read API, so the configured Ratescalcs address
+    (:meth:`mdhub.config.Settings.hidden_addresses`) is replaced by its placeholder there. Use it
+    for every text that carries a URL or an error of a source (``ops.job_run.error``,
+    ``ops.source_probe``, ``ops.backfill_task.last_error``, ``ops.data_gap.note``, ...); the full
+    text belongs in the log. ``settings=None``: unchanged."""
+    return text if settings is None else hide_values(text, settings.hidden_addresses())
+
+
+def stored_url(url: str | httpx.URL, settings: Settings | None) -> str:
+    """:func:`redact_url` plus :func:`stored_text`: ``<MDHUB_RATESCALCS_BASE_URL>/snapshot`` for a
+    page of the Ratescalcs source (the page path stays for diagnostics)."""
+    return stored_text(redact_url(url), settings)
 
 
 class SecretRedactingFilter(logging.Filter):

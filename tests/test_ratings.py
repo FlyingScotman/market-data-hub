@@ -332,14 +332,38 @@ def test_agency_sector_rules() -> None:
 # ---------------------------------------------------------------------------- the job
 
 
+class _FakeClock:
+    """Monotonic clock whose ``sleep`` only advances it: the per-host rate limits (0.5 rps for the
+    rating agencies) are still computed, but nothing waits in real time."""
+
+    def __init__(self) -> None:
+        self.now = 0.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def sleep(self, seconds: float) -> None:
+        self.now += seconds
+
+
 def _http_factory(**kw: Any) -> HttpClient:
+    clock = _FakeClock()
     return HttpClient(
-        limiter=RateLimiter(default_rps=None), sleep=lambda _s: None, max_retries=0, **kw
+        limiter=RateLimiter(default_rps=None, clock=clock, sleep=clock.sleep),
+        sleep=clock.sleep,
+        max_retries=0,
+        **kw,
     )
 
 
 def _run(settings: Settings, db: Database, **params: Any) -> JobOutcome:
-    return run_job("ratings_agencies", params, settings=settings, db=db, http_factory=_http_factory)
+    return run_job(
+        "ratings_agencies",
+        params,
+        settings=settings,
+        db=db,
+        http_factory=_http_factory,
+    )
 
 
 RAEX_PAGES = {
