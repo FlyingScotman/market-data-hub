@@ -32,7 +32,7 @@ from psycopg.types.json import Jsonb
 
 from mdhub.config import Settings
 from mdhub.core.errors import JobSkipped
-from mdhub.core.redact import hide_values, redact_url, sanitize_text
+from mdhub.core.redact import sanitize_text, stored_text, stored_url
 from mdhub.core.timeutil import ensure_aware, utc_now
 from mdhub.core.upsert import UpsertResult, atomic
 from mdhub.db.pool import Database
@@ -140,12 +140,11 @@ def job_run(
     if trigger is not None and trigger not in JOB_TRIGGERS:
         raise ValueError(f"unknown job trigger {trigger!r} (one of {', '.join(JOB_TRIGGERS)})")
     secrets = settings.secret_values() if settings is not None else []
-    hidden = settings.hidden_addresses() if settings is not None else []
 
     def stored(text: str) -> str:
         """The text for ``ops.job_run.error`` (served by the read API): the configured address
         of a source is replaced by a placeholder there; the log keeps the full text."""
-        return hide_values(text, hidden)
+        return stored_text(text, settings)
 
     with db.connection() as conn, conn.cursor(row_factory=tuple_row) as cur:
         row = cur.execute(
@@ -264,6 +263,7 @@ def record_capture(
     http_status: int | None = None,
     *,
     fetched_at: datetime | None = None,
+    settings: Settings | None = None,
 ) -> int:
     """Store a fetched payload in ``ops.raw_capture`` and return its ``capture_id``.
 
@@ -277,6 +277,9 @@ def record_capture(
     :param parser_version: version string of the parser that will read this payload.
     :param source_ts: the source's own clock for the payload, aware datetime.
     :param fetched_at: when the payload was received (default: now, UTC).
+    :param settings: pass the run's settings for a source whose address is configured (Ratescalcs):
+        the stored URL then carries the placeholder instead of the address
+        (:func:`~mdhub.core.redact.stored_url`; the read-only role can read ``url_redacted``).
 
     The payload is gzip-compressed (deterministic, ``mtime=0``); ``sha256`` is computed over
     the uncompressed bytes. Runs in a savepoint of the caller's transaction, so the capture
@@ -314,7 +317,7 @@ def record_capture(
                 run_id,
                 source,
                 endpoint,
-                redact_url(url),
+                stored_url(url, settings),
                 http_status,
                 content_type,
                 when,

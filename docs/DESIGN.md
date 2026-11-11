@@ -87,7 +87,7 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
 ### `ops` — provenance and operations
 - `ops.source(code PK, name, base_url, licence_note)`
 - `ops.job_run(id, job, started_at, finished_at, status ∈ {running, succeeded, partial, failed, skipped}, params jsonb, rows_inserted, rows_updated, rows_unchanged, error text, host, trigger ∈ {schedule, catch_up, backfill, cli, api, other})` — `trigger` (0421; NULL for older rows) records who started the run; job health counts only `schedule`/`catch_up` (and NULL) runs as "the scheduled fire ran".
-- `ops.raw_capture(id, run_id, source, endpoint, url_redacted, http_status, content_type, fetched_at, source_ts, parser_version, sha256, payload_gz bytea, size_bytes)` — unique (sha256, endpoint, fetched_at). Retention: intraday raw 90 days (configurable), AlgoPack raw (all its endpoints, incl. backfill `*_history`) the AlgoPack rolling window (§6), other EOD/static raw forever.
+- `ops.raw_capture(id, run_id, source, endpoint, url_redacted (the configured Ratescalcs address is replaced, §7), http_status, content_type, fetched_at, source_ts, parser_version, sha256, payload_gz bytea, size_bytes)` — unique (sha256, endpoint, fetched_at). Retention: intraday raw 90 days (configurable), AlgoPack raw (all its endpoints, incl. backfill `*_history`) the AlgoPack rolling window (§6), other EOD/static raw forever.
 - `ops.row_history(id, table_name, row_key jsonb, old_row jsonb, replaced_at, replaced_by_run)` — written by trigger `ops.track_changes()` (`AFTER UPDATE` only: deletes, e.g. retention, write no history). Images of AlgoPack rows before the rolling window are deleted with the rows.
 - `ops.data_gap(dataset, key jsonb, gap_date, detected_at, status ∈ {open, backfilled, unfillable, not_expected}, note)` — `unfillable` is terminal (the source confirmed "no data" and at least one **business day** of the dataset's calendar has passed since the day, `mdhub.core.gaps`); data that appears later still turns it `backfilled`. A gap the scan no longer reports becomes `backfilled` only when the table has ≥ `min_rows_per_day` rows for it, otherwise `not_expected` (calendar corrected, e.g. a holiday; re-opened if expected and missing again). An `open` gap of a rolling-window dataset dated before its window also becomes `not_expected` (note "outside the rolling N-day window"; §6), never `unfillable` (the source may have the data) nor `backfilled`; `unfillable` gaps stay. `ops.v_coverage` counts `open_gaps`, `unfillable_gaps`, `not_expected_gaps`; `ops.v_open_gaps` lists `open` only.
 - `ops.backfill_task(id, dataset, params jsonb {date_from, date_to}, status, attempts, last_error, created_at, done_at, not_before, started_at, last_run_id, source)` — one task per (backfill job, range): datasets sharing a job share tasks.
@@ -342,10 +342,26 @@ http/https, credentials, query or fragment in it) stops the start. `MDHUB_RATESC
 hub connects to the base URL, sends the name as SNI and `Host` and verifies the certificate against
 it; unset, against the host of the base URL; there is no switch that turns verification off. A failed
 certificate check is not retried and is reported in plain words (job error, source probe row).
-The address is not published: `ops.job_run.error` (served by `/v1/runs` and `/v1/runs/health` to
-any `read` token) carries the base URL and its host as `<MDHUB_RATESCALCS_BASE_URL>` and the server
-name as `<server name>`; the worker log and the console's source probe row (not served by the API)
-keep the full text. The worker refuses to start (and the loader and the probe send nothing) when the
+The address is not stored. It is in two places only: the worker's settings (the environment file
+that sets `MDHUB_RATESCALCS_BASE_URL`) and the worker log, which has the full text of every error.
+The database has none of it, because the read-only role reads every table of `ops`, `md` and `ref`
+(`deploy/sql/grant_readonly.sql`) and the read API serves `ops.job_run` and `ops.v_open_gaps`: every
+text that carries a URL or an error of the source is written with the base URL, its host (with and
+without the port, in unicode and punycode, an IP address in either form) and the host with the path
+prefix replaced by `<MDHUB_RATESCALCS_BASE_URL>`, and the server name by `<server name>`
+(`mdhub.core.redact.stored_text`, `stored_url`, built from `Settings.hidden_addresses()`; the page
+path stays: `<MDHUB_RATESCALCS_BASE_URL>/snapshot`). The columns are `ops.job_run.error`,
+`ops.raw_capture.url_redacted`, `ops.source_probe.endpoint` and `.error`, `ops.job_request.error`,
+`ops.backfill_task.last_error` and `ops.data_gap.note`; the default public address is replaced the
+same way. The stored error of a Ratescalcs request has no text that the server chose either: the
+status (`HTTP 503 for <...>/snapshot`) without the start of the error page, and "refusing cross-host
+redirect from <...>" without the target (`HttpError.stored_message`); the log has both. A test
+(`tests/test_stored_address.py`) reads every column of every table and view that the read-only role
+can read, after a load, a probe, a console request and a backfill task, and looks for the address.
+The other sources keep the text of their errors as it was. The console shows the same placeholders:
+to see the address, read the settings or the worker log.
+
+The worker refuses to start (and the loader and the probe send nothing) when the
 base URL is plain `http` and the Ratescalcs credentials are set, unless
 `MDHUB_RATESCALCS_ALLOW_PLAINTEXT_CREDENTIALS=true` (then a WARNING at the worker start and in every
 probe result: "credentials are sent unencrypted"), when the server name goes with a plain `http` base

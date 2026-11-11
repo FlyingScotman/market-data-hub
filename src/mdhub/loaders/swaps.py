@@ -50,6 +50,7 @@ from psycopg.types.json import Jsonb
 
 from mdhub.core.capture import record_capture
 from mdhub.core.errors import MdhubError, SourceNotConfigured
+from mdhub.core.http import stored_message
 from mdhub.core.timeutil import MSK, utc_now
 from mdhub.core.upsert import UpsertResult, upsert_rows
 from mdhub.datasets import DatasetSpec, register_dataset
@@ -253,6 +254,7 @@ def _store_if_changed(
         parser_version,
         source_ts=source_ts,
         fetched_at=fetched_at,
+        settings=ctx.settings,
     )
     for curve, digest, same_content in changed:
         store_curve(
@@ -305,13 +307,17 @@ def swaps_ratescalcs(ctx: JobContext) -> dict[str, str]:
                 with ctx.connection() as conn:
                     status.update(_store_if_changed(ctx, conn, endpoint, resp, curves, fetched_at))
             except (MdhubError, psycopg.Error) as exc:
-                # never include page bodies in errors (credentials may appear in page text). The
-                # text keeps the configured address here (it goes to the log); the run records
-                # it with the address replaced by a placeholder (mdhub.core.capture.job_run), as
-                # it is served by /v1/runs
-                text = f"{type(exc).__name__}: {str(exc)[:400]}"
-                ctx.logger.error("swaps_ratescalcs %s failed: %s", endpoint, text)
-                failures.append(f"{endpoint}: {text}")
+                # The log gets the full text. The text that goes into the run (ops.job_run.error,
+                # served by /v1/runs) has no part the server chose (start of an error page, target
+                # of a redirect: stored_message) and, in job_run, the configured address replaced
+                # by a placeholder (mdhub.core.redact.stored_text)
+                ctx.logger.error(
+                    "swaps_ratescalcs %s failed: %s: %s",
+                    endpoint,
+                    type(exc).__name__,
+                    str(exc)[:1000],
+                )
+                failures.append(f"{endpoint}: {type(exc).__name__}: {stored_message(exc)[:400]}")
                 status[endpoint] = "failed"
     if failures and len(failures) == len(targets):
         raise MdhubError("swaps_ratescalcs: all pages failed: " + "; ".join(failures))

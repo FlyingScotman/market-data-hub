@@ -66,6 +66,7 @@ __all__ = [
     "build_ssl_context",
     "default_rate_limits",
     "redact_url",
+    "stored_message",
 ]
 
 log = logging.getLogger(__name__)
@@ -83,11 +84,23 @@ DEFAULT_HOST_RPS: Final = 5.0
 
 
 class HttpError(MdhubError):
-    """Base class for HTTP failures. ``url`` is always redacted."""
+    """Base class for HTTP failures. ``url`` is always redacted.
 
-    def __init__(self, message: str, *, url: str = "") -> None:
+    ``stored_message`` is the message **without anything the remote side chose** (the start of
+    an error page, the target of a redirect): the text for the database, where the read-only role
+    and the read API can see it; ``str(exc)`` (with it) goes to the log. Callers that store the
+    error of a source whose server is not public (Ratescalcs) store ``stored_message``."""
+
+    def __init__(self, message: str, *, url: str = "", stored_message: str | None = None) -> None:
         super().__init__(message)
         self.url = url
+        self.stored_message = message if stored_message is None else stored_message
+
+
+def stored_message(exc: BaseException) -> str:
+    """The message of ``exc`` for the database: :attr:`HttpError.stored_message` (no error-page
+    text, no redirect target), ``str(exc)`` for any other exception."""
+    return exc.stored_message if isinstance(exc, HttpError) else str(exc)
 
 
 class TransportFailure(HttpError):  # noqa: N818 - "failure" reads better than "error" here
@@ -106,9 +119,10 @@ class HttpStatusError(HttpError):
 
     def __init__(self, status_code: int, *, url: str, body_snippet: str = "") -> None:
         msg = f"HTTP {status_code} for {url}"
+        stored = msg
         if body_snippet:
             msg += f": {body_snippet}"
-        super().__init__(msg, url=url)
+        super().__init__(msg, url=url, stored_message=stored)
         self.status_code = status_code
         self.body_snippet = body_snippet
 
@@ -577,6 +591,8 @@ class HttpClient:
             raise RedirectError(
                 f"refusing cross-host redirect {redact_url(req.url)} -> {redact_url(target)}",
                 url=redact_url(req.url),
+                # the target is the server's choice, perhaps an internal name: log only
+                stored_message=f"refusing cross-host redirect from {redact_url(req.url)}",
             )
         if req.method not in {"GET", "HEAD"}:
             raise RedirectError(
@@ -610,6 +626,7 @@ def check_json_response(response: httpx.Response) -> None:
         raise EntitlementError(
             f"HTML instead of JSON from {url} (entitlement missing?): {_snippet(response)}",
             url=url,
+            stored_message=f"HTML instead of JSON from {url} (entitlement missing?)",
         )
     raise ResponseFormatError(
         f"expected JSON from {url}, got {ctype or 'no content-type'}", url=url
