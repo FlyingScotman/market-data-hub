@@ -107,8 +107,9 @@ Environment variables (DESIGN §7 plus a few operational knobs):
                                     default 30
 ``MDHUB_CURVE_CARRY_DATASETS``      curves a market cut takes from the latest previous day that
                                     has them when no source delivered them on its day, flagged
-                                    (contract 1.7); comma separated, empty = no carry; default
-                                    ``key_rate_swap,ruonia_ois``
+                                    (contract 1.7); comma separated; unset or empty = the
+                                    default (an empty value is ignored), a lone ``,`` = no
+                                    carry; default ``key_rate_swap,ruonia_ois``
 ``MDHUB_CURVE_CARRY_MAX_AGE_DAYS``  working days after which a carried curve is still served but
                                     its marker says the age limit is exceeded; default 5
 =================================== ====================================================
