@@ -820,7 +820,7 @@ def _changed_unit(monkeypatch: pytest.MonkeyPatch, ticker: str, unit: str) -> No
     monkeypatch.setattr(spb, "parse_unit_report", patched)
 
 
-def test_a_changed_unit_never_relabels_stored_bars(
+def test_a_changed_unit_leaves_stored_bars_alone_and_writes_no_unproven_price(
     settings: Settings,
     db: Database,
     conn: Conn,
@@ -850,40 +850,46 @@ def test_a_changed_unit_never_relabels_stored_bars(
     assert {b["unit_reference_date"] for b in before.values()} == {date(2026, 11, 9)}
 
     # the next morning: the report of 10 November says RUB; the chart also has a bar for a
-    # date never stored (8 November) and for the new date (10 November)
+    # date never stored (8 November), a different number for 9 November (it may be a restated
+    # RUB price) and the new date (10 November)
     today_is(TODAY)
     source.report_payload = _bytes("unit-reference-2026-11-10.pdf")
     _changed_unit(monkeypatch, "MGKL1P1", "RUB")
     source.chart_payload["MGKL1P1"] = [
         _bar(date(2026, 11, 8), 7.0),
-        _bar(date(2026, 11, 9), 7.48),
+        _bar(date(2026, 11, 9), 748.0),
         _bar(DAY, 7.43),
     ]
     second = _run(settings, db, source)  # default range: 8..10 November
     assert (second.result["from"], second.result["to"]) == ("2026-11-08", "2026-11-10")
-    assert second.status == "partial"
-    note = "price unit changed PCT->RUB for MGKL1P1 from 2026-11-10"
-    assert second.result["unit_changes"] == {"MGKL1P1": note}
+    assert second.status == "partial"  # the run that saw the change
+    note = second.result["unit_changes"]["MGKL1P1"]
+    assert note.startswith("price unit changed PCT->RUB for MGKL1P1")
     assert note in _error(conn, second)
+    assert second.result["unit_frozen"][MGKL] == {
+        "ticker": "MGKL1P1",
+        "stored_unit": "PCT",
+        "current_unit": "RUB",
+        "frozen_through": "2026-11-09",
+        "new_unit_from": "2026-11-10",
+        "dates_not_written": 2,  # 8 and 9 November
+    }
     after = bars()
-    for day in before:  # nothing stored before was touched
+    for day in before:  # nothing stored before was touched: not the price, not the label
         assert after[day] == before[day]
-    assert after[date(2026, 11, 8)]["price_unit"] == "PCT"  # not stored yet: the old unit
-    assert after[date(2026, 11, 8)]["unit_reference_date"] == date(2026, 11, 9)
+    assert date(2026, 11, 8) not in after  # a date of the old unit never stored: not written now
     assert after[DAY]["price_unit"] == "RUB" and after[DAY]["unit_reference_date"] == DAY
+    assert after[DAY]["close"] == Decimal("7.43")
     ref = conn.execute(
         "SELECT price_unit, unit_reference_date FROM ref.spb_bond WHERE isin=%s", (MGKL,)
     ).fetchone()
     assert ref == {"price_unit": "RUB", "unit_reference_date": DAY}
     conn.commit()
 
-    # a historical run over the old range (with a corrected close) keeps the old unit
+    # a historical run over the old range (with a corrected close) writes nothing for old dates
     source.chart_payload["MGKL1P1"] = [_bar(date(2026, 11, 6), 9.5), _bar(date(2026, 11, 9), 7.5)]
     third = _run(settings, db, source, date_from=date(2026, 11, 2), date_to=date(2026, 11, 9))
-    assert third.status == "partial"
-    assert "price unit changed PCT->RUB for MGKL1P1 from 2026-11-10" in _error(conn, third)
-    again = bars()
-    assert again[date(2026, 11, 9)]["close"] == Decimal("7.5")
-    assert {again[d]["price_unit"] for d in again if d <= date(2026, 11, 9)} == {"PCT"}
-    assert again[DAY]["price_unit"] == "RUB"
-    assert again[date(2026, 11, 6)]["close"] == Decimal("9.5")
+    assert third.status == "succeeded"  # the change was already acted on: no partial every time
+    assert third.result["unit_changes"]["MGKL1P1"] == note
+    assert third.result["unit_frozen"][MGKL]["dates_not_written"] == 2
+    assert bars() == after

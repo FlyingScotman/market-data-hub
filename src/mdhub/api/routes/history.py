@@ -448,8 +448,19 @@ SPB_COLUMNS: Final = [
     Col("hub_ingested_at", "p.ingested_at"),
     Col("hub_updated_at", "p.updated_at"),
 ]
-# Always retain the identity and meaning of a price, including in projected responses.
-SPB_KEYS: Final = ("trade_date", "isin", "venue", "source", "price_basis", "price_unit")
+# Always retain the identity and meaning of a price, including in projected responses: the unit
+# and the evidence behind it (a consumer that asks for ``close`` only must still be able to tell
+# which bars carry a unit it can use). Additive; the rows of ``/v1/history/index`` are unchanged.
+SPB_KEYS: Final = (
+    "trade_date",
+    "isin",
+    "venue",
+    "source",
+    "price_basis",
+    "price_unit",
+    "unit_reference_date",
+    "unit_conflict",
+)
 
 
 @router.get("/spb-bonds", summary="Russian SPB bond daily chart OHLC by ISIN")

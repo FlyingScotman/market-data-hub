@@ -100,7 +100,16 @@ def test_spb_projection_paging_cursor_and_validation(spb_client: TestClient) -> 
         "price_basis",
         "price_unit",
         "close",
+        "unit_reference_date",
+        "unit_conflict",
     ]
+    # the unit and its evidence come with every projection, so a consumer can filter on them
+    row = records(first)[0]
+    assert (row["price_unit"], row["unit_reference_date"], row["unit_conflict"]) == (
+        "PCT",
+        "2026-11-10",
+        True,
+    )
     cursor = first.json()["next"]
     assert cursor
     second = spb_client.get(PATH, params={**query, "cursor": cursor}, headers=AUTH)

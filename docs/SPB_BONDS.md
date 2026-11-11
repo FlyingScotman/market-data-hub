@@ -44,27 +44,68 @@ trade/session coverage is promised by the website feed.
 ## A unit that changes, and the dates before the first report
 
 A bar's unit is the bond's unit in the newest dated report; the bar stores that report's date as
-`unit_reference_date`. Two cases need care.
+`unit_reference_date`. Consumers read prices **only as percent of par**, so the rule is: **no
+price is better than a price with a wrong or unproven unit.**
 
-**The unit changes** (for example `PCT` to a currency): re-reading old dates under the new unit
-would give a stored price a wrong meaning, which is worse than no price. So a stored bar is
-never relabelled by a later report. Bars dated up to the previous report date (the last report
-that still said the old unit) keep their unit and `unit_reference_date`; their prices may still be
-corrected. Bars for later dates take the new unit. Dates up to the previous report date that were
-never stored are written with the old unit (and the previous report's date). A morning re-read of
-three days and a historical **Run now** over an old range both obey this. The run ends `partial`,
-with `price unit changed X->Y for <ticker> from <date>` in the reason, in the result
-(`unit_changes`) and in the log; `<date>` is the first date that carries the new unit. When the
-change really happened is not known: it is somewhere between the previous and the new report,
-and the hub uses the previous report date as the boundary. Nothing is migrated automatically; a
-consumer filters on `price_unit` and `unit_reference_date` of each bar.
+**How to read `trade_date` against `unit_reference_date`.** The unit is proven for a date only
+when the report is dated that very day.
 
-**Dates before the first stored report** (first load of history): the unit of a bar for a date
-earlier than its `unit_reference_date` is taken from the current report. This is an
+- `trade_date = unit_reference_date`: the unit is the one the report of that day says.
+- `trade_date < unit_reference_date`: the unit was taken from a *later* report. This is the case
+  for the first load of a bond's history (below) and for the dates a later report confirmed.
+  It assumes that the unit did not change in between.
+- `trade_date > unit_reference_date`: the report of that day was not published yet when the bar
+  was stored, so the unit is that of an *earlier* report; the same assumption.
+
+**The unit changes** (for example `PCT` to a currency). What the chart returns for old dates
+after the change is not known: it may still hold the old numbers or it may have recomputed its
+whole history in the new unit, and a number alone does not tell which. So the loader does not
+guess, and it does not look at the report of the bond (`ref.spb_bond`, which the first run after
+the change overwrites) either. It looks at the **bars it has stored**. If a bond has stored bars
+whose unit differs from the newest report, then:
+
+1. Those stored bars are **not touched at all**: not their price, not their unit, not their
+   `unit_reference_date`, whatever date they have and whatever the chart returns now.
+2. **No price is written** for the dates up to the *boundary*: the latest of the trade dates and
+   report dates (`unit_reference_date`) of the bars with the other unit. That includes dates
+   never stored before (a historical **Run now** over an old range writes nothing there) and
+   corrections of old bars. The chart's answer stays in `ops.raw_capture`.
+3. **No price is written for the window** between the boundary and the first date of the new
+   unit. The new unit is proven from the first report that said it (or, once bars of the new
+   unit are stored, from the first of those bars). Between the last date confirmed in the old
+   unit and that report the change happened on an unknown day; the window is empty when
+   consecutive reports changed, and up to 30 dates after an outage of the worker. Reading the
+   reports in between (one PDF per date) would narrow it; the loader does not, to keep a run at
+   one PDF.
+4. Dates from the first date of the new unit on are written with the new unit and the date of
+   the newest report.
+
+The result does not depend on the order of runs: a daily run and a historical one, in either
+order, or a run that failed after saving the bond's reference, give the same stored bars.
+One consequence: if the first run after a change fails or skips the bond's chart, the new
+unit starts from the report of the first successful run, and the earlier date is not written.
+
+If the unit changes back, the bars of the middle period are the "other unit" bars, and every
+date up to the boundary, including old bars of the matching unit, is left as it was.
+
+**What the operator sees.** The run that finds the change, and every run until the first bar
+of the new unit is stored, ends `partial` with `price unit changed X->Y for <ticker>: no price is
+written for dates up to <date> (bars up to <date> keep X), Y from <date>`. After that the
+fact stays visible but does not turn runs `partial`: `unit_changes` and
+`unit_frozen` in the run result, and a log warning. `unit_frozen` holds per ISIN
+`stored_unit`, `current_unit`, `frozen_through` (the boundary), `new_unit_from` and
+`dates_not_written` (chart bars of the run's range that were not written). Nothing is migrated.
+What to do about it is in the operator guide below.
+
+**Dates before the first stored report** (first load of a bond's history): the unit of a bar
+for a date earlier than its `unit_reference_date` is taken from the current report. This is an
 **assumption**: the hub has no historical reports and does not fetch them. It is visible in the
 data: such a bar has `trade_date < unit_reference_date`, and `unit_reference_date` is the date
 of the report that defined the unit. No new column was needed (`md.spb_bond_daily` already
-carries `unit_reference_date`), so there is no extra migration.
+carries `unit_reference_date`), so there is no extra migration. The assumption is kept because
+without it a new bond would have no history at all; it holds on every path that writes a bar:
+a bar is always written with the unit and the date of the newest report, and the dates it
+differs from tell the consumer how it was derived (see above).
 
 ## Dates, incremental loads and history
 
@@ -169,8 +210,18 @@ The hub stores each price exactly as the source gave it, together with its unit
 - A consumer that works only in percent of par takes the `PCT` rows and ignores the others, or
   converts the absolute price through the nominal itself (the hub does not do that).
 - Filter on `price_unit` (and look at `unit_reference_date`, `unit_conflict`) of every row, not
-  on the ISIN alone: a bond's unit can change over time, and its older rows keep the older unit
-  (see above).
+  on the ISIN alone: a bond's unit can change over time, and its older rows keep the older unit.
+  The three columns come with every response, also with `fields=close`.
+- A `PCT` row with `trade_date = unit_reference_date` has the unit of that day's report. With
+  `trade_date < unit_reference_date` the unit comes from a later report (history loaded for a
+  bond, or dates a later report confirmed), with `trade_date >` from an earlier one: in both
+  cases it assumes the unit did not change in between. A consumer that needs a proven unit
+  takes only the rows where the two dates are equal.
+- `unit_conflict = true`: the instrument card says another unit than the report; the report
+  is used. Take such rows only if you accept that.
+- After a change of the unit of a bond the hub leaves **gaps** instead of writing prices of
+  unproven unit: no row for the dates up to the change and for the window around it. A missing
+  date after a unit change is not a missing price in the source.
 
 ## Operator guide (new in 0.7.0)
 
@@ -203,11 +254,35 @@ fields empty, and open the run after a minute (about 45 requests at 1 per second
   a weekday.
 - `failed` with `N of M bonds failed validation`: more than a fifth of the bonds failed, which
   looks like a changed site format. The run stops there and lists the reasons. Report it.
+- `failed` with `the charts of all N admitted bonds failed validation`: every bond's chart
+  answer was rejected (one is within the skip limit, all of them are not), which also looks
+  like a changed site format or request. The run stops and lists the reasons. Report it.
 
 To load older history, use **Run now** with a first and a last date, in successive ranges of at
 most 31 dates.
 
-**Switching it off.** Set `MDHUB_ENABLE_SPB_BONDS=false` and restart the worker. After that the
+**If a bond's price unit changed** (a run ends `partial` with `price unit changed X->Y for
+<ticker>`, and the run result has `unit_changes` and `unit_frozen` for it):
+
+- What you see: the reason names the ticker, the two units, the date up to which no price is
+  written and the date from which the new unit applies; `unit_frozen` in the result has the
+  same dates and the number of chart dates left unwritten in that run.
+- What it means: the data before the change stay as they are, in the old unit; new prices are
+  written in the new unit; the dates of the window around the change are not written, and
+  neither is anything older than the change if loaded later with **Run now**. Consumers that
+  read percent of par get gaps for those dates, not wrong numbers, and no longer get prices
+  for the bond after the change unless the new unit is `PCT`.
+- What to do: **tell the owner** which bond and which dates (the ticker and the dates are in the
+  run reason). Nothing needs to be repaired or reloaded; repeating **Run now** does not fill
+  the gaps, by design. The run ends `partial` only until the first price of the new unit is
+  stored; after that the same facts stay in the run result and the log.
+- Open question, to settle once on the live site: whether the chart recomputes its history in
+  the new unit after a change. If it does not, the unwritten old dates could be loaded
+  safely; until it has been checked they are left empty.
+
+**Switching it off.** There is no button for it in the console: the switch is a setting, and
+changing it and restarting the worker is the fallback path until a button exists. Set
+`MDHUB_ENABLE_SPB_BONDS=false` and restart the worker. After that the
 job still starts at 07:40 but ends `skipped` ("SPB bonds disabled") without sending a request,
 no `spb` probe is sent (its last row stays on the Sources page and grows old), and the stored
 prices are still served by the API.

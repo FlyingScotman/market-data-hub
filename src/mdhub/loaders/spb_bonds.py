@@ -4,12 +4,19 @@ The loader requests completed dates only (the current day is never asked for; a 
 during the trading day had no bar for that day), so one run a day after the previous day closed
 is all there is to read; see ``docs/SPB_BONDS.md``. A bond that fails validation is skipped with
 a diagnostic (the run ends ``partial``); more than :func:`~mdhub.sources.spb.skip_limit` of
-them is format drift and fails the run. The price unit of a stored bar is never re-labelled by a
-later report: when a bond's unit changes, bars up to the previous report date keep their unit."""
+them is format drift and fails the run.
+
+A price is never written with a unit that is not proven: when a bond's unit has changed (stored
+bars carry a unit other than the one of the newest report) nothing is written for the dates up
+to the change, whatever the chart returns now (the chart may or may not have restated its
+history in the new unit), nor for the dates between the last bar of the old unit and the first
+report of the new one. Stored bars of the old unit are not touched at all. See
+:func:`_unit_freeze`."""
 
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
@@ -103,42 +110,70 @@ def _stored_units(
     return stored
 
 
-def _unit_change(ticker: str, old: str, new: str, old_report: date) -> str:
-    """Diagnostic: the new unit applies to dates after the report that still said the old one."""
-    return f"price unit changed {old}->{new} for {ticker} from {old_report + timedelta(days=1)}"
-
-
 _UNIT_FIELDS = ("price_unit", "unit_reference_date", "card_price_unit", "unit_conflict")
 
 
-def _unit_fields_for(
-    trade_date: date,
-    bond: dict[str, Any],
-    stored: dict[str, Any] | None,
-    previous: dict[str, Any] | None,
-) -> tuple[dict[str, Any], dict[str, Any] | None]:
-    """Unit columns of one bar, and the older unit it keeps when the bond's unit has changed.
+@dataclass(frozen=True)
+class UnitFreeze:
+    """Where the price unit of a bond changed, derived from its *stored bars* only.
 
-    The unit comes from the newest report and is a property of the bond *from the previous report
-    on*: a bar dated up to the report date that determined its stored unit (or, for a bar not
-    stored yet, up to the date of the bond's previous report) keeps that older unit, so a morning
-    re-read never re-labels a price that was stored under another unit. Later dates take the new
-    unit. Returns ``(columns, kept)``, ``kept`` being the older unit row when one was kept."""
-    new = {key: bond[key] for key in _UNIT_FIELDS}
-    if stored is not None:
-        if (
-            stored["price_unit"] != new["price_unit"]
-            and trade_date <= stored["unit_reference_date"]
-        ):
-            return {key: stored[key] for key in _UNIT_FIELDS}, stored
-        return new, None
-    if (
-        previous is not None
-        and previous["price_unit"] != new["price_unit"]
-        and trade_date <= previous["unit_reference_date"]
-    ):
-        return {key: previous[key] for key in _UNIT_FIELDS}, previous
-    return new, None
+    ``stored_unit``: the older unit of the bars that must not be touched. ``frozen_through``:
+    the newest date that may still be in that unit (the latest trade date or report date of a
+    stored bar of another unit); no price is written for a date up to it, and stored bars of
+    those dates are left as they are. ``new_unit_from``: the first date written with the current
+    unit; the dates between ``frozen_through`` and it are the window in which the change
+    happened and are not written either. ``pending``: no bar of the current unit is stored yet."""
+
+    stored_unit: str
+    frozen_through: date
+    new_unit_from: date
+    pending: bool
+
+
+def _unit_freeze(conn: psycopg.Connection[Any], bond: dict[str, Any]) -> UnitFreeze | None:
+    """The unit boundary of one bond, or ``None`` while every stored bar has the current unit.
+
+    The boundary is read from the stored bars, never from ``ref.spb_bond`` (the first run after
+    a change overwrites it, and a run that fails after that must not change the answer), so the
+    result does not depend on the order in which runs happened. A stored bar proves that the
+    newest report that said its unit was dated ``unit_reference_date`` and that its own date was
+    assumed to carry that unit: both are "possibly the old unit". The latest of all such dates
+    over the bars with another unit is the boundary ``B``. The current unit is proven only from
+    the first report that said it (``unit_reference_date`` of the bond) or, once bars of the
+    current unit have been stored after ``B``, from the first of those bars; the dates in
+    between are a window in which the change happened and its exact date is unknown, and a
+    single report cannot narrow it (the earlier reports are not read: that would cost up to 31
+    more PDFs per run after an outage for a window that holds at most a few bars)."""
+    foreign = conn.execute(
+        "SELECT price_unit, max(trade_date) AS last_date, max(unit_reference_date) AS last_report "
+        "FROM md.spb_bond_daily WHERE venue = 'SPB' AND isin = %s AND price_unit <> %s "
+        "GROUP BY price_unit",
+        (bond["isin"], bond["price_unit"]),
+    ).fetchall()
+    if not foreign:
+        return None
+    newest = max(foreign, key=lambda r: max(r["last_date"], r["last_report"]))
+    boundary = max(newest["last_date"], newest["last_report"])
+    first = conn.execute(
+        "SELECT min(trade_date) AS d FROM md.spb_bond_daily "
+        "WHERE venue = 'SPB' AND isin = %s AND price_unit = %s AND trade_date > %s",
+        (bond["isin"], bond["price_unit"], boundary),
+    ).fetchone()
+    stored_from = first["d"] if first else None
+    new_from = stored_from or max(bond["unit_reference_date"], boundary + timedelta(days=1))
+    return UnitFreeze(newest["price_unit"], boundary, new_from, stored_from is None)
+
+
+def _unit_change(ticker: str, new: str, freeze: UnitFreeze | None, old: str | None = None) -> str:
+    """Diagnostic for the operator: what is not written and from which date the new unit applies."""
+    if freeze is None:
+        return f"price unit changed {old}->{new} for {ticker}; no stored bar of the old unit"
+    return (
+        f"price unit changed {freeze.stored_unit}->{new} for {ticker}: no price is written "
+        f"for dates up to {freeze.new_unit_from - timedelta(days=1)} "
+        f"(bars up to {freeze.frozen_through} keep {freeze.stored_unit}), "
+        f"{new} from {freeze.new_unit_from}"
+    )
 
 
 @job("spb_bonds_daily", "SPB Russian bond chart daily OHLC (not official close)")
@@ -163,6 +198,10 @@ def spb_bonds_daily(
     requests = 0
     skipped: dict[str, str] = {}
     unit_changes: dict[str, str] = {}
+    unit_seen: dict[str, str] = {}  # ticker -> older unit, when this run saw the report change
+    unit_frozen: dict[str, dict[str, Any]] = {}
+    unit_alarms: list[str] = []
+    bars_seen = 0
     chart_failed: set[str] = set()
     total_rows = 0
     total = 0
@@ -283,22 +322,22 @@ def spb_bonds_daily(
                 admitted.append(bond)
             if not admitted:
                 raise FormatDriftError("SPB: no bond passed unit validation")
-            previous = {
-                r["isin"]: r
+            # The stored reference unit only tells that a change was *seen* in this run; where
+            # it happened is read from the stored bars (see _unit_freeze).
+            previous_units = {
+                r["isin"]: r["price_unit"]
                 for r in conn.execute(
-                    "SELECT isin, price_unit, unit_reference_date, card_price_unit, unit_conflict "
-                    "FROM ref.spb_bond WHERE venue = 'SPB' AND isin = ANY(%s)",
+                    "SELECT isin, price_unit FROM ref.spb_bond "
+                    "WHERE venue = 'SPB' AND isin = ANY(%s)",
                     ([b["isin"] for b in admitted],),
                 ).fetchall()
             }
             for bond in admitted:
-                old = previous.get(bond["isin"])
-                if old is not None and old["price_unit"] != bond["price_unit"]:
+                old = previous_units.get(bond["isin"])
+                if old is not None and old != bond["price_unit"]:
+                    unit_seen[bond["ticker"]] = old
                     unit_changes[bond["ticker"]] = _unit_change(
-                        bond["ticker"],
-                        old["price_unit"],
-                        bond["price_unit"],
-                        old["unit_reference_date"],
+                        bond["ticker"], bond["price_unit"], None, old
                     )
             ctx.run.add_counts(
                 upsert_rows(conn, "ref.spb_bond", admitted, ["venue", "isin"], run_id=ctx.run.id)
@@ -330,46 +369,43 @@ def spb_bonds_daily(
                         "skipped": str(exc),
                     }
                     continue
-                stored_bars = {
-                    r["trade_date"]: r
-                    for r in conn.execute(
-                        "SELECT trade_date, price_unit, unit_reference_date, card_price_unit, "
-                        "unit_conflict FROM md.spb_bond_daily "
-                        "WHERE venue = 'SPB' AND isin = %s AND trade_date BETWEEN %s AND %s",
-                        (bond["isin"], start, end),
-                    ).fetchall()
-                }
+                freeze = _unit_freeze(conn, bond)
                 rows = []
-                kept_until: date | None = None
-                kept_unit = ""
+                not_written = 0
                 for bar in bars:
-                    unit_cols, kept = _unit_fields_for(
-                        bar["trade_date"],
-                        bond,
-                        stored_bars.get(bar["trade_date"]),
-                        previous.get(bond["isin"]),
-                    )
-                    if kept is not None:
-                        kept_unit = kept["price_unit"]
-                        kept_until = max(
-                            kept_until or kept["unit_reference_date"], kept["unit_reference_date"]
-                        )
+                    if freeze is not None and bar["trade_date"] < freeze.new_unit_from:
+                        # The chart's number for this date may be in either unit (it is not
+                        # known whether the chart restated its history): no price, no label.
+                        not_written += 1
+                        continue
                     rows.append(
                         {
                             **bar,
                             **{key: bond[key] for key in ("venue", "isin", "ticker")},
-                            **unit_cols,
+                            **{key: bond[key] for key in _UNIT_FIELDS},
                             "source": "spb",
                             "price_basis": spb.PRICE_BASIS,
                             "capture_id": cap,
                             "run_id": ctx.run.id,
                         }
                     )
-                if kept_until is not None and bond["ticker"] not in unit_changes:
-                    # an earlier run changed the unit: bars up to that report date keep the old one
+                bars_seen += len(bars)
+                if freeze is not None:
                     unit_changes[bond["ticker"]] = _unit_change(
-                        bond["ticker"], kept_unit, bond["price_unit"], kept_until
+                        bond["ticker"], bond["price_unit"], freeze
                     )
+                    unit_frozen[bond["isin"]] = {
+                        "ticker": bond["ticker"],
+                        "stored_unit": freeze.stored_unit,
+                        "current_unit": bond["price_unit"],
+                        "frozen_through": freeze.frozen_through.isoformat(),
+                        "new_unit_from": freeze.new_unit_from.isoformat(),
+                        "dates_not_written": not_written,
+                    }
+                # Only the run that sees the change, or that still has no bar of the new unit,
+                # ends partial; afterwards the fact stays in ``unit_frozen`` and the log.
+                if bond["ticker"] in unit_seen or (freeze is not None and freeze.pending):
+                    unit_alarms.append(unit_changes[bond["ticker"]])
                 counts = upsert_rows(
                     conn,
                     "md.spb_bond_daily",
@@ -401,11 +437,12 @@ def spb_bonds_daily(
     result["requests"] = requests
     result["skipped"] = dict(skipped)
     result["unit_changes"] = dict(unit_changes)
+    result["unit_frozen"] = unit_frozen
     for note in unit_changes.values():
         ctx.logger.warning("SPB: %s", note)
-    if unit_changes:
-        ctx.run.mark_partial("SPB: " + "; ".join(unit_changes.values()))
-    if total_rows == 0 and any(
+    if unit_alarms:
+        ctx.run.mark_partial("SPB: " + "; ".join(unit_alarms))
+    if bars_seen == 0 and any(
         (start + timedelta(days=i)).weekday() < 5 for i in range((end - start).days + 1)
     ):
         # Weekends and holidays have no bars, but a weekday range with none for any bond is

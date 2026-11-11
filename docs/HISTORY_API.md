@@ -165,9 +165,10 @@ the other history endpoints. A MOEX listing is not required.
 | `from`, `to` | inclusive dates, at most 366 calendar dates; `to` defaults to today (MSK) |
 | `fields`, `limit`, `cursor`, `known_at` | common columnar pagination and as-known-at conventions |
 
-Always-returned columns: `trade_date`, `isin`, `venue`, `source`, `price_basis`, `price_unit`.
-Additional columns: `ticker`, `open`, `high`, `low`, `close`, `unit_reference_date`,
-`card_price_unit`, `unit_conflict`, `capture_id`, `run_id`, `hub_ingested_at`, `hub_updated_at`.
+Always-returned columns (also with `fields=`): `trade_date`, `isin`, `venue`, `source`,
+`price_basis`, `price_unit`, `unit_reference_date`, `unit_conflict`.
+Additional columns: `ticker`, `open`, `high`, `low`, `close`, `card_price_unit`, `capture_id`,
+`run_id`, `hub_ingested_at`, `hub_updated_at`.
 Order: `trade_date`. Empty ranges return no rows, never zero or prices from another day.
 
 `source=spb`, `venue=SPB`, `price_basis=chart_close`: close is the daily **chart** bar close,
@@ -178,10 +179,14 @@ code and means a currency amount. The OHLC numbers are kept verbatim, without gu
 units from `RUB` settlement currency or converting them.
 
 Units come from an official report observed at ingestion. `unit_reference_date` names that
-report date; it does **not** prove the unit was historically known for each chart date (a bar
-dated before it took the unit from that report: an assumption, see [SPB_BONDS.md](SPB_BONDS.md)).
-If a bond's unit changes, stored bars up to the previous report date keep their old unit and
-`unit_reference_date`: filter on both columns, not on the ISIN alone.
+report date. The unit is proven for a date only when `trade_date = unit_reference_date`; with
+`trade_date <` it the unit comes from a later report (a bond's first loaded history), with `>`
+from an earlier one: an assumption that the unit did not change in between, see
+[SPB_BONDS.md](SPB_BONDS.md). If a bond's unit changes, its stored bars keep their old unit and
+`unit_reference_date`, and **no price is written** for the dates that may still be in the old
+unit or for the window in which the change happened, so a series has gaps there instead of
+numbers of unproven unit: filter on `price_unit` (and `unit_reference_date`), not on the ISIN
+alone.
 `card_price_unit` retains the instrument card's text; `unit_conflict=true` exposes disagreement
 between that card and the report (observed for XMED1P1: card RUB, report PCT).
 `capture_id` identifies the chart response and `run_id` links the run's card/report captures.
