@@ -120,19 +120,23 @@ def release_tags(tags: Iterable[str]) -> list[tuple[tuple[int, int, int, int, in
 
 
 def allowed_next_versions(latest: str) -> tuple[str, ...]:
-    """The versions that may follow ``latest`` (a version without ``v``): exactly one step, patch,
-    minor or major, so ``0.6.2`` -> ``0.6.3``, ``0.7.0``, ``1.0.0``. After a pre-release the final
-    or a later pre-release of the same ``X.Y.Z`` comes first (``0.7.0rc1`` -> ``0.7.0``). A
-    pre-release ``{a|b|rc}N`` of an allowed ``X.Y.Z`` is allowed as well
+    """The versions (``X.Y.Z``) that may follow ``latest`` (a version without ``v``).
+
+    After a final release exactly one step: patch, minor or major (``0.6.2`` -> ``0.6.3``,
+    ``0.7.0``, ``1.0.0``). After a pre-release only the same ``X.Y.Z``: its final or a later
+    pre-release (``0.7.0rc1`` -> ``0.7.0``, ``0.7.0rc2``). The next step is taken from a final
+    release, never from a pre-release: ``0.7.0rc1`` -> ``0.7.1`` would skip ``0.7.0``, and a server
+    installs only newer versions, so ``0.7.0`` could never be released afterwards (the same
+    reason as for ``0.6.2`` -> ``0.9.0``). An abandoned pre-release is closed by releasing the
+    final of its version. A pre-release ``{a|b|rc}N`` of an allowed ``X.Y.Z`` is allowed as well
     (:func:`check_next_version`).
 
     :raises ReleaseError: ``latest`` is not a release version.
     """
     major, minor, patch, rank, _ = version_key(latest)
-    steps = [f"{major}.{minor}.{patch + 1}", f"{major}.{minor + 1}.0", f"{major + 1}.0.0"]
     if rank != _FINAL_RANK:
-        steps.insert(0, f"{major}.{minor}.{patch}")
-    return tuple(steps)
+        return (f"{major}.{minor}.{patch}",)
+    return (f"{major}.{minor}.{patch + 1}", f"{major}.{minor + 1}.0", f"{major + 1}.0.0")
 
 
 def check_next_version(new: str, latest: str | None) -> None:

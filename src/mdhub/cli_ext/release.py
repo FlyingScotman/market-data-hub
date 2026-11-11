@@ -9,7 +9,8 @@
 * ``check-next --version V [--repo DIR] [--enforce/--no-enforce] [--summary FILE]`` - what a run of
   ``.github/workflows/release.yml`` is about to release: the version against the release tags of the
   checkout (``--enforce``: it must be the next one after the latest tag, exactly one patch, minor
-  or major step, :func:`mdhub.release.check_next_version`; exit 1 otherwise) and a Markdown summary
+  or major step, :func:`mdhub.release.check_next_version`, and not a version whose tag exists
+  already - the release makes the tag itself; exit 1 otherwise) and a Markdown summary
   (version, commit, previous tag, the commits since it) appended to ``FILE`` - the
   ``$GITHUB_STEP_SUMMARY`` the owner reads before approving the signature.
 * ``manifest --root DIR --commit SHA [--version V] [--out FILE]`` - write ``MANIFEST.json`` for an
@@ -219,6 +220,12 @@ def _fail(message: str) -> typer.Exit:
     return typer.Exit(1)
 
 
+def _warn(message: str) -> None:
+    """A workflow annotation on the run page (outside Actions: a plain line on stderr)."""
+    prefix = "::warning::" if os.environ.get("GITHUB_ACTIONS") == "true" else "warning: "
+    typer.echo(f"{prefix}{message}", err=True)
+
+
 @app.command("check-next")
 def check_next_cmd(
     version: Annotated[
@@ -246,12 +253,19 @@ def check_next_cmd(
     except ReleaseError as exc:
         raise _fail(str(exc)) from None
     # the previous tag: the greatest one below the new version. The latest one: the greatest tag
-    # that is not this version's own (a pushed tag is in the list already)
+    # that is not this version's own. A pushed tag (--no-enforce) is in the list already: it is
+    # the release itself and is left out. For Run workflow (--enforce) the tag is made by the
+    # release, so a tag of this version means that the version exists already: refused below
     below = [tag for key, tag in known if key < new]
     previous = below[-1] if below else None
+    own = [tag for key, tag in known if key == new]
     others = [tag for key, tag in known if key != new]
     latest = others[-1][1:] if others else None
     try:
+        if own and enforce:
+            raise ReleaseError(
+                f"the version {version} exists already (tag {own[0]}): choose a greater version"
+            )
         check_next_version(version, latest)
         may_follow = ", ".join(allowed_next_versions(latest)) if latest else ""
         verdict = "ok - " + (
@@ -267,4 +281,11 @@ def check_next_cmd(
             out.write(_summary(repo, version, previous, verdict))
     if error is not None and enforce:
         raise _fail(error)
+    if error is not None:
+        # a pushed tag is the owner's act and goes on; the annotation is on the run page, not only
+        # in the summary. A constant text and the version (checked by version_key), never `error`
+        _warn(
+            f"release version {version} is not the next one after the latest release tag: "
+            "the tag was pushed by the owner and the run goes on (see the summary of the job check)"
+        )
     typer.echo(verdict.replace("**", ""))

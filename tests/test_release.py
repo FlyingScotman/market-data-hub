@@ -398,12 +398,17 @@ def test_version_key_is_strict(bad: str) -> None:
 def test_allowed_next_versions_and_check() -> None:
     assert allowed_next_versions("0.6.2") == ("0.6.3", "0.7.0", "1.0.0")
     assert allowed_next_versions("1.9.9") == ("1.9.10", "1.10.0", "2.0.0")
-    # after a pre-release the final of the same X.Y.Z is allowed too
-    assert allowed_next_versions("0.7.0rc1") == ("0.7.0", "0.7.1", "0.8.0", "1.0.0")
+    # after a pre-release only its own X.Y.Z (the final, or a later pre-release): a step from it
+    # would skip a version whose final was never released, and nobody can release it afterwards
+    assert allowed_next_versions("0.7.0rc1") == ("0.7.0",)
+    assert allowed_next_versions("1.0.0a3") == ("1.0.0",)
     for new in ("0.6.3", "0.7.0", "1.0.0", "0.6.3a1", "0.7.0b2", "1.0.0rc1"):
         check_next_version(new, "0.6.2")
-    for new in ("0.7.0rc2", "0.7.0", "0.7.1", "0.8.0"):
+    for new in ("0.7.0rc2", "0.7.0"):
         check_next_version(new, "0.7.0rc1")
+    for new in ("0.7.1", "0.8.0", "1.0.0", "0.7.1rc1"):
+        with pytest.raises(ReleaseError, match=r"not the next one.*allowed are 0\.7\.0,"):
+            check_next_version(new, "0.7.0rc1")
     check_next_version("3.4.5", None)  # no earlier tag: any well-formed version
     for new in ("0.6.4", "0.8.0", "0.9.0", "2.0.0", "1.1.0"):
         with pytest.raises(
@@ -731,7 +736,7 @@ def test_release_workflow_run_workflow_path() -> None:
     assert "--enforce" in version_step["run"] and "--no-enforce" in version_step["run"]
     exists = steps["tag and release do not exist yet"]
     assert "workflow_dispatch" in exists["if"]
-    for needle in ("release not found", "exists already"):
+    for needle in ("(HTTP 404)", "exists already", "releases/tags/$RELEASE_TAG"):
         assert needle in exists["run"], needle
     tags = steps["the release tags seen by this check"]
     assert "workflow_dispatch" in tags["if"] and tags["id"] == "tags"
@@ -751,6 +756,15 @@ def test_release_workflow_run_workflow_path() -> None:
     assert "--verify-tag" in publish_text and "--target" not in publish_text
     assert publish_text.index("git/refs") < publish_text.index("gh release create")
     assert "gh release delete" not in publish_text and "git/refs/tags" not in publish_text
+    # gh prints the body of an HTTP error to stdout, so an error must never be swallowed (`|| true`,
+    # `2>/dev/null`) around a lookup: the tag is looked up with matching-refs (200 and [] for "no
+    # tag") by the exact name, and the lookup of one ref (a 404 body in stdout) is not used
+    assert "matching-refs/tags/$RELEASE_TAG" in publish_text and "git/ref/tags" not in publish_text
+    for name, job in jobs.items():
+        for step in job.get("steps", []):
+            run = step.get("run", "")
+            if "gh " in run:
+                assert "|| true" not in run and "2>/dev/null" not in run, (name, step.get("name"))
     assert [n for n, j in jobs.items() if "git/refs" in str(j)] == ["publish"]
     assert "sign" in jobs["verify"]["needs"] and "verify" in jobs["publish"]["needs"]
 
@@ -766,15 +780,65 @@ def _step_script(job: str, name: str) -> str:
 
 
 FAKE_GH = r"""#!/usr/bin/env bash
-# a stand-in for `gh`: state in $FAKE_GH_DIR
-# (tags: "<name> <sha>" per line, releases: one tag per line)
+# A stand-in for `gh`, with the behaviour of the real one (checked against gh 2.89 on a missing and
+# an existing tag and release, GET only): on an HTTP error the BODY of the error goes to STDOUT
+# ("--jq" is not applied to it), "gh: <message> (HTTP <code>)" goes to stderr, the exit status is 1.
+# A missing ref or release is a 404; matching-refs answers 200 with [] and matches by PREFIX.
+# State in $FAKE_GH_DIR (tags: "<name> <sha>" per line, releases: one tag per line).
 set -u
 d="$FAKE_GH_DIR"
 echo "gh $*" >>"$d/calls.log"
-if [[ "$1" == "release" && "$2" == "view" ]]; then
-  if [[ -n "${FAKE_GH_VIEW_ERROR:-}" ]]; then echo "$FAKE_GH_VIEW_ERROR" >&2; exit 1; fi
-  if grep -qx "$3" "$d/releases"; then echo "title: $3"; exit 0; fi
-  echo "release not found" >&2; exit 1
+http_error() {  # code, message
+  printf '{"message":"%s","documentation_url":"https://docs.github.com","status":"%s"}' "$2" "$1"
+  echo "gh: $2 (HTTP $1)" >&2
+  exit 1
+}
+if [[ "$1" == "api" ]]; then
+  shift
+  method=GET; jq=""; ref=""; sha=""; path=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --method) method="$2"; shift 2;;
+      --paginate) shift;;
+      --jq) jq="$2"; shift 2;;
+      -f) case "$2" in ref=*) ref="${2#ref=}";; sha=*) sha="${2#sha=}";; esac; shift 2;;
+      *) path="$1"; shift;;
+    esac
+  done
+  case "$path" in
+    */git/matching-refs/tags/*)
+      prefix="${path##*/git/matching-refs/tags/}"
+      if [[ "$prefix" == "v" ]]; then
+        [[ -n "${FAKE_GH_LIST_ERROR:-}" ]] && http_error 502 "Bad Gateway"
+      else
+        [[ -n "${FAKE_GH_REF_ERROR:-}" ]] && http_error 502 "Bad Gateway"
+      fi
+      found=()
+      while read -r name sha_of; do
+        [[ "$name" == "$prefix"* ]] && found+=("$name $sha_of")
+      done <"$d/tags"
+      case "$jq" in
+        '.[].ref') for row in "${found[@]}"; do echo "refs/tags/${row% *}"; done;;
+        '.[] | "\(.ref) \(.object.sha)"') for row in "${found[@]}"; do echo "refs/tags/$row"; done;;
+        "") echo '[]';;
+        *) echo "unexpected jq: $jq" >&2; exit 2;;
+      esac
+      exit 0;;
+    */git/ref/tags/*)  # one ref: a missing one is a 404 (the exact-ref lookup is not used any more)
+      name="${path##*/git/ref/tags/}"
+      line="$(grep "^$name " "$d/tags" || true)"
+      [[ -z "$line" ]] && http_error 404 "Not Found"
+      echo "${line#* }"; exit 0;;
+    */git/refs)
+      name="${ref#refs/tags/}"
+      if grep -q "^$name " "$d/tags"; then http_error 422 "Reference already exists"; fi
+      echo "$name ${FAKE_GH_TAG_AT:-$sha}" >>"$d/tags"; echo '{}'; exit 0;;
+    */releases/tags/*)
+      name="${path##*/releases/tags/}"
+      [[ -n "${FAKE_GH_RELEASE_ERROR:-}" ]] && http_error 502 "Bad Gateway"
+      if grep -qx "$name" "$d/releases"; then echo "{\"tag_name\":\"$name\"}"; exit 0; fi
+      http_error 404 "Not Found";;
+  esac
 fi
 if [[ "$1" == "release" && "$2" == "create" ]]; then
   tag="$3"
@@ -784,38 +848,6 @@ if [[ "$1" == "release" && "$2" == "create" ]]; then
   esac
   if ! grep -q "^$tag " "$d/tags"; then echo "tag $tag does not exist" >&2; exit 1; fi
   echo "$tag" >>"$d/releases"; exit 0
-fi
-if [[ "$1" == "api" ]]; then
-  shift
-  method=GET; paginate=0; jq=""; ref=""; sha=""; path=""
-  while [[ $# -gt 0 ]]; do
-    case "$1" in
-      --method) method="$2"; shift 2;;
-      --paginate) paginate=1; shift;;
-      --jq) jq="$2"; shift 2;;
-      -f) case "$2" in ref=*) ref="${2#ref=}";; sha=*) sha="${2#sha=}";; esac; shift 2;;
-      *) path="$1"; shift;;
-    esac
-  done
-  case "$path" in
-    */git/matching-refs/tags/v)
-      [[ -n "${FAKE_GH_LIST_ERROR:-}" ]] && exit 1
-      while read -r name _; do
-        [[ "$name" == v* ]] && echo "refs/tags/$name"
-      done <"$d/tags"
-      exit 0;;
-    */git/ref/tags/*)
-      name="${path##*/git/ref/tags/}"
-      line="$(grep "^$name " "$d/tags" || true)"
-      if [[ -z "$line" ]]; then echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
-      echo "${line#* }"; exit 0;;
-    */git/refs)
-      name="${ref#refs/tags/}"
-      if grep -q "^$name " "$d/tags"; then
-        echo "gh: Reference already exists (HTTP 422)" >&2; exit 1
-      fi
-      echo "$name ${FAKE_GH_TAG_AT:-$sha}" >>"$d/tags"; echo '{}'; exit 0;;
-  esac
 fi
 echo "unexpected gh call: $*" >&2; exit 2
 """
@@ -969,9 +1001,16 @@ def test_step_check_pushed_tag_is_not_enforced(step_env: StepEnv) -> None:
     out = step_env.run(
         _step_script("check", CHECK_VERSION),
         GITHUB_EVENT_NAME="push",
+        GITHUB_ACTIONS="true",
         RELEASE_TAG="v0.9.0",
     )
     assert out.returncode == 0, out.stderr
+    # the odd version is an annotation on the run page too: a constant text and the checked version
+    warnings = [line for line in out.stderr.splitlines() if line.startswith("::warning::")]
+    assert warnings == [
+        "::warning::release version 0.9.0 is not the next one after the latest release tag: "
+        "the tag was pushed by the owner and the run goes on (see the summary of the job check)"
+    ]
     summary = (step_env.root / "summary.md").read_text()
     assert "## Release v0.9.0" in summary and "- previous tag: `v0.6.2`" in summary
     assert "**REFUSED** - version 0.9.0 is not the next one after the latest tag v0.6.2" in summary
@@ -980,6 +1019,57 @@ def test_step_check_pushed_tag_is_not_enforced(step_env: StepEnv) -> None:
         _step_script("check", CHECK_VERSION), GITHUB_EVENT_NAME="push", RELEASE_TAG="vnext"
     )
     assert bad.returncode == 1
+
+
+def test_step_check_pushed_tag_in_order_has_no_warning(step_env: StepEnv) -> None:
+    subprocess.run(["git", "tag", "v0.6.3"], cwd=step_env.repo, check=True)
+    out = step_env.run(
+        _step_script("check", CHECK_VERSION),
+        GITHUB_EVENT_NAME="push",
+        GITHUB_ACTIONS="true",
+        RELEASE_TAG="v0.6.3",
+    )
+    assert out.returncode == 0, out.stderr
+    assert "::warning::" not in out.stderr
+
+
+def test_step_check_existing_version_is_refused_on_run_workflow(step_env: StepEnv) -> None:
+    """Run workflow makes the tag itself: a version whose tag exists is refused with a clear text,
+    not reported as "the next one after" the tag before it (the own tag is left out only for a
+    pushed tag)."""
+    subprocess.run(
+        ["git", "tag", "v0.6.1"], cwd=step_env.repo, check=True
+    )  # v0.6.0, v0.6.1, v0.6.2
+    script = _step_script("check", CHECK_VERSION)
+    for version in ("0.6.2", "0.6.1"):
+        out = step_env.run(
+            script,
+            GITHUB_EVENT_NAME="workflow_dispatch",
+            GITHUB_ACTIONS="true",
+            RELEASE_TAG=f"v{version}",
+        )
+        assert out.returncode == 1, (out.stdout, out.stderr)
+        assert f"::error::the version {version} exists already (tag v{version})" in out.stderr
+        assert "choose a greater version" in out.stderr
+    summary = (step_env.root / "summary.md").read_text()
+    assert "**REFUSED** - the version 0.6.2 exists already" in summary
+    assert "the next one after v0.6.1" not in summary
+    # the pushed-tag path still leaves its own tag out of the comparison
+    pushed = step_env.run(script, GITHUB_EVENT_NAME="push", RELEASE_TAG="v0.6.2")
+    assert pushed.returncode == 0, pushed.stderr
+
+
+def test_step_check_after_a_pre_release_only_its_own_version(step_env: StepEnv) -> None:
+    subprocess.run(["git", "tag", "v0.7.0rc1"], cwd=step_env.repo, check=True)
+    script = _step_script("check", CHECK_VERSION)
+    for version, ok in (("0.7.0", True), ("0.7.0rc2", True), ("0.7.1", False), ("0.8.0", False)):
+        out = step_env.run(
+            script,
+            GITHUB_EVENT_NAME="workflow_dispatch",
+            GITHUB_ACTIONS="true",
+            RELEASE_TAG=f"v{version}",
+        )
+        assert (out.returncode == 0) is ok, (version, out.stderr)
 
 
 def test_step_tag_and_release_do_not_exist(step_env: StepEnv) -> None:
@@ -992,7 +1082,7 @@ def test_step_tag_and_release_do_not_exist(step_env: StepEnv) -> None:
     (step_env.state / "releases").write_text("v0.7.0\n")
     release = step_env.run(script, RELEASE_TAG="v0.7.0")
     assert release.returncode == 1 and "a release v0.7.0 exists already" in release.stdout
-    unknown = step_env.run(script, RELEASE_TAG="v0.7.1", FAKE_GH_VIEW_ERROR="HTTP 502 bad gateway")
+    unknown = step_env.run(script, RELEASE_TAG="v0.7.1", FAKE_GH_RELEASE_ERROR="1")
     assert unknown.returncode == 1 and "could not tell whether the release exists" in unknown.stdout
 
 
@@ -1054,6 +1144,46 @@ def test_step_publish_refuses_when_the_tags_changed(step_env: StepEnv) -> None:
     failing = _publish(step_env, TAGS_AT_CHECK=digest, FAKE_GH_LIST_ERROR="1")
     assert failing.returncode == 1
     assert not [c for c in step_env.calls() if "POST" in c or "release create" in c]
+
+
+def test_step_publish_no_tag_is_not_an_error_but_a_failed_lookup_is(step_env: StepEnv) -> None:
+    """The real gh prints the body of an HTTP error to stdout (rc 1), so "no tag" must come from a
+    200 answer (matching-refs: []), and a failing lookup must stop the run, not look like a tag."""
+    digest = _tags_digest(step_env)
+    # the lookup fails with HTTP 502 (body in stdout, like the real gh): no tag, no release
+    broken = _publish(step_env, TAGS_AT_CHECK=digest, FAKE_GH_REF_ERROR="1")
+    assert broken.returncode != 0
+    assert not [c for c in step_env.calls() if "POST" in c or "release create" in c]
+    assert "v0.7.0" not in step_env.tags()
+    # a tag of a longer name that starts with ours is not our tag
+    with (step_env.state / "tags").open("a") as out:
+        out.write(f"v0.7.0rc1 {OTHER_SHA}\n")
+    subprocess.run(["git", "tag", "v0.7.0rc1"], cwd=step_env.repo, check=True)
+    digest = _tags_digest(step_env)
+    ok = _publish(step_env, TAGS_AT_CHECK=digest)
+    assert ok.returncode == 0, ok.stderr
+    assert f"v0.7.0 {SHA}" in (step_env.state / "tags").read_text().splitlines()
+
+
+def test_fake_gh_behaves_like_the_real_one(step_env: StepEnv) -> None:
+    """The stand-in is only as good as its likeness: these facts were seen on the real gh 2.89."""
+    env = {
+        **os.environ,
+        "PATH": f"{step_env.bin}{os.pathsep}{os.environ['PATH']}",
+        "FAKE_GH_DIR": str(step_env.state),
+    }
+
+    def gh(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(["gh", *args], env=env, capture_output=True, text=True, check=False)
+
+    missing = gh("api", "repos/o/r/git/ref/tags/v9.9.9", "--jq", ".object.sha")
+    assert missing.returncode == 1
+    assert missing.stdout.startswith('{"message":"Not Found"')  # the body, --jq not applied
+    assert missing.stderr.strip() == "gh: Not Found (HTTP 404)"
+    none = gh("api", "--paginate", "repos/o/r/git/matching-refs/tags/v9.9.9", "--jq", ".[].ref")
+    assert (none.returncode, none.stdout) == (0, "")
+    prefix = gh("api", "--paginate", "repos/o/r/git/matching-refs/tags/v0.6", "--jq", ".[].ref")
+    assert prefix.stdout.split() == ["refs/tags/v0.6.0", "refs/tags/v0.6.2"]
 
 
 def test_step_publish_tag_elsewhere_is_never_released(step_env: StepEnv) -> None:

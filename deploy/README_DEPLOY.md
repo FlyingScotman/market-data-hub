@@ -255,9 +255,10 @@ files on the GitHub Release:
    The title of the run names the tag and the commit. The job `check` refuses, in seconds and before the
    tests, a branch other than `main`, a malformed version, a version that is not greater than the latest
    tag `v*` (compared as versions, not as text), a version that is **not exactly one step after it** (patch,
-   minor or major: `0.6.2` -> `0.6.3`, `0.7.0` or `1.0.0`, or an `a|b|rc` pre-release of those; a server
-   installs only newer versions, so a version that skips ahead cannot be taken back) and a version for
-   which the tag or a release exists. It writes a summary on the run page (version, commit, previous tag,
+   minor or major: `0.6.2` -> `0.6.3`, `0.7.0` or `1.0.0`, or an `a|b|rc` pre-release of those; after a
+   pre-release only its own `X.Y.Z`, e.g. `0.7.0rc1` -> `0.7.0` or `0.7.0rc2`; a server installs only newer
+   versions, so a version that skips ahead cannot be taken back) and a version for which the tag or a
+   release exists (an existing version is refused as "exists already", not compared with the tag before it). It writes a summary on the run page (version, commit, previous tag,
    the commits since it); the owner reads it, with the title, before approving `sign`. The jobs then run as
    for a tag (`ci`, `build`, `sign`, `verify`, `publish`), all on the commit that was current when the run
    started. The tag `vX.Y.Z` is made **by `publish`, on that commit, after `sign` and `verify` succeeded**:
@@ -372,24 +373,49 @@ environment value, checked by `check`; it is shown in the run title, which GitHu
 
 ### Tag rules for `v*` (an action of the owner in the GitHub interface, once)
 
-The Run workflow path makes the tag with the workflow's own token. Tags of releases must be creatable by
-that token and by nobody else, and must never be moved or deleted, because a server compares versions
-and a moved tag would change what a version means. That takes **two** rulesets, not one with a bypass:
+The Run workflow path makes the tag with the workflow's own token (`GITHUB_TOKEN`). A tag of a release must
+never be moved or deleted, because a server compares versions and a moved tag would change what a version
+means. That is one **required** ruleset (called ruleset 2 below, because it was the second one in earlier versions of
+this README) and one optional one (ruleset 1):
 
-1. **Settings -> Rules -> Rulesets -> New ruleset -> New tag ruleset.** Name `release tags: creation`.
-   *Enforcement status*: Active. *Bypass list* -> *Add bypass*: **GitHub Actions** and the role
-   **Repository admin** (the admin keeps the right to push a release tag by hand). *Target tags* -> *Add
-   target* -> *Include by pattern* -> `v*`. *Rules*: tick **Restrict creations**. Create.
-2. **New ruleset -> New tag ruleset.** Name `release tags: no change`. *Enforcement status*: Active.
-   **Leave the Bypass list empty** (in particular, no GitHub Actions). *Target tags*: `v*` as above. *Rules*: tick
-   **Restrict updates** and **Restrict deletions**. Create.
+- **Ruleset 2, required: Settings -> Rules -> Rulesets -> New ruleset -> New tag ruleset.** Name `release
+  tags: no change`. *Enforcement status*: Active. **Leave the Bypass list empty** (in particular, no GitHub
+  Actions, no admin role). *Target tags* -> *Add target* -> *Include by pattern* -> `v*`. *Rules*: tick
+  **Restrict updates** and **Restrict deletions**; do **not** tick Restrict creations. Create. Creating a
+  new tag stays allowed, so the Run workflow path and a tag pushed by the owner both work; an existing tag
+  can no longer be moved or deleted by anyone, the workflow included.
+- **Ruleset 1, optional: `release tags: creation`** (*Restrict creations*; bypass list: **GitHub Actions** and
+  the role **Repository admin**). **If GitHub Actions is not offered in the Bypass list of your repository
+  (which can be so for a repository of a personal account), do NOT create it:** without GitHub Actions on
+  its bypass list it would forbid the tag that the workflow makes, and the Run workflow path would fail in
+  `publish` after the signature. Without this ruleset the Run workflow path works. In a repository with one
+  account it adds almost nothing: the owner may create a tag anyway, and there is nobody else to keep from
+  doing so.
 
-Why two: if GitHub Actions could bypass one ruleset that also forbids updates and deletions, every workflow
-with `contents: write` could move or delete the tag of an existing release. With the second ruleset
-nobody can, the workflow included. To correct a wrong tag, the owner sets ruleset 2 to *Disabled*
-for the moment (Settings -> Rules -> Rulesets -> the ruleset -> *Enforcement status*), fixes the tag and
-sets it to *Active* again. With ruleset 1 in place but without GitHub Actions on its bypass list, the Run
-workflow path fails in `publish`, after signing, and makes no tag and no Release.
+If an earlier version of this README made you create **one** ruleset "only admins create, change or delete
+tags `v*`", delete it or replace it by ruleset 2 above. Left as it is, the Run workflow path fails after the
+signature: `GITHUB_TOKEN` is not an admin, so it may not create the tag.
+
+To correct a wrong tag (or to remove a dangling one, see below), the owner sets ruleset 2 to *Disabled* for
+the moment (Settings -> Rules -> Rulesets -> the ruleset -> *Enforcement status*), fixes the tag and sets it
+to *Active* again.
+
+**If a release stops.** All release runs are in one group; the artifacts of `build` and `sign` live
+**7 days** (`retention-days: 7`): approve the signature within 7 days of the build, later `sign` cannot
+download the artifact and the release has to be started again.
+
+- *`publish` failed before the tag was made* (the message says that the tags changed, or a call failed):
+  fix the cause, then open the run and press **Re-run failed jobs**: only `publish` runs again, with the same
+  built and signed files. Or the owner pushes the tag by hand: that is the first path, with a new build and
+  a new approval of the signature.
+- *The tag exists, the Release does not*: press **Re-run failed jobs**, and **not** *Re-run all jobs*: a
+  full re-run starts `check` again, and `check` refuses with "tag exists". The re-run of `publish` sees the
+  tag on the built commit and only creates the Release.
+- *The tag points to another commit* (the message of `publish` says so): no Release was made. The tag must be
+  removed by the owner, who switches ruleset 2 off for the moment (see above); then a new run is started.
+- A tag without a Release does no harm to servers: the updaters read the list of Releases (and skip
+  drafts), not the tags, so nobody sees the version. But it blocks that version number: a new run refuses
+  it until the Release exists or the tag is removed.
 
 **What protects the signature, and what does not.** All sessions work under the owner's GitHub account, and
 GitHub cannot tell a session from the owner. A branch rule or a "second pair of eyes" setting cannot make a
@@ -403,7 +429,7 @@ the same account, so every release would stay unapprovable.
 
 Plan limits: required reviewers on a **private** repository need a plan that offers them
 (GitHub Enterprise at the time of writing). Without them, keep the environment with its tag rule
-and the tag rulesets, or sign offline:
+and the tag ruleset, or sign offline:
 
 ```bash
 gh run download <run-id> -n bundle -D dist           # from the release run, after `build`
