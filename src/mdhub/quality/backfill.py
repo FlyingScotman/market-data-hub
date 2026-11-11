@@ -31,10 +31,11 @@ the next 10-minute trigger) or ``max_tasks`` is used up. For a task the worker:
    is not counted and the task is retried in 5 minutes.
 
 Tasks of a history load (source ``history_load``, :mod:`mdhub.quality.history_load`) are taken only
-while the load is switched on (``MDHUB_SNAPSHOT_HEAL_HISTORY``), inside the night window
-(``MDHUB_SNAPSHOT_HEAL_WINDOW``) and at most ``MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT`` per
-window (counted by ``started_at``; a deferral gives its slot back), so a history of years never
-runs in trading hours and cannot starve scheduled or minute jobs through the job lock; they also
+while the load is switched on (``MDHUB_SNAPSHOT_HEAL_HISTORY``), inside the history-load window
+(``MDHUB_HISTORY_LOAD_WINDOW``, default 00:30-06:00, after the MOEX evening session) and at most
+``MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT`` per window (counted by ``started_at``; a deferral
+gives its slot back), so a history of years never runs in trading hours or the evening session and
+cannot starve scheduled or minute jobs through the job lock; they also
 come after the tasks of every other source. When such a task's job was skipped because its source
 is not configured (:data:`mdhub.core.errors.NOT_CONFIGURED`), the task is not a failed attempt: it
 stays ``pending`` (attempt refunded, tried again after :data:`NOT_CONFIGURED_RETRY`, its siblings
@@ -154,13 +155,14 @@ _now: Callable[[], datetime] = utc_now
 def history_slots(db: Database, settings: Settings, now: datetime) -> int:
     """How many more tasks of a history load may be taken now: 0 while the load is switched off
     (``MDHUB_SNAPSHOT_HEAL_HISTORY`` false, or ``MDHUB_SNAPSHOT_HEAL`` not ``repair``: switching it
-    off stops a load that has started), 0 outside the night window (``MDHUB_SNAPSHOT_HEAL_WINDOW``,
-    local time of ``MDHUB_TZ``), else the nightly cap (``MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT``)
+    off stops a load that has started), 0 outside the history-load window
+    (``MDHUB_HISTORY_LOAD_WINDOW``, local time of ``MDHUB_TZ``; not the window of the cuts), else
+    the nightly cap (``MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT``)
     minus the tasks already started in this window."""
     if not settings.snapshot_heal_history or settings.snapshot_heal != "repair":
         return 0
     start = clock_window_start(
-        now.astimezone(settings.zone), parse_clock_window(settings.snapshot_heal_window)
+        now.astimezone(settings.zone), parse_clock_window(settings.history_load_window)
     )
     if start is None:
         return 0

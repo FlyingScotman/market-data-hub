@@ -30,6 +30,7 @@ from typing import Any, Final
 
 from mdhub.core.timeutil import MSK
 from mdhub.db.pool import DictConnection
+from mdhub.snapshot import carry as carry_module
 from mdhub.snapshot.build import (
     Build,
     Cut,
@@ -631,13 +632,24 @@ def _curve_sets(
             # holds quotes: a day with only sets that the rule does not select, or with empty
             # ones, is not a curve to carry, and nothing is said about it
             chosen: tuple[date, list[dict[str, Any]], dict[int, list[dict[str, Any]]]] | None = None
-            for source_day in carry_source_days(conn, t, d, ds):
+            candidates = carry_source_days(conn, t, d, ds)
+            for source_day in candidates:
                 csnaps, cquotes = _day_snapshots(conn, t, source_day, eod_cutoff)
                 usable = [s for s in csnaps if s["dataset"] == ds and cquotes[s["id"]]]
                 if usable:
                     chosen = (source_day, usable, cquotes)
                     break
             if chosen is None:
+                if (
+                    len(candidates) >= carry_module.MAX_CANDIDATE_DAYS
+                ):  # not the start of the history
+                    log.warning(
+                        "curve %s not carried into the cut of %s: none of its latest %d stored "
+                        "days has a usable quote set",
+                        ds,
+                        d,
+                        len(candidates),
+                    )
                 continue  # the start of the history: nothing to carry, the curve stays absent
             source_day, usable, cquotes = chosen
             age = working_days_between(conn, calendar_t or t, source_day, d)

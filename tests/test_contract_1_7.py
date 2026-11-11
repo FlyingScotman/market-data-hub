@@ -278,6 +278,59 @@ def test_a_day_whose_selected_set_is_empty_is_not_the_source_day(
     assert "key_rate_swap" in entry["coverage"]["required_without_any_source"]
 
 
+def test_the_look_back_for_a_source_day_is_bounded(
+    seeded: Conn,
+    db: Database,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Many stored days whose selected set is empty (a non-empty mid-only set and a later empty
+    bid/ask one): only the newest ``MAX_CANDIDATE_DAYS`` are looked at, one pair of queries each,
+    then the curve stays absent and the log says why. Within the bound the older good day is
+    used."""
+    import logging
+
+    import mdhub.snapshot.carry as carry_mod
+    import mdhub.snapshot.market as market_mod
+
+    good = curve(seeded, "otc_monitor", "key_rate_swap", MON, 1)
+    for n, day in enumerate((TUE, WED), start=2):
+        curve(seeded, "otc_monitor", "key_rate_swap", day, n, basis="mid_only")
+        seeded.execute(
+            "INSERT INTO md.curve_snapshot (source, dataset, quote_basis, fetched_at,"
+            " snapshot_date, content_sha256, parser_version) VALUES ('otc_monitor',"
+            " 'key_rate_swap', 'bid_ask_mid', %s, %s, %s, '1')",
+            (datetime.combine(day, time(13, 0), tzinfo=MSK), day, f"{n + 10:064x}"),
+        )
+    seeded.commit()
+    looked: list[date] = []
+    real = market_mod._day_snapshots
+
+    def counting(conn: Any, t: datetime, d: date, eod_cutoff: str | None) -> Any:
+        looked.append(d)
+        return real(conn, t, d, eod_cutoff)
+
+    monkeypatch.setattr(market_mod, "_day_snapshots", counting)
+
+    # the bound is smaller than the distance to the good day: absent, two days looked at, a log line
+    monkeypatch.setattr(carry_mod, "MAX_CANDIDATE_DAYS", 2)
+    with caplog.at_level(logging.WARNING, logger="mdhub.snapshot.market"):
+        doc = _bundle(seeded, cut(db, THU))
+    assert sets(doc, "key_rate_swap") == []
+    assert sorted(set(looked) - {THU}) == [TUE, WED] and len(looked) == 3  # THU itself + 2
+    assert any("key_rate_swap" in r.getMessage() and "latest 2" in r.getMessage()
+               for r in caplog.records)  # fmt: skip
+
+    # the default bound reaches the good day, with one lookup per candidate day, no more
+    monkeypatch.undo()
+    monkeypatch.setattr(market_mod, "_day_snapshots", counting)
+    looked.clear()
+    doc = _bundle(seeded, cut(db, THU))
+    (krs,) = sets(doc, "key_rate_swap")
+    assert krs["quote_set_id"] == good and krs["carried_forward"]["source_day"] == MON.isoformat()
+    assert sorted(set(looked) - {THU}) == [MON, TUE, WED]
+
+
 def test_an_unknown_carry_dataset_stops_the_start_and_names_the_valid_ones(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

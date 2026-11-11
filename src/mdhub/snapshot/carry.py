@@ -50,6 +50,7 @@ __all__ = [
     "CARRY_LABEL",
     "DEFAULT_CARRY_DATASETS",
     "DEFAULT_CARRY_MAX_AGE",
+    "MAX_CANDIDATE_DAYS",
     "REASON_NO_QUOTE_SET",
     "CarryRule",
     "carried_curves",
@@ -67,6 +68,10 @@ DEFAULT_CARRY_DATASETS: Final = ("key_rate_swap", "ruonia_ois")
 DEFAULT_CARRY_MAX_AGE: Final = 5
 """Working days after which the marker says ``age_limit_exceeded`` (a week); the curve is still
 served (``MDHUB_CURVE_CARRY_MAX_AGE_DAYS``)."""
+MAX_CANDIDATE_DAYS: Final = 30
+"""At most this many candidate source days are looked at for one carried curve (each costs two
+queries): a curve whose newest 30 stored days are all unusable (their selected set is empty) is not
+carried, and the build says so in the log. In practice the first candidate is the source day."""
 REASON_NO_QUOTE_SET: Final = "no_quote_set_on_business_date"
 """``carried_forward.reason``: no source stored a quote set of the curve on the business date."""
 CARRY_LABEL: Final = "carried_forward"
@@ -81,10 +86,13 @@ class CarryRule:
     max_age: int = DEFAULT_CARRY_MAX_AGE
 
 
-def source_days(conn: DictConnection, t: datetime, d: date, dataset: str) -> list[date]:
-    """Every ``snapshot_date`` before ``d`` with a stored, non-empty quote set of ``dataset`` from
-    any source known at ``t``, latest first: the candidates for the source day of a carry (the
-    first one whose per-source EOD selection holds a set with quotes is used; see
+def source_days(
+    conn: DictConnection, t: datetime, d: date, dataset: str, limit: int | None = None
+) -> list[date]:
+    """The ``snapshot_date`` s before ``d`` with a stored, non-empty quote set of ``dataset`` from
+    any source known at ``t``, latest first, at most ``limit`` (default
+    :data:`MAX_CANDIDATE_DAYS`): the candidates for the source day of a carry (the first one whose
+    per-source EOD selection holds a set with quotes is used; see
     :func:`mdhub.snapshot.market._curve_sets`)."""
     with conn.cursor(row_factory=tuple_row) as cur:
         rows = cur.execute(
@@ -94,8 +102,9 @@ def source_days(conn: DictConnection, t: datetime, d: date, dataset: str) -> lis
               AND s.fetched_at <= %(t)s AND s.ingested_at <= %(t)s
               AND EXISTS (SELECT 1 FROM md.curve_quote q WHERE q.snapshot_id = s.id)
             ORDER BY 1 DESC
+            LIMIT %(limit)s
             """,
-            {"ds": dataset, "d": d, "t": t},
+            {"ds": dataset, "d": d, "t": t, "limit": limit or MAX_CANDIDATE_DAYS},
         ).fetchall()
     return [r[0] for r in rows]
 

@@ -96,9 +96,15 @@ Environment variables (DESIGN §7 plus a few operational knobs):
                                     months once afterwards (repair mode, night window only);
                                     default **false**: it only records in ``/v1/gaps`` what it
                                     would load (a preview) until the owner switches it on
+``MDHUB_HISTORY_LOAD_WINDOW``       MSK hours (``HH:MM-HH:MM``, may wrap midnight, zone of
+                                    ``MDHUB_TZ``) in which the worker takes backfill tasks of a
+                                    history load, default 00:30-06:00 (after the MOEX evening
+                                    session, which shares the ISS rate limit with the live jobs;
+                                    ``MDHUB_SNAPSHOT_HEAL_WINDOW`` is the window of the cuts and
+                                    stays as it is)
 ``MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT`` backfill tasks of a history load the worker takes
-                                    per night window (the ``MDHUB_SNAPSHOT_HEAL_WINDOW`` hours,
-                                    never outside it), default 30
+                                    per ``MDHUB_HISTORY_LOAD_WINDOW`` (never outside it),
+                                    default 30
 ``MDHUB_CURVE_CARRY_DATASETS``      curves a market cut takes from the latest previous day that
                                     has them when no source delivered them on its day, flagged
                                     (contract 1.7); comma separated, empty = no carry; default
@@ -482,6 +488,10 @@ class Settings(BaseSettings):
         default=False,
         validation_alias=AliasChoices("MDHUB_SNAPSHOT_HEAL_HISTORY", "snapshot_heal_history"),
     )
+    history_load_window: str = Field(
+        default="00:30-06:00",
+        validation_alias=AliasChoices("MDHUB_HISTORY_LOAD_WINDOW", "history_load_window"),
+    )
     history_load_max_tasks_per_night: int = Field(
         default=30,
         ge=1,
@@ -649,9 +659,9 @@ class Settings(BaseSettings):
         parse_window(value)
         return value.strip()
 
-    @field_validator("snapshot_heal_window")
+    @field_validator("snapshot_heal_window", "history_load_window")
     @classmethod
-    def _valid_heal_window(cls, value: str) -> str:
+    def _valid_clock_window(cls, value: str) -> str:
         parse_clock_window(value)
         return value.strip()
 

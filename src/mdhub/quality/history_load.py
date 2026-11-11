@@ -29,7 +29,8 @@ day, 3 days, 7 days, so a provider outage of a few days does not lose the head o
 source is not configured (credentials, a switch; :data:`mdhub.core.errors.NOT_CONFIGURED`) is not
 a failure: it stays ``pending``, is tried again every night without using up its attempts, and the
 load is shown as waiting for the source (``waiting_reason``; it does not hold the reissue pass of
-the other datasets back). The worker takes these tasks only in the night window and at most
+the other datasets back). The worker takes these tasks only in the history-load window
+(``MDHUB_HISTORY_LOAD_WINDOW``, default 00:30-06:00 MSK: after the MOEX evening session) and at most
 ``MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT`` a night (:mod:`mdhub.quality.backfill`). The worker's
 autocorrection of ``eod_final`` cuts (which would rebuild the cuts once per task) is **not**
 applied to these tasks: the reissue is one pass, below.

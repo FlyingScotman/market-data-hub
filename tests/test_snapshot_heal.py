@@ -623,6 +623,7 @@ def test_the_job_is_scheduled_and_its_settings_have_safe_defaults(settings: Sett
     assert settings.snapshot_heal_from == date(2025, 10, 29)
     assert (settings.snapshot_heal_max_per_run, settings.snapshot_heal_pause_s) == (10, 20)
     assert parse_clock_window(settings.snapshot_heal_window) == (time(21, 0), time(6, 0))
+    assert parse_clock_window(settings.history_load_window) == (time(0, 30), time(6, 0))
 
 
 def test_clock_window_start_is_the_start_of_the_night_that_contains_the_time() -> None:
@@ -655,6 +656,8 @@ def test_clock_window_wraps_midnight() -> None:
             parse_clock_window(bad)
     with pytest.raises(ValueError, match="snapshot_heal_window"):
         Settings(database_url="x", snapshot_heal_window="nonsense")
+    with pytest.raises(ValueError, match="history_load_window"):
+        Settings(database_url="x", history_load_window="nonsense")
     with pytest.raises(ValueError, match="snapshot_heal"):
         Settings(database_url="x", snapshot_heal="sometimes")
 
@@ -942,7 +945,11 @@ def _hl(settings: Settings, db: Database, only: list[Series], **params: Any) -> 
 
 def _work(settings: Settings, db: Database) -> backfill.WorkerSummary:
     """What the backfill worker does with the queued tasks (the history load switched on)."""
-    on = settings.model_copy(update={"snapshot_heal_history": True})
+    # the fixed clock is the night of the cuts (23:30); the window of the load itself (default
+    # 00:30-06:00) is tested in test_history_tasks_run_only_in_the_night_window_...
+    on = settings.model_copy(
+        update={"snapshot_heal_history": True, "history_load_window": "21:00-06:00"}
+    )
     return backfill.process_tasks(settings=on, db=db, calendar=DbCalendar(db))
 
 
@@ -1655,19 +1662,23 @@ def test_history_tasks_run_only_in_the_night_window_up_to_the_nightly_cap(
 
     day = datetime(2026, 10, 20, 12, 0, tzinfo=MSK)
     assert backfill.history_slots(db, capped, day.astimezone(UTC)) == 0
+    # the default window of the load: 00:30-06:00, after the MOEX evening session (to 23:50)
+    assert parse_clock_window(capped.history_load_window) == (time(0, 30), time(6, 0))
+    assert parse_clock_window(capped.snapshot_heal_window) == (time(21, 0), time(6, 0))  # as was
     # switched off (the default): no slot even at night, a load that has started stops
     off = capped.model_copy(update={"snapshot_heal_history": False})
-    night_utc = datetime(2026, 10, 20, 23, 30, tzinfo=MSK).astimezone(UTC)
-    assert backfill.history_slots(db, off, night_utc) == 0
+    night = datetime(2026, 10, 21, 0, 30, tzinfo=MSK)
+    assert backfill.history_slots(db, off, night.astimezone(UTC)) == 0
     detect = capped.model_copy(update={"snapshot_heal": "detect"})
-    assert backfill.history_slots(db, detect, night_utc) == 0
+    assert backfill.history_slots(db, detect, night.astimezone(UTC)) == 0
     assert work(day) == 0 and pending() == 9  # never in the daytime
-    assert work(day.replace(hour=20, minute=59)) == 0  # one minute before the window
-    night = datetime(2026, 10, 20, 23, 30, tzinfo=MSK)
+    # the evening, the cuts' window is open: the MOEX session (to 23:50) shares the ISS limit
+    evening = day.replace(hour=23, minute=45)
+    assert work(evening) == 0 and work(night - timedelta(minutes=1)) == 0
     assert backfill.history_slots(db, capped, night.astimezone(UTC)) == 3
     assert work(night) == 3 and pending() == 6  # the cap of the night
     assert work(night + timedelta(minutes=10)) == 0  # the same night: no slot left
-    assert work(night.replace(day=21, hour=3)) == 0  # after midnight: still that night
+    assert work(night.replace(hour=3)) == 0  # later that night
     assert backfill.history_slots(db, capped, night.astimezone(UTC)) == 0
     assert work(night + timedelta(days=1)) == 3 and pending() == 3  # the next night
     # a default cap is a night's worth for the rest

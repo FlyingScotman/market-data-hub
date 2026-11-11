@@ -64,11 +64,15 @@ about 250 corrected cuts, so you look at its size first. While it is off the job
    same job are not counted as its own and not queued again.
    The ordinary `backfill_worker` runs them (every 10 minutes, with its time budget; it yields to
    scheduled runs as always) and takes them **after the tasks of every other source** and **only
-   inside the night window** (`MDHUB_SNAPSHOT_HEAL_WINDOW`, 21:00-06:00 MSK), **at most
-   `MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT` (default 30) tasks per night**, and only while the load
-   is switched on (a task of up to 31
-   days: 30 tasks are about 2.5 years of a daily dataset). So a history of years never runs in
-   trading hours and cannot starve the scheduled or the minute jobs through the job lock.
+   inside the history-load window** (`MDHUB_HISTORY_LOAD_WINDOW`, default 00:30-06:00 MSK, zone of
+   `MDHUB_TZ`), **at most `MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT` (default 30) tasks per window**,
+   and only while the load is switched on (a task of up to 31 days: 30 tasks are about 2.5 years of
+   a daily dataset). The window starts after the MOEX evening session (until about 23:50 MSK) and
+   ends before the 06:30 loads, so a history of years does not share the ISS rate limit with the
+   live jobs in the trading day or the evening session, and cannot starve the scheduled or the
+   minute jobs through the job lock. It is a window of its own: the window of the cuts
+   (`MDHUB_SNAPSHOT_HEAL_WINDOW`, 21:00-06:00) is not changed, and detection, retries and the
+   one-off reissue still run in that one.
    "As far as each source allows": a day the source has nothing for stays empty.
    *Failures.* A range whose task failed (after the worker's own 5 attempts) is queued again after
    6 hours, then after a day, 3 days and 7 days (5 rounds in all), so an outage of the provider of a
@@ -201,7 +205,8 @@ curve is rebuilt once and closes both gaps.
 | `MDHUB_SNAPSHOT_HEAL_MAX_PER_RUN` | `10` | cuts per run |
 | `MDHUB_SNAPSHOT_HEAL_PAUSE_S` | `20` | pause between two cuts, seconds |
 | `MDHUB_SNAPSHOT_HEAL_HISTORY` | `false` | the history load of new datasets and the one-off reissue after it (repair mode, night window). Off: only a preview in `/v1/gaps`, nothing queued, no history task taken by the worker |
-| `MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT` | `30` | backfill tasks of a history load the worker takes per night window (never in the daytime) |
+| `MDHUB_HISTORY_LOAD_WINDOW` | `00:30-06:00` | MSK hours in which the worker takes the backfill tasks of a history load (`HH:MM-HH:MM`, may wrap midnight); not the window of the cuts |
+| `MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT` | `30` | backfill tasks of a history load the worker takes per `MDHUB_HISTORY_LOAD_WINDOW` (never outside it) |
 
 **Why `repair` is the default.** The owner decision is that a normal deploy repairs the history with
 no manual step, and a setting only the operator can change would be that step. The risk is bounded:
