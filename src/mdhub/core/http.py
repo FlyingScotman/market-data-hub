@@ -41,6 +41,7 @@ from functools import lru_cache
 from importlib import resources
 from types import TracebackType
 from typing import Any, Final, Self
+from urllib.parse import urlsplit
 
 import certifi
 import httpx
@@ -242,7 +243,7 @@ GLOBAL_RATE_LIMITER: Final = RateLimiter()
 
 def default_rate_limits(settings: Settings) -> dict[str, float]:
     """Per-host request rates (requests/second) used by :class:`HttpClient`."""
-    return {
+    limits = {
         "iss.moex.com": settings.iss_rps,
         "apim.moex.com": settings.iss_rps,
         "passport.moex.com": 1.0,
@@ -267,6 +268,11 @@ def default_rate_limits(settings: Settings) -> dict[str, float]:
         "data.snb.ch": 1.0,
         "home.treasury.gov": 1.0,
     }
+    # the Ratescalcs address is a setting: its host is as polite as the default one
+    host = urlsplit(settings.ratescalcs_base_url).hostname
+    if host:
+        limits[host.lower()] = 1.0
+    return limits
 
 
 # --------------------------------------------------------------------------- client

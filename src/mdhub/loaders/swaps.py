@@ -285,7 +285,7 @@ def swaps_ratescalcs(ctx: JobContext) -> dict[str, str]:
         targets.append(("snapshot", src.SNAPSHOT_PATH))
         for endpoint, path in targets:
             try:
-                resp = src.fetch(http, path)
+                resp = src.fetch(http, path, ctx.settings.ratescalcs_base_url)
                 fetched_at = utc_now()
                 if endpoint == "snapshot":
                     curves = src.parse_snapshot(resp.content)

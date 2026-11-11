@@ -131,7 +131,7 @@ def _apim(settings: Settings) -> ProbeRequest:
 
 
 def _ratescalcs(settings: Settings) -> ProbeRequest:
-    url = ratescalcs.BASE_URL + ratescalcs.SNAPSHOT_PATH
+    url = ratescalcs.page_url(settings.ratescalcs_base_url, ratescalcs.SNAPSHOT_PATH)
     user, password = settings.ratescalc_username, settings.ratescalc_password
     if user is None or password is None:
         return ProbeRequest(url=url, configured=False)

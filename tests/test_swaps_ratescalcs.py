@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -127,27 +128,39 @@ class Site:
         self.pages = {spec.path: _page(spec.dataset).encode() for spec in rc.PAGES}
         self.snapshot = (FIX / "ratescalcs_snapshot.json").read_bytes()
         self.auth_headers: list[str] = []
+        self.requested: list[str] = []
 
 
-@pytest.fixture
-def site() -> Iterator[Site]:
+@contextmanager
+def _serve(base_url: str) -> Iterator[Site]:
+    """The source served at ``base_url`` (pages and snapshot relative to it)."""
     s = Site()
     with respx.mock(assert_all_called=False) as router:
         for path in s.pages:
 
             def handler(request: httpx.Request, path: str = path) -> httpx.Response:
                 s.auth_headers.append(request.headers.get("authorization", ""))
+                s.requested.append(str(request.url))
                 assert request.method == "GET"
                 return httpx.Response(
                     200, content=s.pages[path], headers={"content-type": "text/html"}
                 )
 
-            router.get(rc.BASE_URL + path).mock(side_effect=handler)
-        router.get(rc.BASE_URL + rc.SNAPSHOT_PATH).mock(
-            side_effect=lambda _r: httpx.Response(
+            router.get(base_url + path).mock(side_effect=handler)
+
+        def snapshot(request: httpx.Request) -> httpx.Response:
+            s.requested.append(str(request.url))
+            return httpx.Response(
                 200, content=s.snapshot, headers={"content-type": "application/json"}
             )
-        )
+
+        router.get(base_url + rc.SNAPSHOT_PATH).mock(side_effect=snapshot)
+        yield s
+
+
+@pytest.fixture
+def site() -> Iterator[Site]:
+    with _serve(rc.DEFAULT_BASE_URL) as s:
         yield s
 
 
@@ -207,3 +220,92 @@ def test_bad_page_partial(site: Site, rc_settings: Settings, db: Database, conn:
     out = _run(rc_settings, db)
     assert out.status == "partial" and out.result["key_rate_swap"] == "failed"
     assert out.result["ruonia_ois"].startswith("stored")
+
+
+# ------------------------------------------------------------ the address is a setting (#144)
+
+DEFAULT_URLS = [
+    "https://ratescalcs.ru/cnyfuturesyields/cny-xccy-curve",
+    "https://ratescalcs.ru/cnyfuturesyields/key-rate-editor/krs",
+    "https://ratescalcs.ru/cnyfuturesyields/key-rate-editor/ois",
+    "https://ratescalcs.ru/cnyfuturesyields/snapshot",
+]
+
+
+def test_the_default_urls_are_the_ones_of_before(
+    site: Site, rc_settings: Settings, db: Database
+) -> None:
+    """Setting unset: every request goes to the byte-identical address of the former constants."""
+    from mdhub.quality import source_probe
+
+    assert rc_settings.ratescalcs_base_url == "https://ratescalcs.ru/cnyfuturesyields"
+    assert _run(rc_settings, db).status == "succeeded"
+    assert sorted(site.requested) == DEFAULT_URLS
+    probe = source_probe._ratescalcs(rc_settings)
+    assert probe.url == "https://ratescalcs.ru/cnyfuturesyields/snapshot" and probe.configured
+
+
+@pytest.mark.parametrize(
+    "base",
+    [
+        "https://ratescalcs.example.invalid",
+        "https://ratescalcs.example.invalid/",  # a trailing slash does not double
+        "http://203.0.113.7:8080",  # plain http and a bare IP work when the owner sets them
+        "http://source.example.invalid:8080/some/prefix",
+    ],
+)
+def test_a_configured_base_is_used_by_every_page_the_snapshot_and_the_probe(
+    base: str, db_url: str, db: Database
+) -> None:
+    from mdhub.core.http import default_rate_limits
+    from mdhub.quality import source_probe
+
+    settings = Settings(
+        database_url=db_url,
+        ratescalc_username="u-test",
+        ratescalc_password="p-test",
+        ratescalcs_base_url=base,
+    )
+    clean = base.rstrip("/")
+    assert settings.ratescalcs_base_url == clean
+    with _serve(clean) as served:
+        out = _run(settings, db)
+        assert out.status == "succeeded", out.result
+        assert sorted(served.requested) == sorted(
+            clean + p for p in (*(spec.path for spec in rc.PAGES), rc.SNAPSHOT_PATH)
+        )
+        assert all(h.startswith("Basic ") for h in served.auth_headers)
+    assert source_probe._ratescalcs(settings).url == clean + "/snapshot"
+    host = httpx.URL(clean).host
+    assert default_rate_limits(settings)[host] == 1.0  # as polite as the default host
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "ratescalcs.example.invalid",  # no scheme
+        "ftp://ratescalcs.example.invalid",
+        "https://",
+        "https://user:secret-pw@ratescalcs.example.invalid/x",
+        "https://ratescalcs.example.invalid/x?a=1",
+        "https://ratescalcs.example.invalid/x#frag",
+        "https://ratescalcs.example.invalid:99999",
+        "https://ratescalcs .example.invalid",
+    ],
+)
+def test_an_invalid_base_stops_the_start_without_echoing_the_value(
+    bad: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from pydantic import ValidationError
+
+    monkeypatch.setenv("MDHUB_RATESCALCS_BASE_URL", bad)
+    with pytest.raises(ValidationError) as exc:
+        Settings()
+    text = str(exc.value)
+    assert "MDHUB_RATESCALCS_BASE_URL" in text and "secret-pw" not in text
+    assert "input_value" not in text  # pydantic's echo of the rejected value is off
+
+
+def test_an_empty_base_means_the_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("MDHUB_RATESCALCS_BASE_URL", "")
+    assert Settings().ratescalcs_base_url == "https://ratescalcs.ru/cnyfuturesyields"

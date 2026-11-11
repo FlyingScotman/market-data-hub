@@ -61,7 +61,7 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
 | MOEX APIM `apim.moex.com/iss` | `MOEX_API_KEY` (Bearer) | realtime futures (FX futures bid/offer/last/OI), AlgoPack FO tradestats + FUTOI (rolling 90-day window; order-book obstats not collected, dropped in 0423) | futures realtime; bonds/FX delayed |
 | MOEX Passport | `MOEX_PASSPORT_LOGIN/PASSWORD` | optional; login works, account currently **not** realtime-entitled | delayed |
 | MOEX SDFI swap curves `/iss/sdfi/curves` | subscription | catalogue only; loader ready behind feature flag `MDHUB_ENABLE_SDFI` | — |
-| Ratescalcs `ratescalcs.ru` | `RATESCALC_USERNAME/PASSWORD` (Basic, GET only) | RUONIA OIS, KRS (IRS vs key rate), CNY xccy vs RUONIA, CNY futures-implied yields snapshot | dealer runs, 08:50–23:00 MSK |
+| Ratescalcs (`MDHUB_RATESCALCS_BASE_URL`, default `ratescalcs.ru`) | `RATESCALC_USERNAME/PASSWORD` (Basic, GET only) | RUONIA OIS, KRS (IRS vs key rate), CNY xccy vs RUONIA, CNY futures-implied yields snapshot | dealer runs, 08:50–23:00 MSK |
 | CBR `cbr.ru` | — | key rate, RUONIA, term RUONIA, official FX (all ccy, from 1998), liquidity, meeting calendar, refinancing rate 1992–2015 (closed series) | daily |
 | Rosstat `rosstat.gov.ru` | — | monthly CPI to the previous month since 1991 (`ipc_mes_MM-YYYY.xlsx`, sheet `01`; the TLS chain omits the Russian Trusted Sub CA, bundled in `mdhub/certs`) | monthly, mid next month |
 | ECB eurofxref | — | G7 crosses (EUR base) daily + history since 1999; **does not answer from the hub VPS** (WEB-4) | daily ~16:00 CET |
@@ -333,7 +333,11 @@ read API bearer tokens: `token` → name `env:N`, or `name=token`; §8), `MDHUB_
 (read-API connection pool), `MDHUB_LOG_LEVEL=INFO`, `MDHUB_HTTP_TIMEOUT=30`, plus source
 credentials: `MOEX_API_KEY`, `MOEX_PASSPORT_LOGIN`, `MOEX_PASSPORT_PASSWORD`,
 `RATESCALC_USERNAME`, `RATESCALC_PASSWORD`, `CBONDS_LOGIN`, `CBONDS_PASSWORD`,
-`OTC_MONITOR_TOKEN`. Empty values count as unset (`env_ignore_empty`).
+`OTC_MONITOR_TOKEN`. `MDHUB_RATESCALCS_BASE_URL` is the one full base URL of the Ratescalcs source
+(scheme, host, optional port and path prefix; default `https://ratescalcs.ru/cnyfuturesyields`): the
+pages, the snapshot and the probe are requested from `<base>/<page>`; an invalid value (not
+http/https, credentials, query or fragment in it) stops the start. Empty values count as unset
+(`env_ignore_empty`).
 
 ## 8. Read API (v1, bearer token)
 

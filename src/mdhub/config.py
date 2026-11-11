@@ -51,6 +51,11 @@ Environment variables (DESIGN §7 plus a few operational knobs):
 ``MOEX_API_KEY``                    MOEX APIM bearer token
 ``MOEX_PASSPORT_LOGIN`` / ``_PASSWORD`` MOEX Passport credentials
 ``RATESCALC_USERNAME`` / ``_PASSWORD``  Ratescalcs basic auth
+``MDHUB_RATESCALCS_BASE_URL``       full base URL of the Ratescalcs source, scheme + host
+                                    [+ port] [+ path prefix]; every page, the JSON snapshot and
+                                    the source probe are requested from ``<base>/<page>``;
+                                    http or https, no credentials / query / fragment in it;
+                                    default ``https://ratescalcs.ru/cnyfuturesyields``
 ``CBONDS_LOGIN`` / ``CBONDS_PASSWORD``  Cbonds JSON API
 ``OTC_MONITOR_TOKEN``               OTC Monitor bearer token (``swaps_otc_monitor``)
 ``MDHUB_SNAPSHOT_STATIC_TIME``      daily static snapshot, MSK ``HH:MM``, default 07:45
@@ -94,16 +99,19 @@ from __future__ import annotations
 
 import re
 from datetime import date, time
-from typing import Any, Literal
+from typing import Any, Final, Literal
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = [
+    "RATESCALCS_DEFAULT_BASE_URL",
     "ConfigError",
     "Settings",
     "get_settings",
+    "parse_base_url",
     "parse_hhmm",
     "parse_name_list",
     "parse_window",
@@ -114,8 +122,37 @@ _NAMED_TOKEN_RE = re.compile(r"^([a-z0-9][a-z0-9._-]{0,63})=([^=].*)$")
 a padded base64 token (``abc==``) is never split."""
 
 
+RATESCALCS_DEFAULT_BASE_URL: Final = "https://ratescalcs.ru/cnyfuturesyields"
+"""Base URL of the Ratescalcs source (host and the path prefix of its pages); the pages are
+relative to it (:mod:`mdhub.sources.ratescalcs`)."""
+
+
 class ConfigError(RuntimeError):
     """A required setting is missing or invalid."""
+
+
+def parse_base_url(value: str, name: str) -> str:
+    """A base URL setting: ``http`` / ``https``, a host (a name or an IP address) with an
+    optional port and an optional path prefix, nothing else. Returns it without a trailing ``/``.
+    Raises ``ValueError`` naming the setting; the message never contains the value (it may hold
+    credentials that were put in it by mistake)."""
+    text = value.strip()
+    if not text or any(c.isspace() for c in text):
+        raise ValueError(f"{name}: expected a URL like https://host[:port][/prefix] (no spaces)")
+    try:
+        parts = urlsplit(text)
+        parts.port  # noqa: B018 - raises ValueError for a bad port
+    except ValueError:
+        raise ValueError(f"{name}: not a valid URL (check the host and the port)") from None
+    if parts.scheme.lower() not in ("http", "https"):
+        raise ValueError(f"{name}: the scheme must be http or https")
+    if not parts.hostname:
+        raise ValueError(f"{name}: the URL has no host")
+    if "@" in parts.netloc:
+        raise ValueError(f"{name}: no user name or password in the URL (set them as credentials)")
+    if "?" in text or "#" in text:
+        raise ValueError(f"{name}: no query string or fragment in the URL")
+    return text.rstrip("/")
 
 
 def parse_name_list(value: str) -> tuple[str, ...]:
@@ -193,6 +230,8 @@ class Settings(BaseSettings):
         case_sensitive=False,
         frozen=True,
         env_ignore_empty=True,
+        # a rejected value (a URL with credentials in it, a token) is never echoed in the error
+        hide_input_in_errors=True,
     )
 
     database_url: SecretStr | None = Field(
@@ -450,6 +489,10 @@ class Settings(BaseSettings):
     moex_passport_password: SecretStr | None = _env("MOEX_PASSPORT_PASSWORD")
     ratescalc_username: SecretStr | None = _env("RATESCALC_USERNAME")
     ratescalc_password: SecretStr | None = _env("RATESCALC_PASSWORD")
+    ratescalcs_base_url: str = Field(
+        default=RATESCALCS_DEFAULT_BASE_URL,
+        validation_alias=AliasChoices("MDHUB_RATESCALCS_BASE_URL", "ratescalcs_base_url"),
+    )
     cbonds_login: SecretStr | None = _env("CBONDS_LOGIN")
     cbonds_password: SecretStr | None = _env("CBONDS_PASSWORD")
     otc_monitor_token: SecretStr | None = _env("OTC_MONITOR_TOKEN")
@@ -484,6 +527,11 @@ class Settings(BaseSettings):
         if bad:
             raise ValueError(f"invalid curve dataset name(s) {bad} (lower-case codes)")
         return ",".join(names)
+
+    @field_validator("ratescalcs_base_url")
+    @classmethod
+    def _valid_ratescalcs_base_url(cls, value: str) -> str:
+        return parse_base_url(value, "MDHUB_RATESCALCS_BASE_URL")
 
     @field_validator("snapshot_intraday_window")
     @classmethod

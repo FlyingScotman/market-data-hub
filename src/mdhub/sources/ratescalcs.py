@@ -1,16 +1,20 @@
-"""Ratescalcs (``https://ratescalcs.ru``) dealer runs: fetch + parse, no DB.
+"""Ratescalcs dealer runs: fetch + parse, no DB.
+
+The address is a setting (``MDHUB_RATESCALCS_BASE_URL``: scheme, host, optional port and path
+prefix; default :data:`DEFAULT_BASE_URL`, ``https://ratescalcs.ru/cnyfuturesyields``); the pages
+below are paths relative to it, requested from ``<base>/<page>`` (:func:`page_url`).
 
 HTTP Basic auth from ``RATESCALC_USERNAME``/``RATESCALC_PASSWORD`` (passed in by the loader),
 **GET only** on the pages below - never the editor forms (POST) or ``admin/*`` pages. The
 service answers Mon-Fri 08:50-23:00 MSK. Page bodies are never logged (they are short and the
 credentials are weak - see docs/STATUS.md).
 
-* ``/cnyfuturesyields/key-rate-editor/ois`` - RUONIA OIS run (textarea, first line label
+* ``/key-rate-editor/ois``   - RUONIA OIS run (textarea, first line label
   ``RUB RUONIA OIS run``), tenors 1W..10Y, bid ask in %
-* ``/cnyfuturesyields/key-rate-editor/krs`` - key-rate swaps (``RUB KRS run``), 3M..10Y
-* ``/cnyfuturesyields/cny-xccy-curve``      - CNY fixed vs RUONIA xccy (no label line; page
+* ``/key-rate-editor/krs``   - key-rate swaps (``RUB KRS run``), 3M..10Y
+* ``/cny-xccy-curve``        - CNY fixed vs RUONIA xccy (no label line; page
   title ``CNY XCCY``), tenors ``on, 1w .. 12m``
-* ``/cnyfuturesyields/snapshot``            - JSON: ``timestamp``, ``market_closed``,
+* ``/snapshot``              - JSON: ``timestamp``, ``market_closed``,
   ``cny_results``/``usd_results`` (futures-implied CNY/USD yields per futures contract), ...
 
 Validation (fail closed): every textarea line must be ``TENOR BID ASK``; unique tenors; at
@@ -31,24 +35,28 @@ from typing import Any, Final
 
 import httpx
 
+from mdhub.config import RATESCALCS_DEFAULT_BASE_URL
 from mdhub.core.decimalutil import to_decimal
 from mdhub.core.errors import FormatDriftError
 from mdhub.core.http import HttpClient
 
 __all__ = [
-    "BASE_URL",
+    "DEFAULT_BASE_URL",
     "PAGES",
     "PARSER_VERSION",
+    "SNAPSHOT_PATH",
     "CurveQuote",
     "ParsedCurve",
     "content_hash",
     "fetch",
+    "page_url",
     "parse_snapshot",
     "parse_textarea_page",
     "tenor_parts",
 ]
 
-BASE_URL: Final = "https://ratescalcs.ru"
+DEFAULT_BASE_URL: Final = RATESCALCS_DEFAULT_BASE_URL
+"""The address while ``MDHUB_RATESCALCS_BASE_URL`` is not set."""
 PARSER_VERSION: Final = "1"
 
 
@@ -56,17 +64,18 @@ PARSER_VERSION: Final = "1"
 class PageSpec:
     dataset: str
     path: str
+    """Relative to the base URL (starts with ``/``)."""
     label: str
     """Expected label: first textarea line (``label_in_text``) or page title/h2."""
     label_in_text: bool
 
 
 PAGES: Final = (
-    PageSpec("ruonia_ois", "/cnyfuturesyields/key-rate-editor/ois", "RUB RUONIA OIS run", True),
-    PageSpec("key_rate_swap", "/cnyfuturesyields/key-rate-editor/krs", "RUB KRS run", True),
-    PageSpec("cny_ruonia_xccy", "/cnyfuturesyields/cny-xccy-curve", "CNY XCCY", False),
+    PageSpec("ruonia_ois", "/key-rate-editor/ois", "RUB RUONIA OIS run", True),
+    PageSpec("key_rate_swap", "/key-rate-editor/krs", "RUB KRS run", True),
+    PageSpec("cny_ruonia_xccy", "/cny-xccy-curve", "CNY XCCY", False),
 )
-SNAPSHOT_PATH: Final = "/cnyfuturesyields/snapshot"
+SNAPSHOT_PATH: Final = "/snapshot"
 
 _QUOTE_RE = re.compile(
     r"^(?P<tenor>ON|TN|SN|\d+[DWMY])\s+(?P<bid>-?\d+(?:[.,]\d+)?)\s+(?P<ask>-?\d+(?:[.,]\d+)?)$",
@@ -262,7 +271,7 @@ def _futures_quotes(items: Any, name: str) -> tuple[CurveQuote, ...]:
 
 
 def parse_snapshot(payload: bytes | str) -> list[ParsedCurve]:
-    """``/cnyfuturesyields/snapshot`` -> ``cny_futures_yields`` and ``usd_futures_yields``."""
+    """``/snapshot`` -> ``cny_futures_yields`` and ``usd_futures_yields``."""
     try:
         data = json.loads(payload)
     except ValueError:
@@ -322,16 +331,22 @@ def content_hash(curve: ParsedCurve) -> str:
     return hashlib.sha256(json.dumps(payload, separators=(",", ":")).encode()).hexdigest()
 
 
-def fetch(http: HttpClient, path: str) -> httpx.Response:
-    """GET one of the allow-listed Ratescalcs pages (``http`` must carry the Basic auth).
+def page_url(base_url: str, path: str) -> str:
+    """``<base>/<page>``: ``path`` (starting with ``/``) appended to the base URL of the setting."""
+    return base_url.rstrip("/") + path
+
+
+def fetch(http: HttpClient, path: str, base_url: str = DEFAULT_BASE_URL) -> httpx.Response:
+    """GET one of the allow-listed Ratescalcs pages of ``base_url`` (``http`` must carry the Basic
+    auth).
 
     The snapshot must be JSON (an HTML answer raises ``EntitlementError``); editor pages must
     be ``text/html``."""
     if path == SNAPSHOT_PATH:
-        return http.get_json(BASE_URL + path).response
+        return http.get_json(page_url(base_url, path)).response
     if path not in {p.path for p in PAGES}:
         raise ValueError(f"refusing Ratescalcs path {path!r} (GET allow-list only)")
-    resp = http.get(BASE_URL + path)
+    resp = http.get(page_url(base_url, path))
     if "text/html" not in resp.headers.get("content-type", ""):
         raise FormatDriftError(f"Ratescalcs {path}: unexpected content type")
     return resp
