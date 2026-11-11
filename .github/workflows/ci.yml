@@ -10,12 +10,22 @@ on:
     branches: ["**"]
   pull_request:
   workflow_call:
+    inputs:
+      isolated:
+        description: >-
+          release.yml sets it: this call gets a concurrency group of its own (the run id is part of
+          it), so no other run of CI can replace or cancel the tests of a release
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
+# Called from release.yml, github.workflow is "release" and github.ref the ref of the release run:
+# without `isolated`, two release runs would share one group and a third would cancel the one
+# that waits. `inputs` is empty on push and pull_request: the expression gives the plain group.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}${{ inputs.isolated && format('-{0}', github.run_id) || '' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

@@ -246,8 +246,30 @@ service (`systemctl edit caddy` -> `[Service] Environment=...`), `systemctl relo
 ## 11. Release bundles and signing
 
 A release is a **code-only bundle** signed with an ed25519 key in minisign format
-(ADMIN_DESIGN §6.1). The tag `vX.Y.Z` triggers `.github/workflows/release.yml`, which publishes
-three files on the GitHub Release:
+(ADMIN_DESIGN §6.1). `.github/workflows/release.yml` starts in one of two ways and publishes three
+files on the GitHub Release:
+
+1. **The owner pushes the tag** `vX.Y.Z` (`git tag vX.Y.Z && git push origin vX.Y.Z`).
+2. **Run workflow:** Actions -> *release* -> *Run workflow*, *Use workflow from:* `main`, field `version`
+   = `X.Y.Z` or `X.Y.Z{a|b|rc}N`. The owner starts it, or a session does at the owner's direct request.
+   The title of the run names the tag and the commit. The job `check` refuses, in seconds and before the
+   tests, a branch other than `main`, a malformed version, a version that is not greater than the latest
+   tag `v*` (compared as versions, not as text), a version that is **not exactly one step after it** (patch,
+   minor or major: `0.6.2` -> `0.6.3`, `0.7.0` or `1.0.0`, or an `a|b|rc` pre-release of those; after a
+   pre-release only its own `X.Y.Z`, e.g. `0.7.0rc1` -> `0.7.0` or `0.7.0rc2`; a server installs only newer
+   versions, so a version that skips ahead cannot be taken back) and a version for which the tag or a
+   release exists (an existing version is refused as "exists already", not compared with the tag before it). It writes a summary on the run page (version, commit, previous tag,
+   the commits since it); the owner reads it, with the title, before approving `sign`. The jobs then run as
+   for a tag (`ci`, `build`, `sign`, `verify`, `publish`), all on the commit that was current when the run
+   started. The tag `vX.Y.Z` is made **by `publish`, on that commit, after `sign` and `verify` succeeded**:
+   `publish` first checks that no release tag appeared since `check`, then creates the tag with one call that
+   fails if the tag exists, reads it back, and only then creates the Release for that tag. A release that
+   fails earlier leaves no tag, and no Release is ever visible to the updaters before the tag is known
+   to be on the built commit. What this path needs in the repository settings: "The protected environment
+   `release`" and "Tag rules for `v*`" below. All release runs share one concurrency group, so there is
+   one release at a time; GitHub keeps only one waiting run per group and replaces it when a third run
+   arrives, and a run that waits for the approval of `sign` holds the group: reject it (or cancel the run)
+   before you start the next release.
 
 | file | content |
 |---|---|
@@ -330,8 +352,11 @@ Repository **Settings -> Environments -> New environment** `release`:
 
 - **Required reviewers**: the owner (and a second maintainer when there is one). The `sign` job
   waits for an approval in the Actions tab before it can read the secrets.
-- **Deployment branches and tags**: *Selected branches and tags*, add the tag pattern `v*`.
-  Nothing else may deploy to `release`.
+- **Deployment branches and tags**: *Selected branches and tags*, add the tag pattern `v*` and, for the
+  Run workflow path, the branch `main` (the `sign` job of that run deploys from `refs/heads/main`; without
+  it the job is refused and nothing is signed). Nothing else may deploy to `release`. With `main` allowed,
+  any workflow that reaches `main` could name this environment; each use still waits for the required
+  reviewers, so read the workflow and the commit in the approval prompt before approving.
 - **Environment secrets** (environment secrets, not repository secrets):
 
 ```bash
@@ -339,14 +364,71 @@ gh secret set MINISIGN_SECRET_KEY --env release < mdhub-release.key
 gh secret set MINISIGN_PASSWORD --env release          # prompts; paste the key password
 ```
 
-Also add a tag ruleset (**Settings -> Rules -> Rulesets**, target tags `v*`) so that only admins
-can create, update or delete release tags.
-
 Only the `sign` job reads the secrets. It downloads the build artifact, installs `minisign` from
 Ubuntu and runs `minisign -S`. It has no checkout, no Python, no project dependencies and no
 token permissions. `verify` then checks the result against the pinned keys of the tagged
-commit, and only `publish` can write, to create the Release. The workflow pins every action
-to a commit SHA.
+commit, and only `publish` can write: it creates the tag (Run workflow path) and the Release. The
+workflow pins every action to a commit SHA, and the `version` field is never part of a script (only an
+environment value, checked by `check`; it is shown in the run title, which GitHub does not execute).
+
+### Tag rules for `v*` (an action of the owner in the GitHub interface, once)
+
+The Run workflow path makes the tag with the workflow's own token (`GITHUB_TOKEN`). A tag of a release must
+never be moved or deleted, because a server compares versions and a moved tag would change what a version
+means. That is one **required** ruleset (called ruleset 2 below, because it was the second one in earlier versions of
+this README) and one optional one (ruleset 1):
+
+- **Ruleset 2, required: Settings -> Rules -> Rulesets -> New ruleset -> New tag ruleset.** Name `release
+  tags: no change`. *Enforcement status*: Active. **Leave the Bypass list empty** (in particular, no GitHub
+  Actions, no admin role). *Target tags* -> *Add target* -> *Include by pattern* -> `v*`. *Rules*: tick
+  **Restrict updates** and **Restrict deletions**; do **not** tick Restrict creations. Create. Creating a
+  new tag stays allowed, so the Run workflow path and a tag pushed by the owner both work; an existing tag
+  can no longer be moved or deleted by anyone, the workflow included.
+- **Ruleset 1, optional: `release tags: creation`** (*Restrict creations*; bypass list: **GitHub Actions** and
+  the role **Repository admin**). **If GitHub Actions is not offered in the Bypass list of your repository
+  (which can be so for a repository of a personal account), do NOT create it:** without GitHub Actions on
+  its bypass list it would forbid the tag that the workflow makes, and the Run workflow path would fail in
+  `publish` after the signature. Without this ruleset the Run workflow path works. In a repository with one
+  account it adds almost nothing: the owner may create a tag anyway, and there is nobody else to keep from
+  doing so.
+
+If an earlier version of this README made you create **one** ruleset "only admins create, change or delete
+tags `v*`", delete it or replace it by ruleset 2 above. Left as it is, the Run workflow path fails after the
+signature: `GITHUB_TOKEN` is not an admin, so it may not create the tag.
+
+To correct a wrong tag (or to remove a dangling one, see below), the owner sets ruleset 2 to *Disabled* for
+the moment (Settings -> Rules -> Rulesets -> the ruleset -> *Enforcement status*), fixes the tag and sets it
+to *Active* again.
+
+**If a release stops.** All release runs are in one group; the artifacts of `build` and `sign` live
+**7 days** (`retention-days: 7`): approve the signature within 7 days of the build, later `sign` cannot
+download the artifact and the release has to be started again.
+
+- *`publish` failed before the tag was made because a call failed* (network, a refused request): fix the
+  cause, then open the run and press **Re-run failed jobs**: only `publish` runs again, with the same built
+  and signed files. This works within 7 days of the build, while the artifacts exist. Or the owner pushes
+  the tag by hand: that is the first path, with a new build and a new approval of the signature.
+- *`publish` says that the release tags changed since `check`*: a re-run cannot help (it compares with the
+  tags the same `check` saw). Start **Run workflow** again; nothing was made by the stopped run.
+- *The tag exists, the Release does not*: press **Re-run failed jobs**, and **not** *Re-run all jobs*: a
+  full re-run starts `check` again, and `check` refuses with "tag exists". The re-run of `publish` sees the
+  tag on the built commit and only creates the Release. After 7 days the artifacts are gone: then the
+  owner removes the tag (ruleset 2 off for the moment, see above) and a new run is started.
+- *The tag points to another commit* (the message of `publish` says so): no Release was made. The tag must be
+  removed by the owner, who switches ruleset 2 off for the moment (see above); then a new run is started.
+- A tag without a Release does no harm to servers: the updaters read the list of Releases (and skip
+  drafts), not the tags, so nobody sees the version. But it blocks that version number: a new run refuses
+  it until the Release exists or the tag is removed.
+
+**What protects the signature, and what does not.** All sessions work under the owner's GitHub account, and
+GitHub cannot tell a session from the owner. A branch rule or a "second pair of eyes" setting cannot make a
+session different from the owner. The one real guarantee that the owner approves a signature is the
+environment `release` with **Required reviewers**, together with this: the credentials that sessions use
+must not be able to approve a deployment (the Actions API call "review pending deployments for a
+workflow run" and the *Review deployments* button). Check what the sessions' tokens may do; if they could approve, the
+approval is not an independent check and the owner must be the only one who ever clicks it. Do **not**
+switch on *Prevent self-review* on the environment: the person who starts a release and the approver are
+the same account, so every release would stay unapprovable.
 
 Plan limits: required reviewers on a **private** repository need a plan that offers them
 (GitHub Enterprise at the time of writing). Without them, keep the environment with its tag rule
@@ -359,6 +441,10 @@ mdhub release verify dist/market-data-hub-X.Y.Z.tar.gz
 gh release create vX.Y.Z --verify-tag dist/market-data-hub-X.Y.Z.tar.gz \
     dist/market-data-hub-X.Y.Z.SHA256SUMS dist/market-data-hub-X.Y.Z.SHA256SUMS.minisig
 ```
+
+(`git rev-parse vX.Y.Z` and `--verify-tag` assume that the tag exists; after a Run workflow run that stopped
+at `sign` it does not. Use the commit of the run in the trusted comment, and `--target <commit>` instead of
+`--verify-tag`.)
 
 ### Rotating the key
 

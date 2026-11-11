@@ -1,30 +1,144 @@
-# Release on a tag vX.Y.Z (ADMIN_DESIGN §6.1, README_DEPLOY §11).
+# Release of a signed bundle (ADMIN_DESIGN §6.1, README_DEPLOY §11). Two ways to start it:
 #
-#   ci       tests, ruff, mypy (ci.yml)
+#   * the owner pushes a tag:  git tag v0.7.0 && git push origin v0.7.0
+#   * Actions -> release -> "Run workflow" on main with the field `version` filled in (X.Y.Z or
+#     X.Y.Z{a|b|rc}N): the owner, or a session by the owner's direct request, starts it; the tag v<version>
+#     is made by the release itself, on the commit that was built, only after the signature was made and
+#     verified (as the releases of the monitor and the adapter do). A tag made with GITHUB_TOKEN does not
+#     start this workflow a second time.
+#
+# What the owner sees before approving the signature: the title of the run (`run-name`: the tag and the
+# commit) and the summary of the job `check` (version, commit, previous tag, the commits since it).
+#
+#   check    both ways: the summary above. Run workflow only: started on main, the version is well formed,
+#            greater than the latest tag v* and exactly one patch, minor or major step after it
+#            (`mdhub release check-next`: 0.6.2 -> 0.6.3, 0.7.0 or 1.0.0, or an a|b|rc of those; after a
+#            pre-release only its own X.Y.Z; a server installs only newer versions, so a version that
+#            skips ahead cannot be taken back), neither the tag nor the release exists yet (a version
+#            that exists is refused as such). It records the set of release tags it saw (`tags`). A
+#            pushed tag is never refused: if it is out of order the run says so in a `::warning::`
+#            annotation and in the summary
+#   ci       tests, ruff, mypy (ci.yml, `isolated`: no other run can cancel or replace them)
 #   build    deploy/make_bundle.sh --code-only -> market-data-hub-X.Y.Z.tar.gz + .SHA256SUMS
-#            (the tag must equal the package version from importlib.metadata)
-#   sign     environment `release` (required reviewers): minisign -S over the SHA256SUMS.
-#            The secret key is handed to the minisign binary only: no checkout, no Python,
-#            no project dependencies in this job
-#   verify   mdhub release verify against deploy/release-keys/ of the tagged commit
-#   publish  GitHub Release with the archive, SHA256SUMS and SHA256SUMS.minisig
+#            (the version must equal the package version from importlib.metadata; on Run workflow the
+#            commit gets the tag v<version> in this job's checkout ONLY, never pushed, so that hatch-vcs,
+#            make_bundle.sh and the .git_archival.txt of the archive see what they see on a tag build)
+#   sign     environment `release` (required reviewers: the owner approves in the Actions tab):
+#            minisign -S over the SHA256SUMS. The secret key is handed to the minisign binary only: no
+#            checkout, no Python, no project dependencies in this job
+#   verify   mdhub release verify against deploy/release-keys/ of the built commit
+#   publish  Run workflow: the release tags must be the set `check` saw (nobody tagged meanwhile); the
+#            tag v<version> is created on the built commit (github.sha) with ONE API call that fails if
+#            the tag exists, and read back (the tag is looked up with matching-refs, which answers 200
+#            and [] for "no tag": gh prints the body of an HTTP error to stdout, so an error is never
+#            swallowed); only then the GitHub Release is created for that existing
+#            tag (--verify-tag) with the archive, SHA256SUMS and SHA256SUMS.minisig. No release is ever
+#            visible to the updaters before the tag is known to be on the built commit, and a run that
+#            failed before this point leaves no tag. The workflow cannot delete a tag (the tag rules of
+#            README_DEPLOY §11 forbid it), so nothing here depends on removing one
 #
-# Jobs get the least permissions they need; only `publish` can write to the repository.
+# One release at a time: all runs share the concurrency group `release` and none is cancelled by
+# another one. GitHub keeps one waiting run in a group and replaces it when a third run arrives, so
+# start the next release when the previous run has ended; a run that waits for the approval of `sign`
+# holds the group (reject it, or cancel the run, before starting another).
+#
+# Jobs get the least permissions they need; only `publish` can write to the repository, and only it
+# makes the tag. Run workflow needs the environment `release` to accept the branch main and the tag
+# ruleset of README_DEPLOY §11 that forbids updates and deletions for everybody (no bypass). A rule that
+# restricts creation of v* tags is optional and must let GitHub Actions bypass it: otherwise `publish`
+# fails after the signature. If a run stops, README_DEPLOY §11 says which jobs to re-run (the failed
+# ones, not all: `check` refuses a tag that exists). The artifacts live 7 days (retention-days).
 name: release
+
+# `run-name` is evaluated by GitHub (display only); the version never enters a script as text
+run-name: >-
+  release ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
+  at ${{ github.sha }}
 
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "release version X.Y.Z or X.Y.Z{a|b|rc}N, one step after the latest tag; the tag v<version> is made on main by the release"
+        required: true
+        type: string
 
 permissions: {}
 
+env:
+  # the tag of this run: the pushed tag, or v<version> of Run workflow (a value, never part of a script)
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
+
 concurrency:
-  group: release-${{ github.ref }}
+  group: release
   cancel-in-progress: false
 
 jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      tags: ${{ steps.tags.outputs.tags }}
+    steps:
+      - name: Run workflow releases main only
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/main" ]]; then
+            echo "::error::Run workflow releases main only; this run was started on $GITHUB_REF. Start it again with 'Use workflow from: main'."
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || '' }}
+          fetch-depth: 0 # all tags: the version must follow the latest one
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          enable-cache: false
+      - name: version is the next one after the latest tag; summary for the approval
+        run: |
+          uv sync --frozen
+          enforce=--no-enforce # a pushed tag is the owner's act: the summary says if it is odd
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then enforce=--enforce; fi
+          uv run --frozen mdhub release check-next --version "${RELEASE_TAG#v}" "$enforce" \
+            --summary "$GITHUB_STEP_SUMMARY"
+      - name: tag and release do not exist yet
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/$RELEASE_TAG" >/dev/null; then
+            echo "::error::the tag $RELEASE_TAG exists already; choose a greater version"
+            exit 1
+          fi
+          # The release by tag over REST: 200 = it exists, 404 = it does not, anything else = unknown.
+          # On an HTTP error gh prints the body of the error to stdout and "gh: ... (HTTP nnn)" to
+          # stderr (and does not apply --jq), so $out has both and only the status tells the cases.
+          if out="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG" 2>&1)"; then
+            echo "::error::a release $RELEASE_TAG exists already; choose a greater version"
+            exit 1
+          fi
+          if ! grep -q '(HTTP 404)' <<<"$out"; then
+            out="${out:0:200}"
+            echo "::error::could not tell whether the release exists: ${out//$'\n'/ }"
+            exit 1
+          fi
+      - name: the release tags seen by this check
+        id: tags
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          set -o pipefail
+          echo "tags=$(git tag --list 'v*' | sort | sha256sum | cut -d' ' -f1)" >>"$GITHUB_OUTPUT"
+
   ci:
+    needs: check
     uses: ./.github/workflows/ci.yml
+    with:
+      isolated: true
     permissions:
       contents: read
 
@@ -39,8 +153,21 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          # Run workflow: exactly the commit that started the run; a pushed tag: the default
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || '' }}
           fetch-depth: 0
           persist-credentials: false
+      - name: Run workflow - this commit is v<version> in this checkout only
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if [[ "$(git rev-parse HEAD)" != "$GITHUB_SHA" ]]; then
+            echo "::error::the checkout is not the commit that started the run"
+            exit 1
+          fi
+          # a lightweight tag, local to this job and never pushed: the version of hatch-vcs, the
+          # `git describe --exact-match` of make_bundle.sh and the .git_archival.txt of the archive
+          # are then exactly those of a build from a pushed tag
+          git tag "$RELEASE_TAG"
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           enable-cache: false
@@ -48,16 +175,14 @@ jobs:
         run: uv sync --frozen
       - name: tag matches the package version
         id: version
-        env:
-          TAG: ${{ github.ref_name }}
         run: |
-          version="${TAG#v}"
+          version="${RELEASE_TAG#v}"
           if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+((a|b|rc)[0-9]+)?$ ]]; then
-            echo "::error::tag $TAG is not vX.Y.Z or vX.Y.Z{a|b|rc}N"; exit 1
+            echo "::error::tag $RELEASE_TAG is not vX.Y.Z or vX.Y.Z{a|b|rc}N"; exit 1
           fi
           package="$(uv run --frozen python -c 'import importlib.metadata as m; print(m.version("market-data-hub"))')"
           if [[ "$version" != "$package" ]]; then
-            echo "::error::tag $TAG but the package version is $package"; exit 1
+            echo "::error::tag $RELEASE_TAG but the package version is $package"; exit 1
           fi
           echo "version=$version" >>"$GITHUB_OUTPUT"
       - name: code-only bundle
@@ -120,6 +245,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || '' }}
           persist-credentials: false
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
@@ -136,26 +262,62 @@ jobs:
             --keys-dir deploy/release-keys
 
   publish:
-    needs: [build, verify]
+    needs: [check, build, verify]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: write
     env:
       VERSION: ${{ needs.build.outputs.version }}
+      TAGS_AT_CHECK: ${{ needs.check.outputs.tags }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: dist
           merge-multiple: true
-      - name: gh release create
+      - name: tag on the built commit, then gh release create
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
         run: |
+          set -o pipefail
           pre=()
           if [[ "$VERSION" =~ (a|b|rc)[0-9]+$ ]]; then pre=(--prerelease); fi
-          gh release create "$TAG" --repo "$GITHUB_REPOSITORY" --verify-tag "${pre[@]}" \
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            # The tag by the exact name. matching-refs answers 200 with [] when there is no such
+            # tag (a prefix match, hence the exact comparison), and a real error (HTTP 4xx/5xx,
+            # network) fails the step: gh prints the body of an error to stdout, so a lookup that
+            # asks for one ref could not tell "no tag" from a failure. Under `set -e` and
+            # pipefail a failed lookup stops the run before any tag or release is made.
+            exact() {
+              gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/$RELEASE_TAG" \
+                --jq '.[] | "\(.ref) \(.object.sha)"' |
+                awk '$1 == "refs/tags/" ENVIRON["RELEASE_TAG"] {print $2}'
+            }
+            tagged="$(exact)"
+            if [[ -z "$tagged" ]]; then
+              # no tag yet: nobody may have made another release tag since the check approved this version
+              now="$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v" --jq '.[].ref' |
+                sed 's#^refs/tags/##' | sort | sha256sum | cut -d' ' -f1)"
+              if [[ -z "$TAGS_AT_CHECK" || "$now" != "$TAGS_AT_CHECK" ]]; then
+                echo "::error::the release tags changed while the release was running: nothing was published; check the tags and start again"
+                exit 1
+              fi
+              # the tag is made on the commit that was built, signed and verified; the call fails if
+              # the tag exists (nothing is overwritten), and the tag is read back before any release exists
+              gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+                -f ref="refs/tags/$RELEASE_TAG" -f sha="$GITHUB_SHA" >/dev/null
+              tagged="$(exact)"
+              if [[ -z "$tagged" ]]; then
+                echo "::error::the tag $RELEASE_TAG was not found after it was made: no release was published"
+                exit 1
+              fi
+            fi
+            if [[ "$tagged" != "$GITHUB_SHA" ]]; then
+              echo "::error::the tag $RELEASE_TAG points to $tagged, not to the built commit $GITHUB_SHA: no release was published; the owner removes the tag, after temporarily switching off ruleset 2 'release tags: no change' (README_DEPLOY §11)"
+              exit 1
+            fi
+          fi
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag "${pre[@]}" \
             --title "market-data-hub $VERSION" --generate-notes \
             "dist/market-data-hub-$VERSION.tar.gz" \
             "dist/market-data-hub-$VERSION.SHA256SUMS" \

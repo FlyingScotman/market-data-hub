@@ -145,7 +145,7 @@ From 1.7 the hub **carries the curve forward** instead:
 
 * **When.** No source stored the curve (any quote set of that `dataset`, from any source) on the
   cut's business date, and the curve is in the carried set (`MDHUB_CURVE_CARRY_DATASETS`, default
-  `ruonia_ois`, `key_rate_swap`; empty = no carry). A curve one source delivered is never carried
+  `ruonia_ois`, `key_rate_swap`; an unset or empty value means the default, a lone `,` means no carry). A curve one source delivered is never carried
   for the other source (`coverage.missing` shows it as before).
 * **From where.** The latest day before the business date that has a non-empty quote set of the
   curve known at the cut (`known_at`), whatever the gap length: there is no refusal by age. All

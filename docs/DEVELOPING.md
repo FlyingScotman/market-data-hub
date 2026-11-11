@@ -382,9 +382,31 @@ version is shown by `mdhub --version`, `/health/ready` and every worker heartbea
 **Release numbering.** A new contract minor version, table, source or job is a minor hub version
 (0.4.0 = contract 1.5, 0.5.0 = contract 1.6); a fix without a contract change is a patch (0.3.3,
 0.3.4). Each release gets an owner note `deploy/UPGRADE_TO_X.Y.Z.md` (state before, what comes,
-install and post-install steps) and a release issue that records the verification. The owner tags
-`vX.Y.Z` on `main`, approves the `sign` job of `.github/workflows/release.yml` and installs the
-signed release through the console's Updates; sessions do not tag, sign or touch production.
+install and post-install steps) and a release issue that records the verification.
+
+**Starting a release** (`.github/workflows/release.yml`, README_DEPLOY §11) - two ways, the same
+workflow behind both:
+
+- the owner tags `vX.Y.Z` on `main` and pushes the tag; or
+- the owner, **or a session at the owner's direct request**, runs Actions -> release -> *Run workflow*
+  on branch `main` with the field `version` = `X.Y.Z` (or `X.Y.Z{a|b|rc}N`). The workflow refuses any
+  other branch, a malformed version, a version that is not greater than the latest tag `v*`, a version
+  that is not exactly **one step after it** (patch, minor or major: `0.6.2` -> `0.6.3`, `0.7.0`,
+  `1.0.0`, or an `a|b|rc` of those; after a pre-release only its own `X.Y.Z`: `0.7.0rc1` -> `0.7.0` or
+  `0.7.0rc2`; `mdhub release check-next`), and a version whose tag or release exists. A tag pushed by the
+  owner is not refused for being out of order: the run goes on, with a `::warning::` annotation and the
+  line in the summary. The tag rules and what to do when a release stops (re-run only the failed jobs) are in
+  README_DEPLOY §11. It builds the commit that was current when the run started and makes the tag `v<version>`
+  itself on that commit, but only after the signature was made and verified, and before the GitHub
+  Release is created, so a release that fails earlier leaves no tag and none is visible before the tag is
+  known to be on the built commit. The run title and the summary of the job `check` (version, commit,
+  previous tag, the commits since it) are what the owner reads before approving. One release runs at a
+  time (the concurrency group `release`).
+
+In both cases the **owner approves the `sign` job** in Actions (environment `release`). **Installing on
+the server and everything on production is for the owner**, or for whoever the owner gave access to, through
+the console's Updates. Sessions never hold the signing key, never push a tag by hand and never touch
+production; a session that started a release only reports the run and waits for the owner's approval.
 
 ## Environment
 

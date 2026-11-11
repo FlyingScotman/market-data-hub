@@ -6,6 +6,13 @@
   only override and exists on the CLI only: it accepts a missing signature or an unknown key,
   never a pinned key's signature that fails, and still checks every hash and the manifest.
 * ``keys [--keys-dir DIR]`` - list the pinned public keys.
+* ``check-next --version V [--repo DIR] [--enforce/--no-enforce] [--summary FILE]`` - what a run of
+  ``.github/workflows/release.yml`` is about to release: the version against the release tags of the
+  checkout (``--enforce``: it must be the next one after the latest tag, exactly one patch, minor
+  or major step, :func:`mdhub.release.check_next_version`, and not a version whose tag exists
+  already - the release makes the tag itself; exit 1 otherwise) and a Markdown summary
+  (version, commit, previous tag, the commits since it) appended to ``FILE`` - the
+  ``$GITHUB_STEP_SUMMARY`` the owner reads before approving the signature.
 * ``manifest --root DIR --commit SHA [--version V] [--out FILE]`` - write ``MANIFEST.json`` for an
   unpacked ``git archive`` (used by ``deploy/make_bundle.sh --code-only``); prints the version.
   The version defaults to the installed package's (``importlib.metadata``).
@@ -18,6 +25,8 @@ from __future__ import annotations
 
 import importlib.metadata
 import json
+import os
+import subprocess
 from pathlib import Path
 from typing import Annotated
 
@@ -27,10 +36,14 @@ from mdhub.release import (
     PROJECT_NAME,
     PublicKey,
     ReleaseError,
+    allowed_next_versions,
     build_manifest,
+    check_next_version,
     default_keys_dir,
     load_pinned_keys,
+    release_tags,
     verify_archive,
+    version_key,
 )
 
 name = "release"
@@ -157,3 +170,122 @@ def manifest_cmd(
         raise typer.Exit(2) from None
     (out or root / "MANIFEST.json").write_text(manifest.dumps(), encoding="utf-8")
     typer.echo(manifest.version)
+
+
+SUMMARY_COMMITS: int = 40
+"""Commits listed in the summary (the count of all of them is printed)."""
+
+
+def _git(repo: Path, *args: str) -> str:
+    proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        ["git", "-C", str(repo), *args],  # noqa: S607 - git from PATH
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc.returncode != 0:
+        raise ReleaseError(f"git {args[0]} failed: {proc.stderr.strip()[:200]}")
+    return proc.stdout
+
+
+def _summary(repo: Path, version: str, previous: str | None, verdict: str) -> str:
+    """Markdown for the owner who is asked to approve the signature of this release."""
+    commit = _git(repo, "rev-parse", "HEAD").strip()
+    lines = [
+        f"## Release v{version}",
+        "",
+        f"- version: `{version}`",
+        f"- commit: `{commit}`",
+        f"- previous tag: {f'`{previous}`' if previous else 'none'}",
+        f"- version check: {verdict}",
+    ]
+    if previous:
+        count = int(_git(repo, "rev-list", "--count", f"{previous}..HEAD").strip() or 0)
+        lines += ["", f"### Commits since {previous}: {count}", "", "```text"]
+        log = _git(
+            repo, "log", f"--max-count={SUMMARY_COMMITS}", "--format=%h %s", f"{previous}..HEAD"
+        )
+        # the text of a commit is data: no backquote can end the block, one line each
+        for row in log.splitlines():
+            lines.append(row.replace("`", "'")[:120])
+        if count > SUMMARY_COMMITS:
+            lines.append(f"... and {count - SUMMARY_COMMITS} more")
+        lines.append("```")
+    return "\n".join(lines) + "\n"
+
+
+def _fail(message: str) -> typer.Exit:
+    prefix = "::error::" if os.environ.get("GITHUB_ACTIONS") == "true" else "error: "
+    typer.echo(f"{prefix}{message}", err=True)
+    return typer.Exit(1)
+
+
+def _warn(message: str) -> None:
+    """A workflow annotation on the run page (outside Actions: a plain line on stderr)."""
+    prefix = "::warning::" if os.environ.get("GITHUB_ACTIONS") == "true" else "warning: "
+    typer.echo(f"{prefix}{message}", err=True)
+
+
+@app.command("check-next")
+def check_next_cmd(
+    version: Annotated[
+        str, typer.Option("--version", help="Release version X.Y.Z or X.Y.Z{a|b|rc}N (no v).")
+    ],
+    repo: Annotated[
+        Path, typer.Option("--repo", help="Git checkout that has all release tags.")
+    ] = Path(),
+    enforce: Annotated[
+        bool,
+        typer.Option(
+            "--enforce/--no-enforce",
+            help="Refuse a version that is not the next one after the latest release tag.",
+        ),
+    ] = True,
+    summary: Annotated[
+        Path | None,
+        typer.Option("--summary", help="Append a Markdown summary to this file (step summary)."),
+    ] = None,
+) -> None:
+    """Check the version of a release run against the release tags and write its summary."""
+    try:
+        new = version_key(version)
+        known = release_tags(_git(repo, "tag", "--list", "v*").split())
+    except ReleaseError as exc:
+        raise _fail(str(exc)) from None
+    # the previous tag: the greatest one below the new version. The latest one: the greatest tag
+    # that is not this version's own. A pushed tag (--no-enforce) is in the list already: it is
+    # the release itself and is left out. For Run workflow (--enforce) the tag is made by the
+    # release, so a tag of this version means that the version exists already: refused below
+    below = [tag for key, tag in known if key < new]
+    previous = below[-1] if below else None
+    own = [tag for key, tag in known if key == new]
+    others = [tag for key, tag in known if key != new]
+    latest = others[-1][1:] if others else None
+    try:
+        if own and enforce:
+            raise ReleaseError(
+                f"the version {version} exists already (tag {own[0]}): choose a greater version"
+            )
+        check_next_version(version, latest)
+        may_follow = ", ".join(allowed_next_versions(latest)) if latest else ""
+        verdict = "ok - " + (
+            f"the next one after v{latest} (may follow it: {may_follow})"
+            if latest
+            else "no earlier release tag"
+        )
+        error = None
+    except ReleaseError as exc:
+        verdict, error = f"**REFUSED** - {exc}", str(exc)
+    if summary is not None:
+        with summary.open("a", encoding="utf-8") as out:
+            out.write(_summary(repo, version, previous, verdict))
+    if error is not None and enforce:
+        raise _fail(error)
+    if error is not None:
+        # a pushed tag is the owner's act and goes on; the annotation is on the run page, not only
+        # in the summary. A constant text and the version (checked by version_key), never `error`
+        _warn(
+            f"release version {version} is not the next one after the latest release tag: "
+            "the tag was pushed by the owner and the run goes on (see the summary of the job check)"
+        )
+    typer.echo(verdict.replace("**", ""))

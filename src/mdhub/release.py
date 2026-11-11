@@ -36,7 +36,7 @@ import re
 import tarfile
 import tomllib
 import zlib
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -72,9 +72,12 @@ _TRUSTED_PREFIX: Final = b"trusted comment: "
 _UNTRUSTED_PREFIX: Final = b"untrusted comment:"
 
 _VERSION_RE: Final = re.compile(
-    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:(a|b|rc)(0|[1-9]\d*))?$"
+    r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:(a|b|rc)(0|[1-9][0-9]*))?"
 )
+"""Used with ``fullmatch`` (a ``$`` would accept a trailing newline) and with ASCII digits only
+(``\\d`` matches other scripts' digits too)."""
 _PRE_RANK: Final = {"a": 0, "b": 1, "rc": 2}
+_FINAL_RANK: Final = 3
 _COMMIT_RE: Final = re.compile(r"^[0-9a-f]{40}$")
 _SHA256_RE: Final = re.compile(r"^[0-9a-f]{64}$")
 _SUM_LINE_RE: Final = re.compile(r"^([0-9a-f]{64}) [ *](.+)$")
@@ -93,13 +96,69 @@ def version_key(version: str) -> tuple[int, int, int, int, int]:
 
     :raises ReleaseError: on any other form (dev and local versions are never released).
     """
-    m = _VERSION_RE.match(version)
+    m = _VERSION_RE.fullmatch(version)
     if m is None:
         raise ReleaseError(f"bad release version {version!r} (want X.Y.Z or X.Y.Z{{a|b|rc}}N)")
     major, minor, patch, pre, num = m.groups()
     if pre is None:
-        return int(major), int(minor), int(patch), 3, 0
+        return int(major), int(minor), int(patch), _FINAL_RANK, 0
     return int(major), int(minor), int(patch), _PRE_RANK[pre], int(num)
+
+
+def release_tags(tags: Iterable[str]) -> list[tuple[tuple[int, int, int, int, int], str]]:
+    """``(version_key, tag)`` of the tags that are release tags ``vX.Y.Z`` or ``vX.Y.Z{a|b|rc}N``,
+    ascending. Any other tag is not a release and is left out."""
+    found = []
+    for tag in tags:
+        if not tag.startswith("v"):
+            continue
+        try:
+            found.append((version_key(tag[1:]), tag))
+        except ReleaseError:
+            continue
+    return sorted(found)
+
+
+def allowed_next_versions(latest: str) -> tuple[str, ...]:
+    """The versions (``X.Y.Z``) that may follow ``latest`` (a version without ``v``).
+
+    After a final release exactly one step: patch, minor or major (``0.6.2`` -> ``0.6.3``,
+    ``0.7.0``, ``1.0.0``). After a pre-release only the same ``X.Y.Z``: its final or a later
+    pre-release (``0.7.0rc1`` -> ``0.7.0``, ``0.7.0rc2``). The next step is taken from a final
+    release, never from a pre-release: ``0.7.0rc1`` -> ``0.7.1`` would skip ``0.7.0``, and a server
+    installs only newer versions, so ``0.7.0`` could never be released afterwards (the same
+    reason as for ``0.6.2`` -> ``0.9.0``). An abandoned pre-release is closed by releasing the
+    final of its version. A pre-release ``{a|b|rc}N`` of an allowed ``X.Y.Z`` is allowed as well
+    (:func:`check_next_version`).
+
+    :raises ReleaseError: ``latest`` is not a release version.
+    """
+    major, minor, patch, rank, _ = version_key(latest)
+    if rank != _FINAL_RANK:
+        return (f"{major}.{minor}.{patch}",)
+    return (f"{major}.{minor}.{patch + 1}", f"{major}.{minor + 1}.0", f"{major + 1}.0.0")
+
+
+def check_next_version(new: str, latest: str | None) -> None:
+    """Refuse a release version that is not the next one after ``latest`` (the greatest release
+    tag without its ``v``; ``None``: there is none, any well-formed version is accepted).
+
+    A server installs only a version newer than the one it runs, so a version that skips ahead
+    (``0.6.2`` -> ``0.9.0``) cannot be taken back: the servers would never see ``0.6.3`` again.
+
+    :raises ReleaseError: with the versions that would be accepted.
+    """
+    new_key = version_key(new)
+    if latest is None:
+        return
+    if new_key <= version_key(latest):
+        raise ReleaseError(f"version {new} is not greater than the latest tag v{latest}")
+    allowed = allowed_next_versions(latest)
+    if ".".join(str(n) for n in new_key[:3]) not in allowed:
+        raise ReleaseError(
+            f"version {new} is not the next one after the latest tag v{latest}: allowed are "
+            f"{', '.join(allowed)}, or a pre-release X.Y.Z{{a|b|rc}}N of one of them"
+        )
 
 
 # ------------------------------------------------------------------------------------ minisign
@@ -614,7 +673,9 @@ __all__ = [
     "ReleaseError",
     "Signature",
     "VerifiedRelease",
+    "allowed_next_versions",
     "build_manifest",
+    "check_next_version",
     "default_keys_dir",
     "default_signature_path",
     "load_pinned_keys",
@@ -622,6 +683,7 @@ __all__ = [
     "parse_public_key",
     "parse_sha256sums",
     "parse_signature",
+    "release_tags",
     "verify_archive",
     "verify_signature",
     "version_key",

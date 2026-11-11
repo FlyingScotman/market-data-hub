@@ -33,6 +33,11 @@ Passkeys registered for `localhost` do not work on this domain and must be enrol
 
 A release tag matching the package version starts the existing GitHub release workflow: tests, code-only
 bundle, signature in the protected `release` environment, independent signature verification, publication.
+The same workflow can be started with Actions -> release -> Run workflow on `main` and a version, which must
+be exactly one patch, minor or major step after the latest tag; it then makes the tag itself after signing and
+verification, before the Release. That path needs the tag ruleset for `v*` that forbids updates and deletions for everybody (a second one, which
+restricts creation, is optional and only if GitHub Actions can be put on its bypass list) and the environment
+`release` with required reviewers (README_DEPLOY §11).
 Only the signing job can access the signing secrets; only the publish job has write access to releases.
 The public verification key is committed under `deploy/release-keys/`; private signing material never
 belongs in Git, a bundle, or on the VPS. Approve signing in GitHub when the protected environment asks.
