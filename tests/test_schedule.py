@@ -16,7 +16,7 @@ from mdhub.schedule import KNOWN_JOBS, RULES, Rule, build_scheduler, check_rules
 EXPECTED_JOBS = {
     "bonds_static", "bonds_static_probe", "issuers_static", "cbonds_enrich",
     "ratings_agencies", "bond_terms_curated", "zcyc_floater_fit", "bonds_eod",
-    "bonds_intraday",
+    "bonds_intraday", "spb_bonds_daily",
     "fx_moex_intraday", "fx_moex_eod", "fx_indicative", "futures_intraday", "futures_eod",
     "algopack_fx_futures", "zcyc_securities", "index_intraday", "index_constituents",
     "repo_ccp_bond", "repo_gc_term", "bond_close_quote", "indices_eod", "zcyc", "cbr_daily",

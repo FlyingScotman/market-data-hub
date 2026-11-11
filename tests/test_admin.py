@@ -24,6 +24,7 @@ from mdhub.admin import security, store
 from mdhub.admin.app import SECURITY_HEADERS, create_app
 from mdhub.admin.web import client_address, parse_networks
 from mdhub.config import Settings
+from mdhub.core.timeutil import msk_today
 from mdhub.jobs import REGISTRY, JobContext
 from mdhub.release import default_signature_path
 
@@ -540,6 +541,78 @@ def test_run_now_snapshot_market_params(
     conn.rollback()
     row = conn.execute("SELECT params FROM ops.job_request WHERE state = 'queued'").fetchone()
     assert row == {"params": {"mode": "eod_preliminary"}}
+
+
+def test_run_now_spb_bounded_history_params(
+    console: Console, conn: Conn, fake_job: list[dict[str, Any]]
+) -> None:
+    """SPB history uses the regular operator queue and validates ranges before enqueueing."""
+    _enrolled(console, conn, "otto", "operator")
+    page = console.get("/jobs")
+    assert 'action="/jobs/spb_bonds_daily/run"' in page.text
+    assert 'name="date_from"' in page.text and 'name="date_to"' in page.text
+    assert "31 completed calendar dates" in page.text
+    invalid = (
+        {"date_from": "2026-01-01"},
+        {"date_to": "2026-01-01"},
+        {"date_from": "2026-01-02", "date_to": "2026-01-01"},
+        {"date_from": "2026-01-01", "date_to": "2026-02-01"},
+        {"date_from": "bad", "date_to": "2026-01-01"},
+        {"date_from": "2999-01-01", "date_to": "2999-01-01"},
+        {"date_from": msk_today().isoformat(), "date_to": msk_today().isoformat()},
+        {"day": "2026-01-01", "date_from": "2026-01-01", "date_to": "2026-01-01"},
+        {"mode": "eod_final"},
+    )
+    for data in invalid:
+        assert console.post("/jobs/spb_bonds_daily/run", data).status_code == 400, data
+    for job in ("snapshot_market", "admin_test_job"):
+        assert (
+            console.post(
+                f"/jobs/{job}/run", {"date_from": "2026-01-01", "date_to": "2026-01-02"}
+            ).status_code
+            == 400
+        )
+    assert (
+        console.post(
+            "/jobs/spb_bonds_daily/run",
+            {"date_from": "2026-01-01", "date_to": "2026-01-31", "csrf_token": "bad"},
+        ).status_code
+        == 403
+    )
+    conn.rollback()
+    assert conn.execute("SELECT count(*) AS n FROM ops.job_request").fetchone() == {"n": 0}
+    assert (
+        console.post(
+            "/jobs/spb_bonds_daily/run", {"date_from": "2026-01-01", "date_to": "2026-01-31"}
+        ).status_code
+        == 200
+    )
+    conn.rollback()
+    request = conn.execute("SELECT id, job, params, state FROM ops.job_request").fetchone()
+    assert request is not None and request["job"] == "spb_bonds_daily"
+    assert request["params"] == {"date_from": "2026-01-01", "date_to": "2026-01-31"}
+    assert request["state"] == "queued"
+    assert conn.execute("SELECT count(*) AS n FROM ops.job_run").fetchone() == {"n": 0}
+    assert _audit(conn, "job.request")[-1]["details"]["params"] == request["params"]
+    assert console.post(f"/jobs/requests/{request['id']}/cancel").status_code == 200
+    assert console.post("/jobs/spb_bonds_daily/run").status_code == 200
+    conn.rollback()
+    assert conn.execute("SELECT params FROM ops.job_request WHERE state = 'queued'").fetchone() == {
+        "params": {}
+    }
+
+
+def test_spb_run_now_requires_operator(console: Console, conn: Conn) -> None:
+    _enrolled(console, conn, "viv", "viewer")
+    assert 'action="/jobs/spb_bonds_daily/run"' not in console.get("/jobs").text
+    assert (
+        console.post(
+            "/jobs/spb_bonds_daily/run", {"date_from": "2026-01-01", "date_to": "2026-01-02"}
+        ).status_code
+        == 403
+    )
+    conn.rollback()
+    assert conn.execute("SELECT count(*) AS n FROM ops.job_request").fetchone() == {"n": 0}
 
 
 def test_operator_retries_task_and_marks_gap(console: Console, conn: Conn) -> None:

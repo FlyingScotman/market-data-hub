@@ -72,6 +72,7 @@ from mdhub.sources import (
     ratescalcs,
     rosstat,
     snb,
+    spb,
     us_treasury,
 )
 from mdhub.sources.moex_apim import apim_headers
@@ -210,6 +211,7 @@ def ratescalcs_hours(now: datetime) -> bool:
 
 
 PROBES: Final = (
+    ProbeSpec("spb", _public(spb.BASE_URL + spb.UNIVERSE_PATH)),
     ProbeSpec("moex_iss", _public(f"{ISS_BASE_URL}/engines.json?iss.meta=off")),
     ProbeSpec("moex_apim", _apim),
     ProbeSpec("cbr", _public(cbr.BASE_URL + cbr.XML_DAILY_PATH)),

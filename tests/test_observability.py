@@ -107,6 +107,7 @@ def _creds(db_url: str) -> Settings:
 
 def _mock_sources(router: respx.MockRouter) -> dict[str, respx.Route]:
     return {
+        "spb": router.get(sp.spb.BASE_URL + sp.spb.UNIVERSE_PATH).respond(200, json=[]),
         "moex_iss": router.get("https://iss.moex.com/iss/engines.json").respond(
             200, json={"engines": {}}
         ),
@@ -163,6 +164,7 @@ def test_source_probe_job_records_every_source(
     rows = _probe_rows(conn)
     assert set(rows) == {p.source for p in sp.PROBES}
     assert {k: (r["ok"], r["auth"], r["http_status"]) for k, r in rows.items()} == {
+        "spb": (True, "n/a", 200),
         "moex_iss": (True, "n/a", 200),
         "moex_apim": (False, "rejected", 401),
         "cbr": (True, "n/a", 200),
