@@ -6,6 +6,7 @@ interruption and does nothing when nothing is left."""
 from __future__ import annotations
 
 import dataclasses
+import json
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
@@ -948,7 +949,7 @@ def _work(settings: Settings, db: Database) -> backfill.WorkerSummary:
 def _tasks(conn: Conn, dataset: str, source: str = history_load.HISTORY_SOURCE) -> list[Any]:
     return conn.execute(
         "SELECT params ->> 'date_from' AS a, params ->> 'date_to' AS b, status "
-        "FROM ops.backfill_task WHERE dataset = %s AND source = %s ORDER BY id",
+        "FROM ops.backfill_task WHERE dataset = %s AND source LIKE %s ORDER BY id",
         (dataset, source),
     ).fetchall()
 
@@ -1447,6 +1448,76 @@ def test_the_load_of_datasets_sharing_a_job_skips_the_years_between_their_heads(
     _hl(settings, db, [a, b])
     assert _history_row(world, a.dataset)["first_after"] == date(2026, 10, 1)
     assert _history_row(world, b.dataset)["first_after"] == date(2026, 10, 8)
+
+
+def test_a_new_load_ignores_the_old_failed_tasks_of_an_earlier_load_of_the_same_job(
+    world: Conn,
+    settings: Settings,
+    db: Database,
+    shared_job: Callable[..., Series],
+) -> None:
+    """Review of #142: three datasets on one job. A was loaded long ago and left a failed task for
+    2026-10-01..10-09; the new loads of B and C overlap that range but must neither count it as
+    their own failure nor queue it again (no 'round 1, 1 failed', no unfillable)."""
+    a = shared_job("TESTSHA", date(2026, 10, 1), date(2026, 10, 1))  # fully stored
+    world.execute(
+        "INSERT INTO ops.dataset_history_load (dataset, backfill_job, status, history_from, "
+        "head_to, hub_version, note, failed_ranges) VALUES (%s, %s, 'done', '2026-10-01', "
+        "'2026-10-09', 'x', 'old', 1)",
+        (a.dataset, a.job),
+    )
+    world.execute(
+        "INSERT INTO ops.backfill_task (dataset, params, source, status, attempts, done_at, "
+        "last_error) VALUES (%s, %s, 'history_load', 'failed', 5, now() - interval '40 days', "
+        "'old boom')",
+        (a.dataset, json.dumps({"date_from": "2026-10-01", "date_to": "2026-10-09"})),
+    )
+    world.commit()
+    b = shared_job("TESTSHB", date(2026, 10, 1), FIRST_STORED)
+    c = shared_job("TESTSHC", date(2026, 10, 6), FIRST_STORED)
+    _hl(settings, db, [b, c])
+    for x in (b, c):
+        assert "failed" not in _history_row(world, x.dataset)["note"]
+        assert _history_row(world, x.dataset)["status"] == "loading"
+    _work(settings, db)
+    for _ in range(2):
+        _hl(settings, db, [b, c])
+    for x in (b, c):
+        row = _history_row(world, x.dataset)
+        assert (row["status"], row["load_round"], row["failed_ranges"]) == ("done", 1, 0), row
+    # the old failed task of A was not queued again by anybody
+    assert [t["status"] for t in _tasks(world, a.dataset)] == ["failed"]
+
+
+def test_a_load_adopts_an_identical_task_that_is_open_already(
+    world: Conn,
+    settings: Settings,
+    db: Database,
+    fixed_clock: list[datetime],
+    shared_job: Callable[..., Series],
+) -> None:
+    """An operator queued the very range the load needs (same dataset, same dates) and it is still
+    open: no second task is queued, the open one is the load's own, so its failure is counted and
+    retried."""
+    a = shared_job("TESTSHA", date(2026, 10, 1), FIRST_STORED)
+    [(task_id, _, _)] = queue_range(
+        world, get_dataset(a.dataset), date(2026, 10, 1), date(2026, 10, 9), source="cli"
+    )
+    world.commit()
+    assert task_id is not None
+    _hl(settings, db, [a])
+    row = _history_row(world, a.dataset)
+    assert list(row["task_ids"]) == [task_id] and row["status"] == "loading"
+    world.execute(
+        "UPDATE ops.backfill_task SET status = 'failed', attempts = 5, "
+        "done_at = %s, last_error = 'boom' WHERE id = %s",
+        (fixed_clock[0] - timedelta(hours=7), task_id),
+    )
+    world.commit()
+    _hl(settings, db, [a])  # the retry delay is over: the range is queued again
+    row = _history_row(world, a.dataset)
+    assert (row["status"], row["load_round"]) == ("loading", 2), row
+    assert [t["status"] for t in _tasks(world, a.dataset, "%")] == ["failed", "pending"]
 
 
 # ----------------------- preview, night window and cap, a source that is not configured (#138)

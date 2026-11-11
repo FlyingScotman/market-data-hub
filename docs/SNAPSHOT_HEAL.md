@@ -38,8 +38,8 @@ download the day twice. When the gaps and tasks are done, the next run builds th
 Owner decision of 2026-11-11: when a dataset is added to the hub, its history is backfilled **and**
 the `eod_final` cuts of the last 12 months are reissued **once**, so that past cuts contain the new
 series, with no operator action. Code: `src/mdhub/quality/history_load.py` (the dataset side) and
-this job (the cut side); state: `ops.dataset_history_load` (one row per dataset, migrations 0840 and
-0850).
+this job (the cut side); state: `ops.dataset_history_load` (one row per dataset, migrations 0840, 0850 and
+0860).
 
 **This part is OFF until you switch it on** (`MDHUB_SNAPSHOT_HEAL_HISTORY`, default `false`): the
 first run of a history load on a production store can mean years of backfill and a second wave of
@@ -59,7 +59,9 @@ about 250 corrected cuts, so you look at its size first. While it is off the job
    with source `history_load`, in chunks of the dataset's `max_task_days`, **one set of tasks per
    backfill job** over the union of the heads of its datasets (datasets that share a job share its
    tasks; a stretch that is stored between two heads is not downloaded again). A dataset is judged
-   (rows added or not) only when every task of its job has finished.
+   (rows added or not) only when every task of its job has finished, and only on its own tasks
+   (their ids are stored in the row): the old, finished or failed tasks of an earlier load of the
+   same job are not counted as its own and not queued again.
    The ordinary `backfill_worker` runs them (every 10 minutes, with its time budget; it yields to
    scheduled runs as always) and takes them **after the tasks of every other source** and **only
    inside the night window** (`MDHUB_SNAPSHOT_HEAL_WINDOW`, 21:00-06:00 MSK), **at most

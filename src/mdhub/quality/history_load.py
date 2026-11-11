@@ -16,7 +16,9 @@ is only reported ``no rows``, which is why a new dataset used to wait for a manu
 (source :data:`HISTORY_SOURCE`, chunks of ``max_task_days``) - one set of tasks per backfill job
 over the **union** of the heads of its datasets (they share the tasks; a stretch that is stored
 between two heads is not downloaded again). A dataset's load is judged only when every task of its
-job has finished, and a task is matched to a dataset by overlap with its head. The ordinary
+job has finished, and only on its own tasks: it records the ids of the tasks that cover its head
+(also an identical task that was open already), so the old tasks of an earlier load of the same
+job are not mistaken for its own. The ordinary
 ``backfill_worker`` runs them, after the tasks of every other source and with the same lock
 yielding, so live gap repairs are not delayed.
 As far as each source allows: a source that has nothing for a day leaves it empty. A task that
@@ -49,7 +51,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Collection
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any, Final
 
@@ -132,11 +134,14 @@ class HistoryLoad:
     """Set while every open task waits for a source that is not configured."""
     failed_ranges: int = 0
     """Ranges that could not be loaded when the load finished."""
+    task_ids: list[int] = field(default_factory=list)
+    """Backfill tasks queued (or already open and reused) for this load's head when it was
+    detected: the load is judged on the newest task of each of their ranges."""
 
 
 _COLUMNS: Final = (
     "dataset, backfill_job, status, history_from, head_to, first_before, first_after, "
-    "load_round, pass_started_at, note, waiting_reason, failed_ranges"
+    "load_round, pass_started_at, note, waiting_reason, failed_ranges, task_ids"
 )
 
 
@@ -276,9 +281,15 @@ def detect_and_queue(
     created: list[HistoryLoad] = []
     heads = find_heads(conn, today=today, calendar=calendar, registry=registry, only=only)
     for plan in plan_heads(heads):
+        queued: list[tuple[int, date, date]] = []
         for lo, hi in plan.ranges:
-            queue_range(conn, plan.rep, lo, hi, source=HISTORY_SOURCE)
+            for task_id, a, b in queue_range(conn, plan.rep, lo, hi, source=HISTORY_SOURCE):
+                if task_id is None:  # an identical task is open already: this load shares it
+                    task_id = _open_task_id(conn, plan.rep.name, a, b)
+                if task_id is not None:
+                    queued.append((task_id, a, b))
         for h in plan.heads:
+            ids = [i for i, a, b in queued if a <= h.last_day and b >= h.first_day]
             note = (
                 f"loading {h.first_day}..{h.last_day}: {plan.tasks_of(h)} backfill task(s) "
                 f"queued (job {plan.job}, shared by {len(plan.heads)} dataset(s))"
@@ -287,8 +298,8 @@ def detect_and_queue(
                 """
                 INSERT INTO ops.dataset_history_load
                     (dataset, backfill_job, status, history_from, head_to, first_before,
-                     hub_version, note)
-                VALUES (%s, %s, 'loading', %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING
+                     hub_version, note, task_ids)
+                VALUES (%s, %s, 'loading', %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING
                 """,
                 (
                     h.spec.name,
@@ -298,6 +309,7 @@ def detect_and_queue(
                     h.first_stored,
                     hub_version,
                     note,
+                    ids,
                 ),
             )
             created.append(
@@ -312,9 +324,21 @@ def detect_and_queue(
                     1,
                     None,
                     note,
+                    task_ids=ids,
                 )
             )
     return created
+
+
+def _open_task_id(conn: DictConnection, dataset: str, lo: date, hi: date) -> int | None:
+    params = {"date_from": lo.isoformat(), "date_to": hi.isoformat()}
+    with conn.cursor(row_factory=tuple_row) as cur:
+        found = cur.execute(
+            "SELECT id FROM ops.backfill_task WHERE dataset = %s AND params = %s "
+            "AND status IN ('pending', 'running') ORDER BY id DESC LIMIT 1",
+            (dataset, Jsonb(params)),
+        ).fetchone()
+    return int(found[0]) if found else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,27 +418,24 @@ class _Task:
 
 
 def _latest_tasks(conn: DictConnection, row: HistoryLoad) -> list[_Task]:
-    """The newest task of every range that overlaps this load's head. Tasks are queued per
-    backfill job over the union of the heads of its datasets (and under one dataset's name), so a
-    task is matched by overlap, not by containment."""
-    names = _job_dataset_names(row)
+    """The newest task of every range of this load: the ranges of the tasks recorded for it when
+    it was detected (``task_ids``). Tasks of the same backfill job that belong to other loads (an
+    older, finished one with its own failed ranges) are not looked at, whatever their dates."""
+    if not row.task_ids:
+        return []
     with conn.cursor(row_factory=tuple_row) as cur:
         return [
             _Task(r[0], r[1], dict(r[2]), r[3], r[4])
             for r in cur.execute(
                 """
-                SELECT DISTINCT ON (dataset, params) dataset, status, params, done_at, last_error
-                FROM ops.backfill_task
-                WHERE source = %(src)s AND dataset = ANY(%(names)s)
-                  AND params ->> 'date_to' >= %(a)s AND params ->> 'date_from' <= %(b)s
-                ORDER BY dataset, params, id DESC
+                SELECT DISTINCT ON (t.dataset, t.params)
+                       t.dataset, t.status, t.params, t.done_at, t.last_error
+                FROM ops.backfill_task t
+                JOIN ops.backfill_task own
+                  ON own.id = ANY(%(ids)s) AND own.dataset = t.dataset AND own.params = t.params
+                ORDER BY t.dataset, t.params, t.id DESC
                 """,
-                {
-                    "src": HISTORY_SOURCE,
-                    "names": names,
-                    "a": row.history_from.isoformat(),
-                    "b": row.head_to.isoformat(),
-                },
+                {"ids": list(row.task_ids)},
             ).fetchall()
         ]
 
