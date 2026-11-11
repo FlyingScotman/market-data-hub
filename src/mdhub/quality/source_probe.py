@@ -35,7 +35,11 @@ provider 288 times a day; the rating agencies ``nkr``, ``nra``, ``raexpert`` (WE
 their ``robots.txt``, at most hourly; ``spb`` (SPB Exchange public website, not a contracted
 feed) the instrument list of the Russian market (the one light JSON request the loader also
 starts with; no ``robots.txt`` is among the saved responses, so it is not assumed to exist),
-at most hourly, and only while ``MDHUB_ENABLE_SPB_BONDS`` is on (:attr:`ProbeSpec.enabled`).
+at most every 8 hours (three a day: the owner allowed the site to be read a few times a day, and
+the daily loader reads it once as well), and only while ``MDHUB_ENABLE_SPB_BONDS`` is on
+(:attr:`ProbeSpec.enabled`). Nothing in the hub treats an old probe as a problem (a failed or
+missing one is; the Sources page shows the age), so a source probed this rarely stays green
+between probes.
 """
 
 from __future__ import annotations
@@ -219,12 +223,16 @@ def ratescalcs_hours(now: datetime) -> bool:
     return local.weekday() < 5 and dtime(8, 50) <= local.time() < dtime(23, 0)
 
 
+SPB_PROBE_INTERVAL_S: Final = 8 * 3600.0
+"""``spb`` is probed every 8 hours (three times a day)."""
+
 PROBES: Final = (
-    # not a contracted feed: at most hourly (the loader reads it once a day), off with its job
+    # not a contracted feed: the owner allowed a few reads a day, so three probes a day (every
+    # 8 hours; the loader adds one), off with its job
     ProbeSpec(
         "spb",
         _public(spb.BASE_URL + spb.UNIVERSE_PATH),
-        min_interval_s=3600.0,
+        min_interval_s=SPB_PROBE_INTERVAL_S,
         enabled=lambda s: s.enable_spb_bonds,
     ),
     ProbeSpec("moex_iss", _public(f"{ISS_BASE_URL}/engines.json?iss.meta=off")),

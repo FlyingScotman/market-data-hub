@@ -1,9 +1,11 @@
 """Russian SPB bonds: one discovery path, report unit reference, chart-only daily prices.
 
-The chart answers completed dates only (the current day is never requested), so one run a day
-after the previous day closed is all there is to read; see ``docs/SPB_BONDS.md``. A bond that
-fails validation is skipped with a diagnostic (the run ends ``partial``); more than
-:func:`~mdhub.sources.spb.skip_limit` of them is format drift and fails the run."""
+The loader requests completed dates only (the current day is never asked for; a chart saved
+during the trading day had no bar for that day), so one run a day after the previous day closed
+is all there is to read; see ``docs/SPB_BONDS.md``. A bond that fails validation is skipped with
+a diagnostic (the run ends ``partial``); more than :func:`~mdhub.sources.spb.skip_limit` of
+them is format drift and fails the run. The price unit of a stored bar is never re-labelled by a
+later report: when a bond's unit changes, bars up to the previous report date keep their unit."""
 
 from __future__ import annotations
 
@@ -36,20 +38,33 @@ DATASET = register_dataset(
 )
 
 
+DEFAULT_DAYS = 3
+"""Completed calendar dates a run without a range re-reads (late corrections of a bar)."""
+
+
 def load_range(
     *,
     today: date,
     day: date | None = None,
     date_from: date | None = None,
     date_to: date | None = None,
+    last_stored: date | None = None,
 ) -> tuple[date, date]:
-    """Completed Moscow calendar dates, inclusive, at most 31 days. No holiday filter."""
+    """Completed Moscow calendar dates, inclusive, at most 31 days. No holiday filter.
+
+    Without ``day`` / a range the run re-reads the last three completed dates, and starts earlier
+    when the newest stored bar is older than that (``last_stored``: the worker was down, so the
+    dates in between are read too), but never more than 31 dates back."""
     if day is not None and (date_from is not None or date_to is not None):
         raise JobParamError("SPB: day and date range are mutually exclusive")
     if (date_from is None) != (date_to is None):
         raise JobParamError("SPB: both date_from and date_to are required")
     end = day or date_to or today - timedelta(days=1)
-    start = day or date_from or end - timedelta(days=2)
+    start = day or date_from
+    if start is None:
+        start = end - timedelta(days=DEFAULT_DAYS - 1)
+        if last_stored is not None:
+            start = max(min(start, last_stored + timedelta(days=1)), end - timedelta(days=30))
     if start > end or end >= today or (end - start).days >= spb.MAX_LOAD_DAYS:
         raise JobParamError("SPB: require 1..31 completed calendar dates before today (MSK)")
     return start, end
@@ -88,6 +103,44 @@ def _stored_units(
     return stored
 
 
+def _unit_change(ticker: str, old: str, new: str, old_report: date) -> str:
+    """Diagnostic: the new unit applies to dates after the report that still said the old one."""
+    return f"price unit changed {old}->{new} for {ticker} from {old_report + timedelta(days=1)}"
+
+
+_UNIT_FIELDS = ("price_unit", "unit_reference_date", "card_price_unit", "unit_conflict")
+
+
+def _unit_fields_for(
+    trade_date: date,
+    bond: dict[str, Any],
+    stored: dict[str, Any] | None,
+    previous: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Unit columns of one bar, and the older unit it keeps when the bond's unit has changed.
+
+    The unit comes from the newest report and is a property of the bond *from the previous report
+    on*: a bar dated up to the report date that determined its stored unit (or, for a bar not
+    stored yet, up to the date of the bond's previous report) keeps that older unit, so a morning
+    re-read never re-labels a price that was stored under another unit. Later dates take the new
+    unit. Returns ``(columns, kept)``, ``kept`` being the older unit row when one was kept."""
+    new = {key: bond[key] for key in _UNIT_FIELDS}
+    if stored is not None:
+        if (
+            stored["price_unit"] != new["price_unit"]
+            and trade_date <= stored["unit_reference_date"]
+        ):
+            return {key: stored[key] for key in _UNIT_FIELDS}, stored
+        return new, None
+    if (
+        previous is not None
+        and previous["price_unit"] != new["price_unit"]
+        and trade_date <= previous["unit_reference_date"]
+    ):
+        return {key: previous[key] for key in _UNIT_FIELDS}, previous
+    return new, None
+
+
 @job("spb_bonds_daily", "SPB Russian bond chart daily OHLC (not official close)")
 def spb_bonds_daily(
     ctx: JobContext,
@@ -99,9 +152,19 @@ def spb_bonds_daily(
     if not ctx.settings.enable_spb_bonds:
         raise SourceNotConfigured("SPB bonds disabled (MDHUB_ENABLE_SPB_BONDS=false)")
     today = ctx.today()
-    start, end = load_range(today=today, day=day, date_from=date_from, date_to=date_to)
+    last_stored: date | None = None
+    if day is None and date_from is None and date_to is None:
+        with ctx.connection() as conn:
+            row = conn.execute("SELECT max(trade_date) AS d FROM md.spb_bond_daily").fetchone()
+            last_stored = row["d"] if row else None
+    start, end = load_range(
+        today=today, day=day, date_from=date_from, date_to=date_to, last_stored=last_stored
+    )
     requests = 0
     skipped: dict[str, str] = {}
+    unit_changes: dict[str, str] = {}
+    chart_failed: set[str] = set()
+    total_rows = 0
     total = 0
 
     def skip(ticker: str, reason: str) -> None:
@@ -220,6 +283,23 @@ def spb_bonds_daily(
                 admitted.append(bond)
             if not admitted:
                 raise FormatDriftError("SPB: no bond passed unit validation")
+            previous = {
+                r["isin"]: r
+                for r in conn.execute(
+                    "SELECT isin, price_unit, unit_reference_date, card_price_unit, unit_conflict "
+                    "FROM ref.spb_bond WHERE venue = 'SPB' AND isin = ANY(%s)",
+                    ([b["isin"] for b in admitted],),
+                ).fetchall()
+            }
+            for bond in admitted:
+                old = previous.get(bond["isin"])
+                if old is not None and old["price_unit"] != bond["price_unit"]:
+                    unit_changes[bond["ticker"]] = _unit_change(
+                        bond["ticker"],
+                        old["price_unit"],
+                        bond["price_unit"],
+                        old["unit_reference_date"],
+                    )
             ctx.run.add_counts(
                 upsert_rows(conn, "ref.spb_bond", admitted, ["venue", "isin"], run_id=ctx.run.id)
             )
@@ -244,33 +324,52 @@ def spb_bonds_daily(
                     bars = spb.parse_bars(response.content, start=start, end=end, today=today)
                 except FormatDriftError as exc:
                     skip(bond["ticker"], f"chart: {exc}")
+                    chart_failed.add(bond["isin"])
                     result["instruments"][bond["isin"]] = {
                         "ticker": bond["ticker"],
                         "skipped": str(exc),
                     }
                     continue
-                rows = [
-                    {
-                        **bar,
-                        **{
-                            key: bond[key]
-                            for key in (
-                                "venue",
-                                "isin",
-                                "ticker",
-                                "price_unit",
-                                "unit_reference_date",
-                                "card_price_unit",
-                                "unit_conflict",
-                            )
-                        },
-                        "source": "spb",
-                        "price_basis": spb.PRICE_BASIS,
-                        "capture_id": cap,
-                        "run_id": ctx.run.id,
-                    }
-                    for bar in bars
-                ]
+                stored_bars = {
+                    r["trade_date"]: r
+                    for r in conn.execute(
+                        "SELECT trade_date, price_unit, unit_reference_date, card_price_unit, "
+                        "unit_conflict FROM md.spb_bond_daily "
+                        "WHERE venue = 'SPB' AND isin = %s AND trade_date BETWEEN %s AND %s",
+                        (bond["isin"], start, end),
+                    ).fetchall()
+                }
+                rows = []
+                kept_until: date | None = None
+                kept_unit = ""
+                for bar in bars:
+                    unit_cols, kept = _unit_fields_for(
+                        bar["trade_date"],
+                        bond,
+                        stored_bars.get(bar["trade_date"]),
+                        previous.get(bond["isin"]),
+                    )
+                    if kept is not None:
+                        kept_unit = kept["price_unit"]
+                        kept_until = max(
+                            kept_until or kept["unit_reference_date"], kept["unit_reference_date"]
+                        )
+                    rows.append(
+                        {
+                            **bar,
+                            **{key: bond[key] for key in ("venue", "isin", "ticker")},
+                            **unit_cols,
+                            "source": "spb",
+                            "price_basis": spb.PRICE_BASIS,
+                            "capture_id": cap,
+                            "run_id": ctx.run.id,
+                        }
+                    )
+                if kept_until is not None and bond["ticker"] not in unit_changes:
+                    # an earlier run changed the unit: bars up to that report date keep the old one
+                    unit_changes[bond["ticker"]] = _unit_change(
+                        bond["ticker"], kept_unit, bond["price_unit"], kept_until
+                    )
                 counts = upsert_rows(
                     conn,
                     "md.spb_bond_daily",
@@ -279,6 +378,7 @@ def spb_bonds_daily(
                     run_id=ctx.run.id,
                 )
                 ctx.run.add_counts(counts)
+                total_rows += len(rows)
                 days = {bar["trade_date"] for bar in bars}
                 # A calendar date without a bar is normal for this dataset (weekends, holidays, a
                 # bond that did not trade): no gap, no backfill task. Missing dates are counted
@@ -292,8 +392,25 @@ def spb_bonds_daily(
                     "unit_conflict": bond["unit_conflict"],
                     "missing_dates": (end - start).days + 1 - len(days),
                 }
+    if not any(b["isin"] not in chart_failed for b in admitted):
+        detail = "; ".join(f"{t}: {r}" for t, r in skipped.items())
+        raise FormatDriftError(
+            f"SPB: the charts of all {len(admitted)} admitted bonds failed validation: {detail}"
+        )
+    result["rows"] = total_rows
     result["requests"] = requests
     result["skipped"] = dict(skipped)
+    result["unit_changes"] = dict(unit_changes)
+    for note in unit_changes.values():
+        ctx.logger.warning("SPB: %s", note)
+    if unit_changes:
+        ctx.run.mark_partial("SPB: " + "; ".join(unit_changes.values()))
+    if total_rows == 0 and any(
+        (start + timedelta(days=i)).weekday() < 5 for i in range((end - start).days + 1)
+    ):
+        # Weekends and holidays have no bars, but a weekday range with none for any bond is
+        # more likely a changed request or a silent feed than a market-wide closure.
+        ctx.run.mark_partial(f"SPB: no bars for any bond in range {start}..{end}")
     if skipped:
         ctx.run.mark_partial(
             f"SPB: {len(skipped)} of {total} bonds skipped: "

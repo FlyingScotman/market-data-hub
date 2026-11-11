@@ -249,6 +249,24 @@ def test_malformed_or_unfinished_chart_is_rejected(change: str) -> None:
         spb.parse_bars(_encode(rows), start=DAY, end=DAY, today=TODAY)
 
 
+def test_default_range_reaches_back_to_the_last_stored_bar_but_not_past_31_dates() -> None:
+    """After a worker outage longer than the three re-read dates the gap is read too."""
+    assert load_range(today=TODAY, last_stored=DAY) == (date(2026, 11, 8), DAY)
+    assert load_range(today=TODAY, last_stored=date(2026, 11, 9)) == (date(2026, 11, 8), DAY)
+    assert load_range(today=TODAY, last_stored=date(2026, 11, 2)) == (date(2026, 11, 3), DAY)
+    far = load_range(today=TODAY, last_stored=date(2026, 9, 1))
+    assert far == (date(2026, 10, 11), DAY) and (far[1] - far[0]).days + 1 == 31
+    assert load_range(today=TODAY, last_stored=None) == (date(2026, 11, 8), DAY)
+    # an explicit day or range is taken as given
+    assert (
+        load_range(today=TODAY, day=date(2026, 11, 7), last_stored=date(2026, 9, 1))
+        == (date(2026, 11, 7),) * 2
+    )
+    assert load_range(
+        today=TODAY, date_from=date(2026, 11, 9), date_to=DAY, last_stored=date(2026, 9, 1)
+    ) == (date(2026, 11, 9), DAY)
+
+
 def test_calendar_bounds_current_moscow_date_and_utc_midnight() -> None:
     assert load_range(today=TODAY) == (date(2026, 11, 8), DAY)
     assert load_range(today=TODAY, day=date(2026, 11, 7)) == (date(2026, 11, 7),) * 2
@@ -717,3 +735,155 @@ def test_upgrade_from_main_applies_only_the_spb_migrations_with_role_grants(
     with psycopg.connect(empty_db_url) as owner:
         note = owner.execute("SELECT licence_note FROM ops.source WHERE code = 'spb'").fetchone()
     assert note and "2026-11-11" in note[0] and "Chart close is not official" in note[0]
+
+
+def _bar(day: date, close: float) -> dict[str, Any]:
+    stamp = int(datetime(day.year, day.month, day.day, tzinfo=UTC).timestamp())
+    return {
+        "open": close,
+        "high": close + 1,
+        "low": close - 1,
+        "close": close,
+        "bar_unixtime": stamp,
+    }
+
+
+def test_default_run_reads_from_the_day_after_the_last_stored_bar(
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    source: MockSpb,
+    today_is: Callable[[date], None],
+) -> None:
+    today_is(TODAY)
+    assert _run(settings, db, source, day=date(2026, 11, 5)).status == "succeeded"
+    conn.commit()
+    source.requests.clear()
+    outcome = _run(settings, db, source)  # the worker was down since 5 November
+    assert (outcome.result["from"], outcome.result["to"]) == ("2026-11-06", "2026-11-10")
+    sent = next(r.url.params for r in source.requests if r.url.params.get("symbol") == "MGKL1P1")
+    assert int(sent["from"]) == spb.history_params("MGKL1P1", date(2026, 11, 6), DAY)["from"]
+    assert conn.execute(
+        "SELECT array_agg(trade_date ORDER BY trade_date) AS d FROM md.spb_bond_daily "
+        "WHERE isin=%s",
+        (MGKL,),
+    ).fetchone() == {"d": [date(2026, 11, 5), date(2026, 11, 6), date(2026, 11, 9), DAY]}
+
+
+def test_no_bar_for_any_bond_on_a_weekday_is_partial_but_a_weekend_is_not(
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    source: MockSpb,
+    today_is: Callable[[date], None],
+) -> None:
+    """A changed request parameter would answer ``[]`` for every bond, every day."""
+    today_is(TODAY)
+    for candidate in _candidates():
+        source.chart_payload[candidate.ticker] = []
+    weekday = _run(settings, db, source, day=DAY)
+    assert weekday.status == "partial" and weekday.result["rows"] == 0
+    assert "no bars for any bond in range 2026-11-10..2026-11-10" in _error(conn, weekday)
+    weekend = _run(settings, db, source, date_from=date(2026, 11, 7), date_to=date(2026, 11, 8))
+    assert weekend.status == "succeeded" and weekend.result["rows"] == 0
+    # a weekday inside a longer range counts
+    mixed = _run(settings, db, source, date_from=date(2026, 11, 7), date_to=date(2026, 11, 9))
+    assert mixed.status == "partial"
+
+
+def test_every_admitted_bond_failing_its_chart_is_format_drift(
+    settings: Settings,
+    db: Database,
+    source: MockSpb,
+    monkeypatch: pytest.MonkeyPatch,
+    today_is: Callable[[date], None],
+) -> None:
+    """With a tiny universe one failing chart stays within the skip limit; all of them do not."""
+    today_is(TODAY)
+    original = spb.parse_universe
+    monkeypatch.setattr(spb, "parse_universe", lambda payload: original(payload)[:1])
+    ticker = _candidates()[0].ticker
+    source.chart_payload[ticker] = {"error": "format changed"}
+    with pytest.raises(FormatDriftError, match="charts of all 1 admitted bonds failed validation"):
+        _run(settings, db, source, day=DAY)
+
+
+def _changed_unit(monkeypatch: pytest.MonkeyPatch, ticker: str, unit: str) -> None:
+    original = spb.parse_unit_report
+
+    def patched(*args: Any, **kwargs: Any) -> dict[tuple[str, str], tuple[str, str]]:
+        out = original(*args, **kwargs)
+        key = next(k for k in out if k[0] == ticker)
+        out[key] = (unit, out[key][1])
+        return out
+
+    monkeypatch.setattr(spb, "parse_unit_report", patched)
+
+
+def test_a_changed_unit_never_relabels_stored_bars(
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    source: MockSpb,
+    monkeypatch: pytest.MonkeyPatch,
+    today_is: Callable[[date], None],
+) -> None:
+    """MGKL1P1 is in percent of par in the report of 9 November and in RUB in the next one."""
+    today_is(date(2026, 11, 10))
+    source.report_payload = _bytes("unit-reference-2026-11-09.pdf")
+    first = _run(settings, db, source, date_from=date(2026, 11, 2), date_to=date(2026, 11, 9))
+    assert first.status == "succeeded"
+    conn.commit()
+
+    def bars() -> dict[date, Any]:
+        return {
+            r["trade_date"]: r
+            for r in conn.execute(
+                "SELECT trade_date, price_unit, unit_reference_date, close FROM md.spb_bond_daily "
+                "WHERE isin=%s",
+                (MGKL,),
+            ).fetchall()
+        }
+
+    before = bars()
+    assert {b["price_unit"] for b in before.values()} == {"PCT"}
+    assert {b["unit_reference_date"] for b in before.values()} == {date(2026, 11, 9)}
+
+    # the next morning: the report of 10 November says RUB; the chart also has a bar for a
+    # date never stored (8 November) and for the new date (10 November)
+    today_is(TODAY)
+    source.report_payload = _bytes("unit-reference-2026-11-10.pdf")
+    _changed_unit(monkeypatch, "MGKL1P1", "RUB")
+    source.chart_payload["MGKL1P1"] = [
+        _bar(date(2026, 11, 8), 7.0),
+        _bar(date(2026, 11, 9), 7.48),
+        _bar(DAY, 7.43),
+    ]
+    second = _run(settings, db, source)  # default range: 8..10 November
+    assert (second.result["from"], second.result["to"]) == ("2026-11-08", "2026-11-10")
+    assert second.status == "partial"
+    note = "price unit changed PCT->RUB for MGKL1P1 from 2026-11-10"
+    assert second.result["unit_changes"] == {"MGKL1P1": note}
+    assert note in _error(conn, second)
+    after = bars()
+    for day in before:  # nothing stored before was touched
+        assert after[day] == before[day]
+    assert after[date(2026, 11, 8)]["price_unit"] == "PCT"  # not stored yet: the old unit
+    assert after[date(2026, 11, 8)]["unit_reference_date"] == date(2026, 11, 9)
+    assert after[DAY]["price_unit"] == "RUB" and after[DAY]["unit_reference_date"] == DAY
+    ref = conn.execute(
+        "SELECT price_unit, unit_reference_date FROM ref.spb_bond WHERE isin=%s", (MGKL,)
+    ).fetchone()
+    assert ref == {"price_unit": "RUB", "unit_reference_date": DAY}
+    conn.commit()
+
+    # a historical run over the old range (with a corrected close) keeps the old unit
+    source.chart_payload["MGKL1P1"] = [_bar(date(2026, 11, 6), 9.5), _bar(date(2026, 11, 9), 7.5)]
+    third = _run(settings, db, source, date_from=date(2026, 11, 2), date_to=date(2026, 11, 9))
+    assert third.status == "partial"
+    assert "price unit changed PCT->RUB for MGKL1P1 from 2026-11-10" in _error(conn, third)
+    again = bars()
+    assert again[date(2026, 11, 9)]["close"] == Decimal("7.5")
+    assert {again[d]["price_unit"] for d in again if d <= date(2026, 11, 9)} == {"PCT"}
+    assert again[DAY]["price_unit"] == "RUB"
+    assert again[date(2026, 11, 6)]["close"] == Decimal("9.5")

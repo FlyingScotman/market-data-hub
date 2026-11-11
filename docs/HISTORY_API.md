@@ -178,7 +178,10 @@ code and means a currency amount. The OHLC numbers are kept verbatim, without gu
 units from `RUB` settlement currency or converting them.
 
 Units come from an official report observed at ingestion. `unit_reference_date` names that
-report date; it does **not** prove the unit was historically known for each chart date.
+report date; it does **not** prove the unit was historically known for each chart date (a bar
+dated before it took the unit from that report: an assumption, see [SPB_BONDS.md](SPB_BONDS.md)).
+If a bond's unit changes, stored bars up to the previous report date keep their old unit and
+`unit_reference_date`: filter on both columns, not on the ISIN alone.
 `card_price_unit` retains the instrument card's text; `unit_conflict=true` exposes disagreement
 between that card and the report (observed for XMED1P1: card RUB, report PCT).
 `capture_id` identifies the chart response and `run_id` links the run's card/report captures.
@@ -195,7 +198,8 @@ History discovery includes each stored SPB ISIN in `/v1/history/index`.
 
 Operators load older history from **Jobs → spb_bonds_daily → Run now**: enter both first and
 last date, at most 31 completed calendar dates per request. Both dates empty loads the last
-three completed dates. Use successive ranges for longer history; the normal requested-runs
+three completed dates (or, after a longer outage of the worker, from the day after the newest
+stored bar, at most 31 dates). Use successive ranges for longer history; the normal requested-runs
 queue shows progress and permits cancelling a queued run. The event dataset deliberately
 does not use automatic history-head loading or invent expected exchange sessions.
 Source validation, unit evidence and scheduling: [SPB Russian bond prices](SPB_BONDS.md).

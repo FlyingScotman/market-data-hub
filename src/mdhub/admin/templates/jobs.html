@@ -71,7 +71,7 @@
           <input type="date" name="date_from" max="{{ spb_last_date }}" aria-label="SPB first date" title="First date (inclusive, MSK)">
           <input type="date" name="date_to" max="{{ spb_last_date }}" aria-label="SPB last date" title="Last date (inclusive, MSK)">
           <button type="submit" class="link">Run now</button>
-          <span class="small">SPB chart OHLC, not official close. At most 31 completed calendar dates; both dates empty: last 3 days. Use successive ranges for older history.</span>
+          <span class="small">SPB chart OHLC, not official close. At most 31 completed calendar dates; both dates empty: the last 3 days (or since the newest stored bar, at most 31). Use successive ranges for older history.</span>
         </form>{% elif j.h.job in registered %}
         <form method="post" action="/jobs/{{ j.h.job }}/run" data-confirm="Ask the worker to run {{ j.h.job }} now with default parameters?">
           <input type="hidden" name="csrf_token" value="{{ csrf }}">
