@@ -252,13 +252,23 @@ files on the GitHub Release:
 1. **The owner pushes the tag** `vX.Y.Z` (`git tag vX.Y.Z && git push origin vX.Y.Z`).
 2. **Run workflow:** Actions -> *release* -> *Run workflow*, *Use workflow from:* `main`, field `version`
    = `X.Y.Z` or `X.Y.Z{a|b|rc}N`. The owner starts it, or a session does at the owner's direct request.
-   The job `check` refuses, in seconds and before the tests, a branch other than `main`, a malformed
-   version, a version that is not greater than the latest tag `v*` (compared as versions, not as text) and a
-   version for which the tag or a release exists. The jobs then run as for a tag (`ci`, `build`, `sign`,
-   `verify`, `publish`), all on the commit that was current when the run started. The tag `vX.Y.Z` is made
-   **by `publish`, on that commit, after `sign` and `verify` succeeded** (a release that fails earlier leaves
-   no tag), and `publish` checks that the tag points to the built commit. What this path needs in the
-   repository settings: "The protected environment `release`" below.
+   The title of the run names the tag and the commit. The job `check` refuses, in seconds and before the
+   tests, a branch other than `main`, a malformed version, a version that is not greater than the latest
+   tag `v*` (compared as versions, not as text), a version that is **not exactly one step after it** (patch,
+   minor or major: `0.6.2` -> `0.6.3`, `0.7.0` or `1.0.0`, or an `a|b|rc` pre-release of those; a server
+   installs only newer versions, so a version that skips ahead cannot be taken back) and a version for
+   which the tag or a release exists. It writes a summary on the run page (version, commit, previous tag,
+   the commits since it); the owner reads it, with the title, before approving `sign`. The jobs then run as
+   for a tag (`ci`, `build`, `sign`, `verify`, `publish`), all on the commit that was current when the run
+   started. The tag `vX.Y.Z` is made **by `publish`, on that commit, after `sign` and `verify` succeeded**:
+   `publish` first checks that no release tag appeared since `check`, then creates the tag with one call that
+   fails if the tag exists, reads it back, and only then creates the Release for that tag. A release that
+   fails earlier leaves no tag, and no Release is ever visible to the updaters before the tag is known
+   to be on the built commit. What this path needs in the repository settings: "The protected environment
+   `release`" and "Tag rules for `v*`" below. All release runs share one concurrency group, so there is
+   one release at a time; GitHub keeps only one waiting run per group and replaces it when a third run
+   arrives, and a run that waits for the approval of `sign` holds the group: reject it (or cancel the run)
+   before you start the next release.
 
 | file | content |
 |---|---|
@@ -353,23 +363,47 @@ gh secret set MINISIGN_SECRET_KEY --env release < mdhub-release.key
 gh secret set MINISIGN_PASSWORD --env release          # prompts; paste the key password
 ```
 
-Also add a tag ruleset (**Settings -> Rules -> Rulesets**, target tags `v*`) so that only admins
-can create, update or delete release tags. The Run workflow path makes the tag with the workflow's own
-token, which such a ruleset rejects: in the ruleset's **Bypass list** add **GitHub Actions** (*Add
-bypass*), otherwise the release fails at its last step, after signing, and no tag or release is made.
-This is an action of the owner in Settings -> Rules -> Rulesets; pushing a tag by an admin keeps working
-either way.
-
 Only the `sign` job reads the secrets. It downloads the build artifact, installs `minisign` from
 Ubuntu and runs `minisign -S`. It has no checkout, no Python, no project dependencies and no
 token permissions. `verify` then checks the result against the pinned keys of the tagged
-commit, and only `publish` can write: it creates the Release and, on the Run workflow path, the tag. The
+commit, and only `publish` can write: it creates the tag (Run workflow path) and the Release. The
 workflow pins every action to a commit SHA, and the `version` field is never part of a script (only an
-environment value, checked by `check`).
+environment value, checked by `check`; it is shown in the run title, which GitHub does not execute).
+
+### Tag rules for `v*` (an action of the owner in the GitHub interface, once)
+
+The Run workflow path makes the tag with the workflow's own token. Tags of releases must be creatable by
+that token and by nobody else, and must never be moved or deleted, because a server compares versions
+and a moved tag would change what a version means. That takes **two** rulesets, not one with a bypass:
+
+1. **Settings -> Rules -> Rulesets -> New ruleset -> New tag ruleset.** Name `release tags: creation`.
+   *Enforcement status*: Active. *Bypass list* -> *Add bypass*: **GitHub Actions** and the role
+   **Repository admin** (the admin keeps the right to push a release tag by hand). *Target tags* -> *Add
+   target* -> *Include by pattern* -> `v*`. *Rules*: tick **Restrict creations**. Create.
+2. **New ruleset -> New tag ruleset.** Name `release tags: no change`. *Enforcement status*: Active.
+   **Leave the Bypass list empty** (in particular, no GitHub Actions). *Target tags*: `v*` as above. *Rules*: tick
+   **Restrict updates** and **Restrict deletions**. Create.
+
+Why two: if GitHub Actions could bypass one ruleset that also forbids updates and deletions, every workflow
+with `contents: write` could move or delete the tag of an existing release. With the second ruleset
+nobody can, the workflow included. To correct a wrong tag, the owner sets ruleset 2 to *Disabled*
+for the moment (Settings -> Rules -> Rulesets -> the ruleset -> *Enforcement status*), fixes the tag and
+sets it to *Active* again. With ruleset 1 in place but without GitHub Actions on its bypass list, the Run
+workflow path fails in `publish`, after signing, and makes no tag and no Release.
+
+**What protects the signature, and what does not.** All sessions work under the owner's GitHub account, and
+GitHub cannot tell a session from the owner. A branch rule or a "second pair of eyes" setting cannot make a
+session different from the owner. The one real guarantee that the owner approves a signature is the
+environment `release` with **Required reviewers**, together with this: the credentials that sessions use
+must not be able to approve a deployment (the Actions API call "review pending deployments for a
+workflow run" and the *Review deployments* button). Check what the sessions' tokens may do; if they could approve, the
+approval is not an independent check and the owner must be the only one who ever clicks it. Do **not**
+switch on *Prevent self-review* on the environment: the person who starts a release and the approver are
+the same account, so every release would stay unapprovable.
 
 Plan limits: required reviewers on a **private** repository need a plan that offers them
 (GitHub Enterprise at the time of writing). Without them, keep the environment with its tag rule
-and the tag ruleset, or sign offline:
+and the tag rulesets, or sign offline:
 
 ```bash
 gh run download <run-id> -n bundle -D dist           # from the release run, after `build`

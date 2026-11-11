@@ -54,8 +54,8 @@ If the server runs something else, write the version down and tell the owner bef
 All `docker compose` commands below must use **exactly the Compose files with which the running
 services were started**. A site may have an extra file next to `docker-compose.yml` (the production
 layout has one, see [DOMAIN_DEPLOY.md](DOMAIN_DEPLOY.md)). It carries, among other things, the network
-settings, the console's published port and `MDHUB_ADMIN_TRUSTED_PROXIES`. A command that `up` or `run` without it
-computes a different configuration: Compose may then recreate the network `mdhub_default` and with it
+settings, the console's published port and `MDHUB_ADMIN_TRUSTED_PROXIES`. A command that runs `up` or `run`
+without it computes a different configuration: Compose may then recreate the network `mdhub_default` and with it
 stop and restart everything attached to it, and the console may no longer trust the web proxy in front
 of it (its client-IP checks and allow-list break, `MDHUB_ADMIN_TRUSTED_PROXIES`). Do not guess from `.env`: the
 `MDHUB_UPDATE_COMPOSE_OVERRIDE` setting is normally written in the extra file itself, not in `.env`. Ask the

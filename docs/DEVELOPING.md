@@ -390,10 +390,15 @@ workflow behind both:
 - the owner tags `vX.Y.Z` on `main` and pushes the tag; or
 - the owner, **or a session at the owner's direct request**, runs Actions -> release -> *Run workflow*
   on branch `main` with the field `version` = `X.Y.Z` (or `X.Y.Z{a|b|rc}N`). The workflow refuses any
-  other branch, a malformed version, a version that is not greater than the latest tag `v*`, and a
-  version whose tag or release exists. It builds the commit that was current when the run started and
-  makes the tag `v<version>` itself on that commit, but only after the signature was made and verified,
-  so a release that fails earlier leaves no tag.
+  other branch, a malformed version, a version that is not greater than the latest tag `v*`, a version
+  that is not exactly **one step after it** (patch, minor or major: `0.6.2` -> `0.6.3`, `0.7.0`,
+  `1.0.0`, or an `a|b|rc` of those; `mdhub release check-next`), and a version whose tag or release
+  exists. It builds the commit that was current when the run started and makes the tag `v<version>`
+  itself on that commit, but only after the signature was made and verified, and before the GitHub
+  Release is created, so a release that fails earlier leaves no tag and none is visible before the tag is
+  known to be on the built commit. The run title and the summary of the job `check` (version, commit,
+  previous tag, the commits since it) are what the owner reads before approving. One release runs at a
+  time (the concurrency group `release`).
 
 In both cases the **owner approves the `sign` job** in Actions (environment `release`). **Installing on
 the server and everything on production is for the owner**, or for whoever the owner gave access to, through

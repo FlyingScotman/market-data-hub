@@ -31,13 +31,16 @@ from mdhub.db.migrate import discover_migrations
 from mdhub.release import (
     KEYS_DIR_ENV,
     ReleaseError,
+    allowed_next_versions,
     build_manifest,
+    check_next_version,
     default_keys_dir,
     default_signature_path,
     load_pinned_keys,
     parse_manifest,
     parse_public_key,
     parse_signature,
+    release_tags,
     verify_archive,
     verify_signature,
     version_key,
@@ -373,6 +376,51 @@ def test_version_key_order() -> None:
             version_key(bad)
 
 
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "0.7.0\n",  # a `$` would accept a trailing newline
+        "0.7.0 ",
+        " 0.7.0",
+        "0.7.0\r\n",
+        "0.7.0\n0.7.1",
+        "\u0660.\u0667.\u0660",  # Arabic-Indic digits: int() reads them, a release cannot have them
+        "0.7.0rc",
+        "0.7.0rc01",
+        "",
+    ],
+)
+def test_version_key_is_strict(bad: str) -> None:
+    with pytest.raises(ReleaseError):
+        version_key(bad)
+
+
+def test_allowed_next_versions_and_check() -> None:
+    assert allowed_next_versions("0.6.2") == ("0.6.3", "0.7.0", "1.0.0")
+    assert allowed_next_versions("1.9.9") == ("1.9.10", "1.10.0", "2.0.0")
+    # after a pre-release the final of the same X.Y.Z is allowed too
+    assert allowed_next_versions("0.7.0rc1") == ("0.7.0", "0.7.1", "0.8.0", "1.0.0")
+    for new in ("0.6.3", "0.7.0", "1.0.0", "0.6.3a1", "0.7.0b2", "1.0.0rc1"):
+        check_next_version(new, "0.6.2")
+    for new in ("0.7.0rc2", "0.7.0", "0.7.1", "0.8.0"):
+        check_next_version(new, "0.7.0rc1")
+    check_next_version("3.4.5", None)  # no earlier tag: any well-formed version
+    for new in ("0.6.4", "0.8.0", "0.9.0", "2.0.0", "1.1.0"):
+        with pytest.raises(
+            ReleaseError, match=r"not the next one.*allowed are 0\.6\.3, 0\.7\.0, 1\.0\.0"
+        ):
+            check_next_version(new, "0.6.2")
+    for new in ("0.6.2", "0.6.1", "0.6.2rc1", "0.5.0"):
+        with pytest.raises(ReleaseError, match=r"not greater than the latest tag v0\.6\.2"):
+            check_next_version(new, "0.6.2")
+    with pytest.raises(ReleaseError):
+        check_next_version("0.7.0\n", "0.6.2")
+    with pytest.raises(ReleaseError):
+        check_next_version("0.7.0rc1", "0.7.0rc1")
+    tags = ["v0.6.2", "v0.10.0", "v0.6.10", "latest", "v1", "v0.7.0rc1", "x0.1.0", "v0.7.0\n"]
+    assert [t for _, t in release_tags(tags)] == ["v0.6.2", "v0.6.10", "v0.7.0rc1", "v0.10.0"]
+
+
 # -------------------------------------------------------------------------------- key files
 
 
@@ -591,6 +639,13 @@ def test_ci_workflow() -> None:
     triggers = wf[True]  # YAML 1.1 reads the key `on` as True
     assert {"push", "pull_request", "workflow_call"} <= set(triggers)
     assert wf["permissions"] == {"contents": "read"}
+    # a call from release.yml gets a group of its own (the run id), so that no other run replaces
+    # or cancels the tests of a release; push and pull_request keep the plain group
+    call = triggers["workflow_call"]["inputs"]["isolated"]
+    assert call["type"] == "boolean" and call["default"] is False
+    group = wf["concurrency"]["group"]
+    assert "inputs.isolated" in group and "github.run_id" in group
+    assert group.startswith("ci-${{ github.workflow }}-${{ github.ref }}")
     text = (WORKFLOWS / "ci.yml").read_text()
     for needle in (
         "uv sync --frozen",
@@ -641,44 +696,409 @@ def test_release_workflow() -> None:
 
 
 def test_release_workflow_run_workflow_path() -> None:
-    """ "Run workflow" (a session may start it): main only, a version that is new, the tag made by
-    the release after sign and verify, and no input text in any script."""
+    """ "Run workflow" (a session may start it): main only, a version that is the next one, the tag
+    made by the release after sign and verify, no input text in any script, nothing that can cancel
+    a release."""
     text = (WORKFLOWS / "release.yml").read_text()
     wf = _workflow("release.yml")
     jobs = wf["jobs"]
-    # the version input reaches the scripts only as an environment value, never in script text
+    # the version input reaches the scripts only as an environment value, never in script text:
+    # not in a `run`, not in a `with`, only in run-name (display), env and the job-level values
     for name, job in jobs.items():
         for step in job.get("steps", []):
             run = step.get("run", "")
             assert "${{" not in run, (name, step.get("name"))
             assert "git push" not in run, (name, step.get("name"))  # a local tag is never pushed
-    assert "VERSION: ${{ inputs.version }}" in text
-    # check: only on a dispatch, only main, a strict new version, no tag and no release yet
+            assert "inputs." not in str(step.get("with", "")), (name, step.get("name"))
+        assert "inputs." not in str(job.get("with", {})), name
+    assert "inputs.version" in wf["run-name"] and "github.sha" in wf["run-name"]
+    assert "github.ref_name" in wf["run-name"]
+    assert "inputs.version" in wf["env"]["RELEASE_TAG"]
+    # one release at a time, none cancelled by another run; ci cannot be replaced either
+    assert wf["concurrency"] == {"group": "release", "cancel-in-progress": False}
+    assert jobs["ci"]["with"] == {"isolated": True}
+    # check: the summary for the approval on both ways; main only, the next version, no tag and no
+    # release yet on Run workflow only
     check = jobs["check"]
     assert check["permissions"] == {"contents": "read"}
-    check_text = "\n".join(step.get("run", "") for step in check["steps"])
-    for needle in (
-        "refs/heads/main",
-        "version_key",
-        "is not greater than the latest tag",
-        "release not found",
-        "exists already",
-    ):
-        assert needle in check_text, needle
-    assert all("workflow_dispatch" in str(step.get("if", "")) for step in check["steps"]), (
-        "check does nothing on a pushed tag"
-    )
+    steps = {step["name"]: step for step in check["steps"] if "name" in step}
+    main_only = steps["Run workflow releases main only"]
+    assert "workflow_dispatch" in main_only["if"] and "refs/heads/main" in main_only["run"]
+    version_step = steps["version is the next one after the latest tag; summary for the approval"]
+    assert "if" not in version_step  # the summary is written for a pushed tag too
+    assert 'check-next --version "${RELEASE_TAG#v}" "$enforce"' in version_step["run"]
+    assert '--summary "$GITHUB_STEP_SUMMARY"' in version_step["run"]
+    assert "--enforce" in version_step["run"] and "--no-enforce" in version_step["run"]
+    exists = steps["tag and release do not exist yet"]
+    assert "workflow_dispatch" in exists["if"]
+    for needle in ("release not found", "exists already"):
+        assert needle in exists["run"], needle
+    tags = steps["the release tags seen by this check"]
+    assert "workflow_dispatch" in tags["if"] and tags["id"] == "tags"
+    assert check["outputs"] == {"tags": "${{ steps.tags.outputs.tags }}"}
     # build: the commit gets the tag v<version> in this checkout only, so that hatch-vcs,
     # make_bundle.sh and .git_archival.txt see what a tag build sees; it is never pushed
     build_text = "\n".join(step.get("run", "") for step in jobs["build"]["steps"])
     assert 'git tag "$RELEASE_TAG"' in build_text
     assert "ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || '' }}" in text
-    # the tag is made by publish only, on the built commit, after verify (which needs sign)
-    publish_text = "\n".join(step.get("run", "") for step in jobs["publish"]["steps"])
-    assert '--target "$GITHUB_SHA"' in publish_text and "--verify-tag" in publish_text
-    assert "git/ref/tags/$RELEASE_TAG" in publish_text
-    assert [n for n, j in jobs.items() if "--target" in str(j)] == ["publish"]
+    # the tag is made by publish only, on the built commit, after verify (which needs sign) and
+    # before any release exists; the release then only uses the existing tag
+    publish = jobs["publish"]
+    assert set(publish["needs"]) == {"check", "build", "verify"}
+    assert publish["env"]["TAGS_AT_CHECK"] == "${{ needs.check.outputs.tags }}"
+    publish_text = "\n".join(step.get("run", "") for step in publish["steps"])
+    assert '-f ref="refs/tags/$RELEASE_TAG" -f sha="$GITHUB_SHA"' in publish_text
+    assert "--verify-tag" in publish_text and "--target" not in publish_text
+    assert publish_text.index("git/refs") < publish_text.index("gh release create")
+    assert "gh release delete" not in publish_text and "git/refs/tags" not in publish_text
+    assert [n for n, j in jobs.items() if "git/refs" in str(j)] == ["publish"]
     assert "sign" in jobs["verify"]["needs"] and "verify" in jobs["publish"]["needs"]
+
+
+# ----------------------------------------------------- the scripts of the steps, run with a fake gh
+
+
+def _step_script(job: str, name: str) -> str:
+    for step in _workflow("release.yml")["jobs"][job]["steps"]:
+        if step.get("name") == name:
+            return str(step["run"])
+    raise AssertionError(f"no step {name!r} in {job}")
+
+
+FAKE_GH = r"""#!/usr/bin/env bash
+# a stand-in for `gh`: state in $FAKE_GH_DIR
+# (tags: "<name> <sha>" per line, releases: one tag per line)
+set -u
+d="$FAKE_GH_DIR"
+echo "gh $*" >>"$d/calls.log"
+if [[ "$1" == "release" && "$2" == "view" ]]; then
+  if [[ -n "${FAKE_GH_VIEW_ERROR:-}" ]]; then echo "$FAKE_GH_VIEW_ERROR" >&2; exit 1; fi
+  if grep -qx "$3" "$d/releases"; then echo "title: $3"; exit 0; fi
+  echo "release not found" >&2; exit 1
+fi
+if [[ "$1" == "release" && "$2" == "create" ]]; then
+  tag="$3"
+  case " $* " in
+    *" --verify-tag "*) ;;
+    *) echo "release create without --verify-tag" >&2; exit 1;;
+  esac
+  if ! grep -q "^$tag " "$d/tags"; then echo "tag $tag does not exist" >&2; exit 1; fi
+  echo "$tag" >>"$d/releases"; exit 0
+fi
+if [[ "$1" == "api" ]]; then
+  shift
+  method=GET; paginate=0; jq=""; ref=""; sha=""; path=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --method) method="$2"; shift 2;;
+      --paginate) paginate=1; shift;;
+      --jq) jq="$2"; shift 2;;
+      -f) case "$2" in ref=*) ref="${2#ref=}";; sha=*) sha="${2#sha=}";; esac; shift 2;;
+      *) path="$1"; shift;;
+    esac
+  done
+  case "$path" in
+    */git/matching-refs/tags/v)
+      [[ -n "${FAKE_GH_LIST_ERROR:-}" ]] && exit 1
+      while read -r name _; do
+        [[ "$name" == v* ]] && echo "refs/tags/$name"
+      done <"$d/tags"
+      exit 0;;
+    */git/ref/tags/*)
+      name="${path##*/git/ref/tags/}"
+      line="$(grep "^$name " "$d/tags" || true)"
+      if [[ -z "$line" ]]; then echo "gh: Not Found (HTTP 404)" >&2; exit 1; fi
+      echo "${line#* }"; exit 0;;
+    */git/refs)
+      name="${ref#refs/tags/}"
+      if grep -q "^$name " "$d/tags"; then
+        echo "gh: Reference already exists (HTTP 422)" >&2; exit 1
+      fi
+      echo "$name ${FAKE_GH_TAG_AT:-$sha}" >>"$d/tags"; echo '{}'; exit 0;;
+  esac
+fi
+echo "unexpected gh call: $*" >&2; exit 2
+"""
+
+FAKE_UV = r"""#!/usr/bin/env bash
+# uv sync: nothing; uv run --frozen mdhub ...: this checkout's mdhub
+if [[ "$1" == "sync" ]]; then exit 0; fi
+if [[ "$1" == "run" ]]; then
+  shift; [[ "$1" == "--frozen" ]] && shift; shift
+  exec "$MDHUB_PYTHON" -m mdhub.cli "$@"
+fi
+echo "unexpected uv call: $*" >&2; exit 2
+"""
+
+SHA = "0123456789abcdef0123456789abcdef01234567"
+OTHER_SHA = "89abcdef0123456789abcdef0123456789abcdef"
+
+
+@dataclass
+class StepEnv:
+    root: Path
+    bin: Path
+    state: Path
+    repo: Path
+
+    def run(
+        self, script: str, *, cwd: Path | None = None, **env: str
+    ) -> subprocess.CompletedProcess[str]:
+        file = self.root / "step.sh"
+        file.write_text(script)
+        base = {
+            "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}",
+            "HOME": str(self.root),
+            "GITHUB_REPOSITORY": "o/r",
+            "GITHUB_SHA": SHA,
+            "GH_TOKEN": "x",
+            "FAKE_GH_DIR": str(self.state),
+            "MDHUB_PYTHON": sys.executable,
+            "GITHUB_STEP_SUMMARY": str(self.root / "summary.md"),
+            "GITHUB_OUTPUT": str(self.root / "output.txt"),
+        }
+        return subprocess.run(
+            ["bash", "-e", str(file)],  # what the runner does for a step without `shell:`
+            cwd=cwd or self.repo,
+            env={**base, **env},
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+
+    def tags(self) -> list[str]:
+        return [line.split()[0] for line in (self.state / "tags").read_text().splitlines()]
+
+    def calls(self) -> list[str]:
+        file = self.state / "calls.log"
+        return file.read_text().splitlines() if file.exists() else []
+
+
+@pytest.fixture
+def step_env(tmp_path: Path) -> StepEnv:
+    bin_dir, state, repo = tmp_path / "bin", tmp_path / "state", tmp_path / "repo"
+    for d in (bin_dir, state, repo):
+        d.mkdir()
+    for name, body in (("gh", FAKE_GH), ("uv", FAKE_UV)):
+        (bin_dir / name).write_text(body)
+        (bin_dir / name).chmod(0o755)
+    (state / "tags").write_text("")
+    (state / "releases").write_text("")
+
+    def git(*args: str) -> None:
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@example.org", *args],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+            env={**os.environ, "GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_SYSTEM": os.devnull},
+        )
+
+    git("init", "-q", "-b", "main")
+    for i, tag in enumerate(["v0.5.0", "v0.6.0", "v0.6.2"]):
+        git("commit", "-q", "--allow-empty", "-m", f"change `{i}` before {tag}")
+        git("tag", tag)
+    git("tag", "not-a-release")
+    for subject in ("Fix a thing", "Add `code` thing"):
+        git("commit", "-q", "--allow-empty", "-m", subject)
+    for tag in ("v0.5.0", "v0.6.0", "v0.6.2"):
+        with (state / "tags").open("a") as out:
+            out.write(f"{tag} {OTHER_SHA}\n")
+    return StepEnv(tmp_path, bin_dir, state, repo)
+
+
+CHECK_VERSION = "version is the next one after the latest tag; summary for the approval"
+
+
+def test_step_main_only(step_env: StepEnv) -> None:
+    script = _step_script("check", "Run workflow releases main only")
+    assert step_env.run(script, GITHUB_REF="refs/heads/main").returncode == 0
+    for ref in ("refs/heads/feature", "refs/tags/v0.7.0", "refs/pull/1/merge"):
+        refused = step_env.run(script, GITHUB_REF=ref)
+        assert refused.returncode == 1 and "releases main only" in refused.stdout
+
+
+@pytest.mark.parametrize(
+    ("version", "ok"),
+    [
+        ("0.6.3", True),
+        ("0.7.0", True),
+        ("1.0.0", True),
+        ("0.6.3rc1", True),
+        ("0.7.0a1", True),
+        ("0.9.0", False),  # skips ahead: a server would never see 0.6.3 or 0.7.0 again
+        ("0.6.4", False),
+        ("1.1.0", False),
+        ("0.6.2", False),
+        ("0.6.1", False),
+        ("0.7", False),
+        ("v0.7.0", False),
+        ("0.7.0\n", False),
+    ],
+)
+def test_step_check_next_version(step_env: StepEnv, version: str, ok: bool) -> None:
+    script = _step_script("check", CHECK_VERSION)
+    out = step_env.run(
+        script,
+        GITHUB_EVENT_NAME="workflow_dispatch",
+        GITHUB_ACTIONS="true",
+        RELEASE_TAG=f"v{version}",
+    )
+    file = step_env.root / "summary.md"
+    summary = file.read_text() if file.exists() else ""
+    head = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=step_env.repo, capture_output=True, text=True, check=True
+    ).stdout.strip()
+    if ok:
+        assert out.returncode == 0, out.stderr
+        assert f"## Release v{version}" in summary
+        assert f"- commit: `{head}`" in summary
+        assert "- previous tag: `v0.6.2`" in summary
+        assert "- version check: ok - the next one after v0.6.2" in summary
+        # the commits since the previous tag, one line each, no backquote of a subject survives
+        assert "### Commits since v0.6.2: 2" in summary
+        assert "Fix a thing" in summary and "Add 'code' thing" in summary
+    else:
+        assert out.returncode == 1 and "::error::" in out.stderr, (out.stdout, out.stderr)
+        assert "REFUSED" in summary or "bad release version" in out.stderr
+
+
+def test_step_check_pushed_tag_is_not_enforced(step_env: StepEnv) -> None:
+    """A pushed tag is the owner's act: the summary says that it is odd, the run goes on."""
+    subprocess.run(["git", "tag", "v0.9.0"], cwd=step_env.repo, check=True)
+    out = step_env.run(
+        _step_script("check", CHECK_VERSION),
+        GITHUB_EVENT_NAME="push",
+        RELEASE_TAG="v0.9.0",
+    )
+    assert out.returncode == 0, out.stderr
+    summary = (step_env.root / "summary.md").read_text()
+    assert "## Release v0.9.0" in summary and "- previous tag: `v0.6.2`" in summary
+    assert "**REFUSED** - version 0.9.0 is not the next one after the latest tag v0.6.2" in summary
+    # a malformed tag fails even there
+    bad = step_env.run(
+        _step_script("check", CHECK_VERSION), GITHUB_EVENT_NAME="push", RELEASE_TAG="vnext"
+    )
+    assert bad.returncode == 1
+
+
+def test_step_tag_and_release_do_not_exist(step_env: StepEnv) -> None:
+    script = _step_script("check", "tag and release do not exist yet")
+    ok = step_env.run(script, RELEASE_TAG="v0.6.3")
+    assert ok.returncode == 0, ok.stderr
+    subprocess.run(["git", "tag", "v0.6.3"], cwd=step_env.repo, check=True)
+    tag = step_env.run(script, RELEASE_TAG="v0.6.3")
+    assert tag.returncode == 1 and "the tag v0.6.3 exists already" in tag.stdout
+    (step_env.state / "releases").write_text("v0.7.0\n")
+    release = step_env.run(script, RELEASE_TAG="v0.7.0")
+    assert release.returncode == 1 and "a release v0.7.0 exists already" in release.stdout
+    unknown = step_env.run(script, RELEASE_TAG="v0.7.1", FAKE_GH_VIEW_ERROR="HTTP 502 bad gateway")
+    assert unknown.returncode == 1 and "could not tell whether the release exists" in unknown.stdout
+
+
+def _tags_digest(step_env: StepEnv) -> str:
+    out = step_env.run(_step_script("check", "the release tags seen by this check"))
+    assert out.returncode == 0, out.stderr
+    line = (step_env.root / "output.txt").read_text().splitlines()[-1]
+    assert line.startswith("tags=") and len(line) == len("tags=") + 64
+    return line[len("tags=") :]
+
+
+def _publish(step_env: StepEnv, **env: str) -> subprocess.CompletedProcess[str]:
+    base = {
+        "GITHUB_EVENT_NAME": "workflow_dispatch",
+        "RELEASE_TAG": "v0.7.0",
+        "VERSION": "0.7.0",
+    }
+    return step_env.run(
+        _step_script("publish", "tag on the built commit, then gh release create"),
+        **{**base, **env},
+    )
+
+
+def test_step_publish_makes_the_tag_then_the_release(step_env: StepEnv) -> None:
+    digest = _tags_digest(step_env)
+    out = _publish(step_env, TAGS_AT_CHECK=digest)
+    assert out.returncode == 0, out.stderr
+    calls = step_env.calls()
+    post = next(i for i, c in enumerate(calls) if "--method POST" in c)
+    create = next(i for i, c in enumerate(calls) if c.startswith("gh release create"))
+    assert post < create  # the tag exists, and was read back, before any release
+    assert "-f ref=refs/tags/v0.7.0 -f sha=" + SHA in calls[post]
+    assert "--verify-tag" in calls[create] and "--prerelease" not in calls[create]
+    assert "--target" not in calls[create]
+    assert f"v0.7.0 {SHA}" in (step_env.state / "tags").read_text().splitlines()
+    assert (step_env.state / "releases").read_text().split() == ["v0.7.0"]
+    # a pre-release is marked (a later run: its check sees the tag the first one made)
+    subprocess.run(["git", "tag", "v0.7.0"], cwd=step_env.repo, check=True)
+    pre = _publish(
+        step_env,
+        TAGS_AT_CHECK=_tags_digest(step_env),
+        RELEASE_TAG="v1.0.0rc1",
+        VERSION="1.0.0rc1",
+    )
+    assert pre.returncode == 0, pre.stderr
+    assert "--prerelease" in [c for c in step_env.calls() if c.startswith("gh release create")][-1]
+
+
+def test_step_publish_refuses_when_the_tags_changed(step_env: StepEnv) -> None:
+    digest = _tags_digest(step_env)
+    with (step_env.state / "tags").open("a") as out:
+        out.write(f"v0.6.3 {OTHER_SHA}\n")  # somebody tagged while the release ran
+    out = _publish(step_env, TAGS_AT_CHECK=digest)
+    assert out.returncode == 1 and "release tags changed" in out.stdout
+    assert not [c for c in step_env.calls() if "POST" in c or "release create" in c]
+    assert "v0.7.0" not in step_env.tags()
+    # no digest from the check, a listing that fails: also nothing is published
+    assert _publish(step_env, TAGS_AT_CHECK="").returncode == 1
+    failing = _publish(step_env, TAGS_AT_CHECK=digest, FAKE_GH_LIST_ERROR="1")
+    assert failing.returncode == 1
+    assert not [c for c in step_env.calls() if "POST" in c or "release create" in c]
+
+
+def test_step_publish_tag_elsewhere_is_never_released(step_env: StepEnv) -> None:
+    digest = _tags_digest(step_env)
+    with (step_env.state / "tags").open("a") as out:
+        out.write(f"v0.7.0 {OTHER_SHA}\n")  # the tag exists on another commit
+    out = _publish(step_env, TAGS_AT_CHECK=digest)
+    assert out.returncode == 1 and "not to the built commit" in out.stdout
+    assert not [c for c in step_env.calls() if "release create" in c or "POST" in c]
+    assert (step_env.state / "releases").read_text() == ""
+
+
+def test_step_publish_tag_created_on_another_commit_is_not_released(step_env: StepEnv) -> None:
+    """The read-back is the proof: a tag that did not land on the built commit stops the run
+    before a release exists (the workflow cannot delete a tag: the rulesets forbid it)."""
+    digest = _tags_digest(step_env)
+    out = _publish(step_env, TAGS_AT_CHECK=digest, FAKE_GH_TAG_AT=OTHER_SHA)
+    assert out.returncode == 1 and "not to the built commit" in out.stdout
+    assert not [c for c in step_env.calls() if "release create" in c]
+    assert (step_env.state / "releases").read_text() == ""
+
+
+def test_step_publish_rerun_after_the_tag_was_made(step_env: StepEnv) -> None:
+    """A re-run of a publish that made the tag and failed before the release: the tag is already on
+    the built commit, so the release is created for it (the tag set differs from the check's)."""
+    digest = _tags_digest(step_env)
+    with (step_env.state / "tags").open("a") as out:
+        out.write(f"v0.7.0 {SHA}\n")
+    out = _publish(step_env, TAGS_AT_CHECK=digest)
+    assert out.returncode == 0, out.stderr
+    assert not [c for c in step_env.calls() if "POST" in c]
+    assert (step_env.state / "releases").read_text().split() == ["v0.7.0"]
+
+
+def test_step_publish_pushed_tag_path(step_env: StepEnv) -> None:
+    """A pushed tag: no tag is made, nothing about the tags is compared; the release uses it."""
+    with (step_env.state / "tags").open("a") as out:
+        out.write(f"v0.7.0 {SHA}\n")
+    out2 = _publish(step_env, GITHUB_EVENT_NAME="push", TAGS_AT_CHECK="")
+    assert out2.returncode == 0, out2.stderr
+    assert [c for c in step_env.calls() if not c.startswith("gh release create")] == []
+    # no tag at all: gh release create --verify-tag refuses
+    (step_env.state / "tags").write_text("")
+    missing = _publish(step_env, GITHUB_EVENT_NAME="push", RELEASE_TAG="v0.8.0", VERSION="0.8.0")
+    assert missing.returncode != 0 and "does not exist" in missing.stderr
 
 
 def test_deploy_readme_documents_release_keys() -> None:
