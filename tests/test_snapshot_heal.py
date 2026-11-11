@@ -19,6 +19,7 @@ import mdhub.quality.backfill as backfill
 import mdhub.quality.history_load as history_load
 from mdhub.config import Settings, in_clock_window, parse_clock_window
 from mdhub.core.bizday import DbCalendar
+from mdhub.core.errors import NOT_CONFIGURED, SourceNotConfigured
 from mdhub.core.timeutil import MSK
 from mdhub.core.upsert import UpsertResult
 from mdhub.datasets import (
@@ -72,13 +73,20 @@ def fixed_clock(monkeypatch: pytest.MonkeyPatch) -> list[datetime]:
     """The job's clock (night by default) and no real pause between cuts."""
     clock = [NIGHT.astimezone(UTC)]
     monkeypatch.setattr(heal, "_now", lambda: clock[0])
+    monkeypatch.setattr(backfill, "_now", lambda: clock[0])
     monkeypatch.setattr(heal, "_sleep", lambda _s: None)
     return clock
 
 
 def _heal(settings: Settings, db: Database, **params: Any) -> JobOutcome:
     # the history load of new datasets is tested at the end of this file
-    params = {"date_from": FROM.isoformat(), "min_bond_rows": 1, "history": False, **params}
+    params = {
+        "date_from": FROM.isoformat(),
+        "min_bond_rows": 1,
+        "history": False,
+        "history_only": [],  # no dataset of the test database is looked at (previews: their tests)
+        **params,
+    }
     # the database calendar, as in production (it counts the Saturday 2026-10-17 of the seed as a
     # business day: a working weekend day)
     return run_job("snapshot_heal", params, settings=settings, db=db, calendar=DbCalendar(db))
@@ -608,9 +616,30 @@ def test_the_job_is_scheduled_and_its_settings_have_safe_defaults(settings: Sett
     (rule,) = RULES["snapshot_heal"]
     assert rule.cron == "*/30 * * * *" and rule.lock_wait_s == 0 and not rule.catch_up
     assert settings.snapshot_heal == "repair"
+    # the history load of new datasets is OFF until the owner switches it on (it only previews)
+    assert settings.snapshot_heal_history is False
+    assert settings.history_load_max_tasks_per_night == 30
     assert settings.snapshot_heal_from == date(2025, 10, 29)
     assert (settings.snapshot_heal_max_per_run, settings.snapshot_heal_pause_s) == (10, 20)
     assert parse_clock_window(settings.snapshot_heal_window) == (time(21, 0), time(6, 0))
+
+
+def test_clock_window_start_is_the_start_of_the_night_that_contains_the_time() -> None:
+    from mdhub.config import clock_window_start
+
+    night = (time(21, 0), time(6, 0))
+    assert clock_window_start(datetime(2026, 10, 20, 23, 30, tzinfo=MSK), night) == datetime(
+        2026, 10, 20, 21, 0, tzinfo=MSK
+    )
+    assert clock_window_start(datetime(2026, 10, 21, 3, 0, tzinfo=MSK), night) == datetime(
+        2026, 10, 20, 21, 0, tzinfo=MSK
+    )  # after midnight: the night that began the evening before
+    assert clock_window_start(datetime(2026, 10, 21, 12, 0, tzinfo=MSK), night) is None
+    assert clock_window_start(datetime(2026, 10, 21, 6, 0, tzinfo=MSK), night) is None
+    day = (time(9, 0), time(18, 0))
+    assert clock_window_start(datetime(2026, 10, 21, 10, 0, tzinfo=MSK), day) == datetime(
+        2026, 10, 21, 9, 0, tzinfo=MSK
+    )
 
 
 def test_clock_window_wraps_midnight() -> None:
@@ -802,6 +831,7 @@ class Series:
     dataset: str
     calls: list[tuple[date, date]] = field(default_factory=list)
     fail: bool = False
+    unconfigured: bool = False
     no_data: set[date] = field(default_factory=set)
 
 
@@ -835,6 +865,8 @@ def new_series(world: Conn, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callabl
             date_to: date | None = None,
         ) -> None:
             assert date_from is not None and date_to is not None
+            if s.unconfigured:
+                raise SourceNotConfigured("TEST_KEY not configured")
             s.calls.append((date_from, date_to))
             if s.fail:
                 raise RuntimeError("source down")
@@ -895,8 +927,9 @@ def _hl(settings: Settings, db: Database, only: list[Series], **params: Any) -> 
 
 
 def _work(settings: Settings, db: Database) -> backfill.WorkerSummary:
-    """What the backfill worker does with the queued tasks."""
-    return backfill.process_tasks(settings=settings, db=db, calendar=DbCalendar(db))
+    """What the backfill worker does with the queued tasks (the history load switched on)."""
+    on = settings.model_copy(update={"snapshot_heal_history": True})
+    return backfill.process_tasks(settings=on, db=db, calendar=DbCalendar(db))
 
 
 def _tasks(conn: Conn, dataset: str, source: str = history_load.HISTORY_SOURCE) -> list[Any]:
@@ -1061,7 +1094,7 @@ def _fail_open_tasks(conn: Conn, dataset: str, finished: datetime) -> None:
     conn.commit()
 
 
-def test_a_failed_range_is_queued_again_once_and_then_given_up(
+def test_a_failed_range_is_retried_over_days_and_given_up_visibly(
     world: Conn,
     settings: Settings,
     db: Database,
@@ -1074,23 +1107,60 @@ def test_a_failed_range_is_queued_again_once_and_then_given_up(
     base = _eod_final(world)
     _hl(settings, db, [s])
     now = fixed_clock[0]
-    _fail_open_tasks(world, s.dataset, now - timedelta(hours=1))
-    _hl(settings, db, [s])
-    assert [t["status"] for t in _tasks(world, s.dataset)] == ["failed"]  # too soon to retry
-    world.execute("UPDATE ops.backfill_task SET done_at = %s", (now - timedelta(hours=7),))
-    world.commit()
-    out = _hl(settings, db, [s])
-    assert [t["status"] for t in _tasks(world, s.dataset)] == ["failed", "pending"]
-    assert _history_row(world, s.dataset)["load_round"] == 2
-    assert "queued again" in _history_row(world, s.dataset)["note"] and out.status == "skipped"
-    # it fails again: no third round; the load ends with what there is - nothing, so no reissue
-    _fail_open_tasks(world, s.dataset, now - timedelta(hours=7))
+    assert history_load.MAX_ROUNDS == len(history_load.RETRY_DELAYS) + 1 == 5
+    assert history_load.RETRY_DELAYS[-1] >= timedelta(days=7)  # spread over more than a week
+    for rnd, delay in enumerate(history_load.RETRY_DELAYS, start=1):
+        _fail_open_tasks(world, s.dataset, now - delay + timedelta(hours=1))
+        _hl(settings, db, [s])
+        assert _history_row(world, s.dataset)["load_round"] == rnd  # too soon to retry
+        world.execute(
+            "UPDATE ops.backfill_task SET done_at = %s WHERE status = 'failed'",
+            (now - delay - timedelta(hours=1),),
+        )
+        world.commit()
+        out = _hl(settings, db, [s])
+        row = _history_row(world, s.dataset)
+        assert row["load_round"] == rnd + 1 and "queued again" in row["note"]
+        assert row["status"] == "loading" and out.status == "skipped"
+    # the last round fails too: no further round; the load ends with what there is - nothing
+    _fail_open_tasks(world, s.dataset, now)
     out = _hl(settings, db, [s])
     row = _history_row(world, s.dataset)
-    assert row["status"] == "done" and "could not be loaded" in row["note"]
+    assert row["status"] == "done" and row["failed_ranges"] == 1
+    assert "could not be loaded after 5 round(s)" in row["note"]
     assert "no rows were added" in row["note"] and row["pass_started_at"] is None
-    assert len(_tasks(world, s.dataset)) == 2 and _eod_final(world) == base
+    assert len(_tasks(world, s.dataset)) == 5 and _eod_final(world) == base
     assert out.result["built"] == []
+    # visible: not a finished gap but an unfillable one with the reason
+    gap = _gaps_by_key(world, heal.HISTORY_GAPS)[s.dataset]
+    assert gap[0] == "unfillable" and "could not be loaded" in gap[1]
+
+
+def test_an_outage_of_a_few_days_does_not_lose_the_head_of_the_history(
+    world: Conn,
+    settings: Settings,
+    db: Database,
+    fixed_clock: list[datetime],
+    new_series: Callable[[str], Series],
+) -> None:
+    s = new_series("TESTHLA")
+    s.fail = True
+    _heal(settings, db)
+    _hl(settings, db, [s])
+    now = fixed_clock[0]
+    _fail_open_tasks(world, s.dataset, now - timedelta(hours=7))
+    _hl(settings, db, [s])  # round 2 after 6 hours
+    _fail_open_tasks(world, s.dataset, now - timedelta(days=1, hours=1))
+    _hl(settings, db, [s])  # round 3 after a day
+    assert _history_row(world, s.dataset)["load_round"] == 3
+    s.fail = False  # the provider is back
+    _work(settings, db)
+    out = _hl(settings, db, [s])
+    row = _history_row(world, s.dataset)
+    assert row["status"] == "done" and row["failed_ranges"] == 0
+    assert row["first_after"] == HISTORY_START and out.result["history"]["pass_started"]
+    assert _cuts_with(world, s.code) == dict.fromkeys(QUOTED, True)
+    assert _gaps_by_key(world, heal.HISTORY_GAPS)[s.dataset][0] == "backfilled"
 
 
 def test_nothing_is_loaded_for_a_complete_dataset_or_outside_repair_in_the_window(
@@ -1308,6 +1378,13 @@ def test_datasets_sharing_a_job_are_judged_when_the_whole_job_has_loaded(
     b = shared_job("TESTSHB", date(2026, 10, 6), FIRST_STORED)
     _heal(settings, db)
     base = _eod_final(world)
+    # the preview already says that they share one set of tasks
+    _preview(settings, db, [a, b])
+    for x in (a, b):
+        assert (
+            "shared by 2 dataset(s), 1 task(s) in all"
+            in _gaps_by_key(world, heal.HISTORY_GAPS)[x.dataset][1]
+        )
     _hl(settings, db, [a, b])
     # one task set over the union of both heads (the head of B lies inside the head of A)
     assert [(t["a"], t["b"]) for t in _tasks(world, a.dataset)] == [("2026-10-01", "2026-10-09")]
@@ -1357,3 +1434,221 @@ def test_the_load_of_datasets_sharing_a_job_skips_the_years_between_their_heads(
     _hl(settings, db, [a, b])
     assert _history_row(world, a.dataset)["first_after"] == date(2026, 10, 1)
     assert _history_row(world, b.dataset)["first_after"] == date(2026, 10, 8)
+
+
+# ----------------------- preview, night window and cap, a source that is not configured (#138)
+
+
+def _preview(settings: Settings, db: Database, only: list[Series], **params: Any) -> JobOutcome:
+    """A heal run with the history setting left as it is (the default: off)."""
+    p = {
+        "date_from": FROM.isoformat(),
+        "min_bond_rows": 1,
+        "history_only": [s.dataset for s in only],
+        **params,
+    }
+    return run_job("snapshot_heal", p, settings=settings, db=db, calendar=DbCalendar(db))
+
+
+def test_the_history_load_is_off_by_default_and_previews_what_it_would_queue(
+    world: Conn,
+    settings: Settings,
+    db: Database,
+    fixed_clock: list[datetime],
+    new_series: Callable[[str], Series],
+) -> None:
+    a, b = new_series("TESTHLA"), new_series("TESTHLB")
+    _heal(settings, db)
+    base = _eod_final(world)
+    out = _preview(settings, db, [a, b])
+    shown = out.result["history"]
+    assert shown["queued"] is False and "MDHUB_SNAPSHOT_HEAL_HISTORY is off" in shown["why"]
+    assert shown["preview"] == [
+        {
+            "dataset": s.dataset,
+            "job": s.job,
+            "from": "2026-10-01",
+            "to": "2026-10-09",
+            "tasks": 1,
+            "job_tasks": 1,
+        }
+        for s in (a, b)
+    ]
+    # nothing is queued, no row is written, no cut is touched
+    for s in (a, b):
+        assert _history_row(world, s.dataset) is None and _tasks(world, s.dataset) == []
+    assert _eod_final(world) == base
+    # ... but the owner sees the datasets, the ranges and the number of tasks in /v1/gaps
+    notes = _gaps_by_key(world, heal.HISTORY_GAPS)
+    for s in (a, b):
+        status, note = notes[s.dataset]
+        assert status == "open" and note.startswith(history_load.PREVIEW_PREFIX)
+        assert "would load 2026-10-01..2026-10-09 in 1 backfill task(s)" in note
+        assert "MDHUB_SNAPSHOT_HEAL_HISTORY is off" in note
+    listed = world.execute(
+        "SELECT key ->> 'dataset' AS d FROM ops.v_open_gaps WHERE dataset = %s ORDER BY 1",
+        (heal.HISTORY_GAPS,),
+    ).fetchall()
+    assert [r["d"] for r in listed] == [a.dataset, b.dataset]
+    # a second run writes nothing again
+    seen = world.execute(
+        "SELECT detected_at FROM ops.data_gap WHERE dataset = %s ORDER BY key::text",
+        (heal.HISTORY_GAPS,),
+    ).fetchall()
+    _preview(settings, db, [a, b])
+    assert (
+        seen
+        == world.execute(
+            "SELECT detected_at FROM ops.data_gap WHERE dataset = %s ORDER BY key::text",
+            (heal.HISTORY_GAPS,),
+        ).fetchall()
+    )
+    # detect mode: the same preview, said so
+    _preview(settings, db, [a, b], mode="detect")
+    assert "detect mode" in _gaps_by_key(world, heal.HISTORY_GAPS)[a.dataset][1]
+    assert _history_row(world, a.dataset) is None
+    # the load switched on, but in the daytime: still only the preview
+    on = settings.model_copy(update={"snapshot_heal_history": True})
+    fixed_clock[0] = datetime(2026, 10, 20, 12, 0, tzinfo=MSK).astimezone(UTC)
+    _preview(on, db, [a, b])
+    assert "outside the night window" in _gaps_by_key(world, heal.HISTORY_GAPS)[a.dataset][1]
+    assert _history_row(world, a.dataset) is None and _tasks(world, a.dataset) == []
+    # a head that is no longer missing withdraws its preview
+    world.execute(
+        "INSERT INTO md.fixing (index_code, fixing_date, source, value) "
+        "VALUES (%s, %s, 'ecb', 1.5)",
+        (b.code, HISTORY_START),
+    )
+    world.commit()
+    _preview(on, db, [a, b])
+    gaps = _gaps_by_key(world, heal.HISTORY_GAPS)
+    assert gaps[b.dataset][0] == "not_expected" and "preview withdrawn" in gaps[b.dataset][1]
+    assert gaps[a.dataset][0] == "open"
+    # the night, the load on: now it is queued and the gap says it is loading
+    fixed_clock[0] = NIGHT.astimezone(UTC)
+    out = _preview(on, db, [a, b])
+    assert out.result["history"]["new"] == [a.dataset]
+    assert _history_row(world, a.dataset)["status"] == "loading"
+    assert len(_tasks(world, a.dataset)) == 1
+    status, note = _gaps_by_key(world, heal.HISTORY_GAPS)[a.dataset]
+    assert status == "open" and not note.startswith(history_load.PREVIEW_PREFIX)
+    assert "backfill task" in note
+
+
+def test_history_tasks_run_only_in_the_night_window_up_to_the_nightly_cap(
+    world: Conn,
+    settings: Settings,
+    db: Database,
+    fixed_clock: list[datetime],
+    new_series: Callable[[str], Series],
+) -> None:
+    s = new_series("TESTHLA")
+    spec = get_dataset(s.dataset)
+    on = settings.model_copy(update={"snapshot_heal_history": True})
+    capped = on.model_copy(update={"history_load_max_tasks_per_night": 3})
+    queue_range(
+        world, spec, date(2026, 1, 1), date(2026, 9, 30), source=history_load.HISTORY_SOURCE
+    )  # nine tasks of up to 31 days
+    world.commit()
+
+    def pending() -> int:
+        row = world.execute(
+            "SELECT count(*) AS n FROM ops.backfill_task WHERE status = 'pending'"
+        ).fetchone()
+        assert row is not None
+        return int(row["n"])
+
+    def work(clock: datetime) -> int:
+        fixed_clock[0] = clock.astimezone(UTC)
+        done = backfill.process_tasks(settings=capped, db=db, calendar=DbCalendar(db)).processed
+        # the database stamps started_at with its own clock; the test's night is another day
+        world.execute(
+            "UPDATE ops.backfill_task SET started_at = %s WHERE source = %s AND started_at > %s",
+            (clock, history_load.HISTORY_SOURCE, datetime.now(UTC) - timedelta(minutes=30)),
+        )
+        world.commit()
+        return done
+
+    day = datetime(2026, 10, 20, 12, 0, tzinfo=MSK)
+    assert backfill.history_slots(db, capped, day.astimezone(UTC)) == 0
+    # switched off (the default): no slot even at night, a load that has started stops
+    off = capped.model_copy(update={"snapshot_heal_history": False})
+    night_utc = datetime(2026, 10, 20, 23, 30, tzinfo=MSK).astimezone(UTC)
+    assert backfill.history_slots(db, off, night_utc) == 0
+    detect = capped.model_copy(update={"snapshot_heal": "detect"})
+    assert backfill.history_slots(db, detect, night_utc) == 0
+    assert work(day) == 0 and pending() == 9  # never in the daytime
+    assert work(day.replace(hour=20, minute=59)) == 0  # one minute before the window
+    night = datetime(2026, 10, 20, 23, 30, tzinfo=MSK)
+    assert backfill.history_slots(db, capped, night.astimezone(UTC)) == 3
+    assert work(night) == 3 and pending() == 6  # the cap of the night
+    assert work(night + timedelta(minutes=10)) == 0  # the same night: no slot left
+    assert work(night.replace(day=21, hour=3)) == 0  # after midnight: still that night
+    assert backfill.history_slots(db, capped, night.astimezone(UTC)) == 0
+    assert work(night + timedelta(days=1)) == 3 and pending() == 3  # the next night
+    # a default cap is a night's worth for the rest
+    assert backfill.history_slots(db, on, night.astimezone(UTC) + timedelta(days=2)) == 30
+
+
+def test_a_history_task_without_a_configured_source_waits_and_holds_nobody_back(
+    world: Conn,
+    settings: Settings,
+    db: Database,
+    fixed_clock: list[datetime],
+    new_series: Callable[[str], Series],
+) -> None:
+    a, b = new_series("TESTHLA"), new_series("TESTHLB")
+    a.unconfigured = True
+    _heal(settings, db)
+    _hl(settings, db, [a, b])
+    # one more task of the same job, to see that the siblings wait with it
+    queue_range(
+        world,
+        get_dataset(a.dataset),
+        date(2026, 9, 1),
+        date(2026, 9, 15),
+        source=history_load.HISTORY_SOURCE,
+    )
+    world.commit()
+    summary = _work(settings, db)
+    # the skip is not a failed attempt: nothing failed, no attempt used, no night slot used
+    assert summary.failed == 0 and summary.deferred == 1
+    waiting = world.execute(
+        "SELECT status, attempts, started_at, last_error, not_before > now() AS later "
+        "FROM ops.backfill_task WHERE dataset = %s AND source = %s",
+        (a.dataset, history_load.HISTORY_SOURCE),
+    ).fetchall()
+    assert len(waiting) == 2
+    for r in waiting:
+        assert r["status"] == "pending" and r["attempts"] == 0 and r["started_at"] is None
+        assert r["last_error"].startswith(NOT_CONFIGURED) and r["later"]
+    assert _tasks(world, b.dataset)[0]["status"] == "done"  # B's source is fine
+    # A says it waits; it does not hold the reissue pass of B back
+    out = _hl(settings, db, [a, b])
+    row = _history_row(world, a.dataset)
+    assert row["status"] == "loading" and "TEST_KEY not configured" in row["waiting_reason"]
+    assert "waiting for the source" in row["note"] and row["load_round"] == 1
+    status, note = _gaps_by_key(world, heal.HISTORY_GAPS)[a.dataset]
+    assert status == "open" and "waiting for the source" in note
+    assert out.result["history"]["pass_started"] == {"datasets": [b.dataset], "cuts": 3}
+    assert _history_row(world, b.dataset)["status"] == "done"
+    assert _cuts_with(world, b.code) == dict.fromkeys(QUOTED, True)
+    assert _cuts_with(world, a.code) == dict.fromkeys(QUOTED, False)
+    # the source is configured: the task is taken again after its wait; A gets a pass of its own
+    a.unconfigured = False
+    world.execute(
+        "UPDATE ops.backfill_task SET not_before = now() - interval '1 minute' WHERE dataset = %s",
+        (a.dataset,),
+    )
+    world.commit()
+    assert _work(settings, db).done == 2
+    out = _hl(settings, db, [a, b])
+    assert out.result["history"]["pass_started"] == {"datasets": [a.dataset], "cuts": 3}
+    row = _history_row(world, a.dataset)
+    assert row["status"] == "done" and row["waiting_reason"] is None
+    assert _cuts_with(world, a.code) == dict.fromkeys(QUOTED, True)
+    assert all(len(v) == 3 for v in _eod_final(world).values())  # one reissue per pass
+
+
+def test_a_skip_for_a_missing_source_is_told_apart_from_other_skips() -> None:
+    assert str(SourceNotConfigured("X not configured")).startswith(NOT_CONFIGURED)

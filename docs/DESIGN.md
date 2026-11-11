@@ -323,7 +323,8 @@ snapshot cuts (§11; owner decision DEC04, defaults): `MDHUB_SNAPSHOT_STATIC_TIM
 `MDHUB_SNAPSHOT_RETENTION_DAYS_INTRADAY=30`, `MDHUB_SNAPSHOT_EOD_FINAL_WAIT_MINUTES=30` (`eod_final` input
 readiness, 0 = no wait), `MDHUB_SNAPSHOT_AUTOCORRECT=true` (rebuild published `eod_final` cuts after
 backfills that changed their inputs), `MDHUB_SNAPSHOT_HEAL=repair` (+ `_FROM`, `_WINDOW`, `_MAX_PER_RUN`,
-`_PAUSE_S`: self-healing of missing / outdated `eod_final` cuts, SNAPSHOT_HEAL.md),
+`_PAUSE_S`: self-healing of missing / outdated `eod_final` cuts, SNAPSHOT_HEAL.md; `MDHUB_SNAPSHOT_HEAL_HISTORY=false`
+and `MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT=30`: the history load of new datasets, off by default = preview only),
 `MDHUB_ISS_RPS=3`, `MDHUB_RAW_RETENTION_DAYS_INTRADAY=90`, `MDHUB_RAW_RETENTION_DAYS_REREAD=7`
 (`intraday:reread:` captures), `MDHUB_ALGOPACK_FULL_REREAD_MINUTES=30`,
 `MDHUB_ALGOPACK_RETENTION_DAYS=90` (AlgoPack rolling window, calendar days, §6), `MDHUB_API_TOKENS` (comma list,

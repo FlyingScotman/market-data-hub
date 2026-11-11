@@ -38,9 +38,16 @@ download the day twice. When the gaps and tasks are done, the next run builds th
 Owner decision of 2026-11-11: when a dataset is added to the hub, its history is backfilled **and**
 the `eod_final` cuts of the last 12 months are reissued **once**, so that past cuts contain the new
 series, with no operator action. Code: `src/mdhub/quality/history_load.py` (the dataset side) and
-this job (the cut side); state: `ops.dataset_history_load` (one row per dataset, migration 0840).
+this job (the cut side); state: `ops.dataset_history_load` (one row per dataset, migrations 0840 and
+0850).
 
-1. **Detection.** In repair mode, inside the night window, every run looks at the registered
+**This part is OFF until you switch it on** (`MDHUB_SNAPSHOT_HEAL_HISTORY`, default `false`): the
+first run of a history load on a production store can mean years of backfill and a second wave of
+about 250 corrected cuts, so you look at its size first. While it is off the job only **previews**
+(see "Look first, then switch it on" below).
+
+1. **Detection.** In repair mode with the load switched on, inside the night window, every run looks
+   at the registered
    datasets that have a backfill job and a `history_start` (daily, business-daily or monthly; not
    event, intraday or rolling-window ones). A dataset **without a row** in
    `ops.dataset_history_load` whose earliest stored day is later than its `history_start`, with at
@@ -50,12 +57,27 @@ this job (the cut side); state: `ops.dataset_history_load` (one row per dataset,
    for a manual run. A dataset that already has its history, or has a row, is never touched again.
 2. **Load.** The head `[history_start, earliest stored day - 1]` is queued in `ops.backfill_task`
    with source `history_load`, in chunks of the dataset's `max_task_days`, **one set of tasks per
-   backfill job** (datasets that share a job share its tasks). The ordinary `backfill_worker`
-   runs them (every 10 minutes, with its time budget; it yields to scheduled runs as always) and
-   takes them **after the tasks of every other source**, so repairs of live gaps are not delayed.
-   "As far as each source allows": a day the source has nothing for stays empty. A range whose task
-   failed (after the worker's own 5 attempts) is queued again once, no sooner than 6 hours later;
-   what is still missing then stays missing, noted in the row and in `/v1/gaps`.
+   backfill job** over the union of the heads of its datasets (datasets that share a job share its
+   tasks; a stretch that is stored between two heads is not downloaded again). A dataset is judged
+   (rows added or not) only when every task of its job has finished.
+   The ordinary `backfill_worker` runs them (every 10 minutes, with its time budget; it yields to
+   scheduled runs as always) and takes them **after the tasks of every other source** and **only
+   inside the night window** (`MDHUB_SNAPSHOT_HEAL_WINDOW`, 21:00-06:00 MSK), **at most
+   `MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT` (default 30) tasks per night**, and only while the load
+   is switched on (a task of up to 31
+   days: 30 tasks are about 2.5 years of a daily dataset). So a history of years never runs in
+   trading hours and cannot starve the scheduled or the minute jobs through the job lock.
+   "As far as each source allows": a day the source has nothing for stays empty.
+   *Failures.* A range whose task failed (after the worker's own 5 attempts) is queued again after
+   6 hours, then after a day, 3 days and 7 days (5 rounds in all), so an outage of the provider of a
+   few days does not lose the head of the history. What is still missing after the last round stays
+   missing: the load is closed and its gap is `unfillable` with the number of ranges.
+   *Source not configured.* A task whose job is skipped because the source has no credentials (or is
+   switched off) is not a failed attempt and does not close the load: the task stays `pending`, no
+   attempt is used, it is looked at again every night, and the gap says "waiting for the source
+   (...)". Once the credentials are set (the console's Credentials page needs no restart) the next
+   night takes it up. Such a load does not hold back the reissue pass of the other datasets; when it
+   is finished it gets a pass of its own.
    The worker's autocorrection (a rebuild of the cuts of the days a backfill touched) is **not**
    applied to these tasks: it would reissue the same cuts once per task and dataset.
 3. **One reissue pass.** When no dataset is still loading, the datasets whose load added rows (the
@@ -72,13 +94,42 @@ this job (the cut side); state: `ops.dataset_history_load` (one row per dataset,
    does not feed the cut, is `done` without a pass.
 
 Status: `GET /v1/gaps?dataset=snapshot_history_load` (one gap per dataset, `open` while it loads
-or waits for the pass, with the progress in `note`; `backfilled` when done) and
+or waits for the pass or for its source, with the progress in `note`; `backfilled` when done;
+`unfillable` when done with ranges that could not be loaded) and
 `...=snapshot_cut_new_series` (the cuts of the pass still to reissue); `GET /v1/runs?job=snapshot_heal`
 (the run result lists `history`: new datasets, loading / reissue counts, the pass started and
-finished). `MDHUB_SNAPSHOT_HEAL_HISTORY=false` switches this part off; `mode=detect` and the
-daytime do not start anything. Limits of this design: a dataset is judged as a whole (a new
+finished). The same gaps are on the **Data** screen of the admin console, section "Open and
+unfillable gaps" (dataset `snapshot_history_load`). `mode=detect`, the daytime and the default
+setting (off) start nothing. Limits of this design: a dataset is judged as a whole (a new
 *series* inside an existing dataset, e.g. one more index code in a table, is not detected), and the
 cuts are reissued from the data stored at the time of the pass.
+
+#### Look first, then switch it on
+
+While the load is off, in detect mode and in the daytime, the job runs the same detection **without
+writing anything but gaps**: for every dataset that would be loaded it keeps an `open` gap of the
+dataset `snapshot_history_load` whose note starts "preview, nothing queued" and says why nothing is
+queued, the range, and the number of tasks, for example "would load 2010-01-01..2026-10-09 in 12
+backfill task(s) (job X, shared by 2 dataset(s), 12 task(s) in all)". Nothing is queued, no row is
+written, no cut is touched. A dataset whose head is no longer missing loses its preview (the gap
+becomes `not_expected`, "preview withdrawn").
+
+How to read it: the sum of "task(s) in all" over the distinct jobs is the number of tasks; divide
+by `MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT` (30) and round up for the nights the load takes. The
+reissue that follows is up to about 250 corrected cuts (one correction per `eod_final` cut of the
+last 12 months), published over the next nights at 10 cuts per run.
+
+**To see the preview:** open the **Data** screen of the admin console and look in "Open and
+unfillable gaps" for rows of the dataset `snapshot_history_load`. (The same rows are returned by
+`GET /v1/gaps?dataset=snapshot_history_load` with a read token.)
+
+**To switch the load on:** set `MDHUB_SNAPSHOT_HEAL_HISTORY=true` in the hub's server configuration
+file `.env` (the file next to `docker-compose.yml`; it is listed in `deploy/env.example` with the
+other settings), and apply the change the way README_DEPLOY describes for any `.env` change (the
+worker must be recreated to read it). There is no screen of the console for this setting yet; this
+file is the fallback until there is one. To switch it off again set it back to `false` (or remove the line) and apply it the same way: the
+worker then takes no task of a load any more and the job starts nothing; the tasks already queued
+and the state of the loads stay as they are, and a later switch-on goes on from there.
 
 ### Carried curves: when a cut is outdated, and why the job does not loop
 
@@ -147,7 +198,8 @@ curve is rebuilt once and closes both gaps.
 | `MDHUB_SNAPSHOT_HEAL_WINDOW` | `21:00-06:00` | MSK hours in which cuts are built (`HH:MM-HH:MM`, may wrap midnight) |
 | `MDHUB_SNAPSHOT_HEAL_MAX_PER_RUN` | `10` | cuts per run |
 | `MDHUB_SNAPSHOT_HEAL_PAUSE_S` | `20` | pause between two cuts, seconds |
-| `MDHUB_SNAPSHOT_HEAL_HISTORY` | `true` | the history load of new datasets and the one-off reissue after it (repair mode, night window) |
+| `MDHUB_SNAPSHOT_HEAL_HISTORY` | `false` | the history load of new datasets and the one-off reissue after it (repair mode, night window). Off: only a preview in `/v1/gaps`, nothing queued, no history task taken by the worker |
+| `MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT` | `30` | backfill tasks of a history load the worker takes per night window (never in the daytime) |
 
 **Why `repair` is the default.** The owner decision is that a normal deploy repairs the history with
 no manual step, and a setting only the operator can change would be that step. The risk is bounded:
@@ -170,15 +222,16 @@ deploy that contains it repairs the history without anyone running anything:
 * **Consumers download these snapshots again.** Any client that follows `eod_final` sees about 249
   new snapshot ids over those nights: new days and replacements of existing days. Expect that
   download (and whatever the client recomputes from the history).
-* **History of new datasets (the same job).** In the same nights the job finds the datasets that
-  are new to the hub (their earliest stored day is later than their `history_start`: the ones added
-  in 0.3.2 and any other registered dataset with such a gap), queues their history in the backfill
-  queue (a one-off load; the backfill worker needs hours to days, depending on the sources) and,
-  when the loads are finished, reissues the `eod_final` cuts of the last 12 months **once more**
-  (a second wave of up to about 250 correction ids; a cut that is still waiting for its reissue
-  above is rebuilt once for both reasons). Plan for that download as well. The list of what is
-  loading is `/v1/gaps?dataset=snapshot_history_load`. `MDHUB_SNAPSHOT_HEAL_HISTORY=false` leaves
-  this part out.
+* **History of new datasets (the same job): OFF.** The job finds the datasets that are new to the
+  hub (their earliest stored day is later than their `history_start`: the ones added in 0.3.2 and
+  any other registered dataset with such a gap) but, until `MDHUB_SNAPSHOT_HEAL_HISTORY=true` is set,
+  it only **previews**: one `open` gap per dataset in `/v1/gaps?dataset=snapshot_history_load`
+  (also on the Data screen of the console) says which range and how many backfill tasks it would
+  load. Nothing is queued and no cut is touched. Read it, then decide (see "Look first, then switch it
+  on"). Once switched on, the load is a one-off backfill (30 tasks per night at most, only in the
+  night window) followed, when the loads are finished, by a **second wave** of up to about 250
+  correction ids (the `eod_final` cuts of the last 12 months reissued once; a cut that is still
+  waiting for its reissue above is rebuilt once for both reasons). Plan for that download as well.
 * Afterwards the runs end `skipped` ("nothing to heal") and publish nothing.
 * **Switch.** `MDHUB_SNAPSHOT_HEAL=off` makes the job do nothing; `detect` only records the gaps and
   builds nothing (watch the scale first, then set `repair`). The server configuration is read at

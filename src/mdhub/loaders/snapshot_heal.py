@@ -30,8 +30,10 @@ an operator:
   :data:`HISTORY_GAPS`), and when the loads are finished the current ``eod_final`` cuts of the last
   12 months are reissued **once** in one pass (gaps :data:`NEW_SERIES_GAPS`, one per cut; one
   rebuild per cut closes all of its gaps). The state is ``ops.dataset_history_load``; a dataset
-  with a row is never loaded or reissued again. Repair mode and the night window only
-  (``MDHUB_SNAPSHOT_HEAL_HISTORY``).
+  with a row is never loaded or reissued again. **Off by default**: repair mode, the night window
+  and ``MDHUB_SNAPSHOT_HEAL_HISTORY=true`` only. While it is off (and in detect mode, and in the
+  daytime) the job only *previews*: the datasets, ranges and number of tasks it would queue are
+  recorded in :data:`HISTORY_GAPS` (note starting "preview, nothing queued"), nothing is queued.
 
 Status: every defect is an ``ops.data_gap`` row (``/v1/gaps?dataset=...`` lists the open ones
 with the reason; a repaired one becomes ``backfilled``; a gap that is not detected any more
@@ -482,7 +484,8 @@ def snapshot_heal(
         ``MDHUB_BONDS_EOD_PRELIM_MIN_ROWS``).
     :param ignore_window: build outside ``MDHUB_SNAPSHOT_HEAL_WINDOW`` too (manual runs, tests).
     :param history: the history load of new datasets and the one-off reissue that follows it
-        (default ``MDHUB_SNAPSHOT_HEAL_HISTORY``; only in ``repair`` mode, only in the window).
+        (default ``MDHUB_SNAPSHOT_HEAL_HISTORY``, off; only in ``repair`` mode, only in the
+        window; otherwise the new datasets are only previewed).
     :param history_only: look for new datasets among these only (manual runs, tests).
     """
     s = ctx.settings
@@ -542,16 +545,35 @@ def snapshot_heal(
     # mode and inside the night window (the load queues backfill tasks, the pass starts cuts)
     history_on = mode == "repair" and (history if history is not None else s.snapshot_heal_history)
     hist: dict[str, Any] = {}
-    if history_on and in_window():
+    previews: list[history_load.Preview] | None = None
+    run_history = history_on and in_window()
+    if run_history:
         try:
             hist = _history_step(ctx, last_live=last_live, now=now, only=history_only)
+            previews = []  # every new dataset has its row now: no preview is left to show
         except Exception as exc:  # the repair of the cuts must not depend on it
             ctx.logger.exception("snapshot_heal: the history step failed")
             hist = {"error": f"{type(exc).__name__}: {exc}"[:200]}
             ctx.run.mark_partial(f"history step failed: {hist['error']}")
-    if history_on:
-        with ctx.connection() as conn:
-            _sync_history_gaps(conn)
+    if not run_history:
+        why = (
+            "snapshot_heal runs in detect mode"
+            if mode == "detect"
+            else "MDHUB_SNAPSHOT_HEAL_HISTORY is off"
+            if not history_on
+            else "outside the night window"
+        )
+        try:
+            with ctx.connection() as conn:
+                previews = history_load.preview(
+                    conn, today=ctx.today(), calendar=ctx.calendar, why=why, only=history_only
+                )
+            if previews:
+                hist = {"preview": [p.to_dict() for p in previews], "queued": False, "why": why}
+        except Exception:  # a preview must not stop the repair of the cuts
+            ctx.logger.exception("snapshot_heal: the history preview failed")
+    with ctx.connection() as conn:
+        _sync_history_gaps(conn, previews)
     with ctx.connection() as conn:
         new_series_state = _gap_state(conn, NEW_SERIES_GAPS)
         history_active = history_load.active(history_load.load_rows(conn))
@@ -728,7 +750,7 @@ def snapshot_heal(
     if history_on:
         with ctx.connection() as conn:
             result["history"]["finished"] = _finish_pass_if_done(conn)
-            _sync_history_gaps(conn)
+            _sync_history_gaps(conn, previews)
     result["remaining"] = max(0, pending - built)
     if failures:
         ctx.run.mark_partial(f"{len(failures)} cut(s) failed: " + "; ".join(failures)[:500])
@@ -816,25 +838,50 @@ def _finish_pass_if_done(conn: DictConnection) -> list[str]:
     )
 
 
-def _sync_history_gaps(conn: DictConnection) -> None:
+def _sync_history_gaps(conn: DictConnection, previews: list[history_load.Preview] | None) -> None:
     """Make the gaps of :data:`HISTORY_GAPS` say where each history load is (written only when the
-    note or the status changes): open while loading or waiting for the reissue, ``backfilled``
-    when done."""
+    note or the status changes): ``open`` while loading or waiting for the reissue, ``backfilled``
+    when done, ``unfillable`` when done with ranges that could not be loaded. A dataset that is new
+    but not loaded (the load is off, detect mode, daytime) has an ``open`` gap whose note starts
+    :data:`~mdhub.quality.history_load.PREVIEW_PREFIX`: what a load would do. ``previews`` is
+    ``None`` when the preview could not be made (the preview gaps are then left alone)."""
     state = _gap_state(conn, HISTORY_GAPS)
-    for row in history_load.load_rows(conn):
+    want: dict[GapId, tuple[str, str]] = {}
+    rows = history_load.load_rows(conn)
+    for row in rows:
         gid: GapId = (row.history_from, row.dataset)
-        note = (row.note or row.status)[:_NOTE_CHARS]
-        want = "open" if row.status in ("loading", "reissue") else "backfilled"
+        if row.status in ("loading", "reissue"):
+            status = "open"
+        else:
+            status = "unfillable" if row.failed_ranges else "backfilled"
+        want[gid] = (status, (row.note or row.status)[:_NOTE_CHARS])
+    if previews is not None:
+        loaded = {r.dataset for r in rows}
+        for p in previews:
+            if p.dataset not in loaded:
+                want[(p.first_day, p.dataset)] = ("open", p.note[:_NOTE_CHARS])
+    for gid, (status, note) in want.items():
         known = state.get(gid)
-        if known is not None and known[0] == want and known[1] == note:
+        if known is not None and known[0] == status and known[1] == note:
             continue
-        if want == "open":
+        if status == "open":
             _open_gap(conn, HISTORY_GAPS, gid, note)
         elif known is None:
             conn.execute(
                 "INSERT INTO ops.data_gap (dataset, key, gap_date, status, note) "
-                "VALUES (%s, %s, %s, 'backfilled', %s) ON CONFLICT DO NOTHING",
-                (HISTORY_GAPS, _gap_key(gid, HISTORY_GAPS), gid[0], note),
+                "VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                (HISTORY_GAPS, _gap_key(gid, HISTORY_GAPS), gid[0], status, note),
             )
         else:
-            _set_gap(conn, HISTORY_GAPS, gid, "backfilled", note)
+            _set_gap(conn, HISTORY_GAPS, gid, status, note)
+    if previews is None:
+        return
+    for gid, (status, note, _at) in state.items():
+        if gid not in want and status == "open" and note.startswith(history_load.PREVIEW_PREFIX):
+            _set_gap(
+                conn,
+                HISTORY_GAPS,
+                gid,
+                "not_expected",
+                "preview withdrawn: the dataset has no missing head of history any more",
+            )

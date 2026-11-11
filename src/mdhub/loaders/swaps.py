@@ -48,7 +48,7 @@ from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 
 from mdhub.core.capture import record_capture
-from mdhub.core.errors import JobSkipped, MdhubError
+from mdhub.core.errors import MdhubError, SourceNotConfigured
 from mdhub.core.timeutil import MSK, utc_now
 from mdhub.core.upsert import UpsertResult, upsert_rows
 from mdhub.datasets import DatasetSpec, register_dataset
@@ -276,7 +276,7 @@ def _store_if_changed(
 def swaps_ratescalcs(ctx: JobContext) -> dict[str, str]:
     user, password = ctx.settings.ratescalc_username, ctx.settings.ratescalc_password
     if user is None or password is None:
-        raise JobSkipped("RATESCALC_USERNAME/RATESCALC_PASSWORD not configured")
+        raise SourceNotConfigured("RATESCALC_USERNAME/RATESCALC_PASSWORD not configured")
     auth = httpx.BasicAuth(user.get_secret_value(), password.get_secret_value())
     status: dict[str, str] = {}
     failures: list[str] = []
@@ -312,7 +312,7 @@ def swaps_ratescalcs(ctx: JobContext) -> dict[str, str]:
 def swaps_otc_monitor(ctx: JobContext) -> dict[str, str]:
     token = ctx.settings.otc_monitor_token
     if token is None:
-        raise JobSkipped("OTC_MONITOR_TOKEN not configured")
+        raise SourceNotConfigured("OTC_MONITOR_TOKEN not configured")
     with ctx.http() as http:
         try:
             res = otc.fetch(http, token.get_secret_value())

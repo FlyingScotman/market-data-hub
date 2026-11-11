@@ -19,7 +19,7 @@ from datetime import date
 from typing import Any, Final
 
 from mdhub.config import Settings
-from mdhub.core.errors import FormatDriftError, JobSkipped
+from mdhub.core.errors import FormatDriftError, SourceNotConfigured
 from mdhub.core.http import HttpClient, JsonResult
 from mdhub.core.iss import ISS_BASE_URL, parse_block, to_date, to_str
 
@@ -49,9 +49,9 @@ class SdfiCurve:
 
 
 def require_enabled(settings: Settings) -> None:
-    """Raise :class:`JobSkipped` unless ``MDHUB_ENABLE_SDFI`` is true."""
+    """Raise :class:`SourceNotConfigured` (a skip) unless ``MDHUB_ENABLE_SDFI`` is true."""
     if not settings.enable_sdfi:
-        raise JobSkipped("MOEX SDFI disabled (MDHUB_ENABLE_SDFI=false)")
+        raise SourceNotConfigured("MOEX SDFI disabled (MDHUB_ENABLE_SDFI=false)")
 
 
 def parse_catalogue(payload: Any) -> list[SdfiCurve]:
@@ -87,8 +87,8 @@ def fetch_catalogue(http: HttpClient) -> tuple[JsonResult, list[SdfiCurve]]:
 def fetch_curve_values(
     http: HttpClient, settings: Settings, curve_id: str, *, day: date | None = None
 ) -> JsonResult:
-    """Values of one curve. Raises ``JobSkipped`` when disabled and ``EntitlementError`` when
-    MOEX answers with the HTML "subscribers only" page."""
+    """Values of one curve. Raises ``SourceNotConfigured`` (a skip) when disabled and
+    ``EntitlementError`` when MOEX answers with the HTML "subscribers only" page."""
     require_enabled(settings)
     if not _CURVE_ID.match(curve_id):
         raise ValueError(f"bad SDFI curve id {curve_id!r}")

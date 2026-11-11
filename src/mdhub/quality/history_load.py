@@ -20,10 +20,17 @@ job has finished, and a task is matched to a dataset by overlap with its head. T
 ``backfill_worker`` runs them, after the tasks of every other source and with the same lock
 yielding, so live gap repairs are not delayed.
 As far as each source allows: a source that has nothing for a day leaves it empty. A task that
-failed is queued again once, :data:`RETRY_AFTER` later (:data:`MAX_ROUNDS` rounds in all); what is
-still missing then stays missing and is noted. The worker's autocorrection of ``eod_final`` cuts
-(which would rebuild the cuts once per task) is **not** applied to these tasks
-(:mod:`mdhub.quality.backfill`): the reissue is one pass, below.
+failed (after the worker's own attempts) is queued again after :data:`RETRY_DELAYS` - 6 hours, a
+day, 3 days, 7 days, so a provider outage of a few days does not lose the head of the history
+(:data:`MAX_ROUNDS` rounds in all); what is still missing then stays missing, the load is closed
+``unfillable`` in ``/v1/gaps`` with the number of ranges. A task whose job was skipped because the
+source is not configured (credentials, a switch; :data:`mdhub.core.errors.NOT_CONFIGURED`) is not
+a failure: it stays ``pending``, is tried again every night without using up its attempts, and the
+load is shown as waiting for the source (``waiting_reason``; it does not hold the reissue pass of
+the other datasets back). The worker takes these tasks only in the night window and at most
+``MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT`` a night (:mod:`mdhub.quality.backfill`). The worker's
+autocorrection of ``eod_final`` cuts (which would rebuild the cuts once per task) is **not**
+applied to these tasks: the reissue is one pass, below.
 
 **One-off reissue.** When no dataset is still loading, the datasets whose load added rows (their
 earliest stored day moved back) and whose job feeds the cut
@@ -31,6 +38,11 @@ earliest stored day moved back) and whose job feeds the cut
 current ``eod_final`` cuts of the last :data:`REISSUE_DAYS` days (``snapshot_heal``: night window,
 bounded per run, ``snapshot_cut_new_series`` gaps). The row of a dataset stays after it is
 ``done``: nothing is detected, queued or reissued for it again.
+
+**Preview.** While the load is off (``MDHUB_SNAPSHOT_HEAL_HISTORY``), in detect mode and outside the
+night window the same detection runs read-only (:func:`preview`): the datasets, ranges and the
+number of tasks that would be queued are recorded in ``/v1/gaps`` (``snapshot_history_load``,
+note starting :data:`PREVIEW_PREFIX`), nothing is queued and no row is written.
 """
 
 from __future__ import annotations
@@ -45,6 +57,7 @@ from psycopg.rows import tuple_row
 from psycopg.types.json import Jsonb
 
 from mdhub.core.bizday import CalendarPredicate
+from mdhub.core.errors import NOT_CONFIGURED
 from mdhub.datasets import DatasetSpec, all_datasets, get_dataset
 from mdhub.db.pool import DictConnection
 from mdhub.jobs import REGISTRY, JobRegistry
@@ -64,11 +77,13 @@ log = logging.getLogger(__name__)
 __all__ = [
     "HISTORY_SOURCE",
     "MAX_ROUNDS",
+    "PREVIEW_PREFIX",
     "REISSUE_DAYS",
-    "RETRY_AFTER",
+    "RETRY_DELAYS",
     "Head",
     "HistoryLoad",
     "JobPlan",
+    "Preview",
     "active",
     "detect_and_queue",
     "find_heads",
@@ -78,16 +93,21 @@ __all__ = [
     "merge_ranges",
     "pass_datasets",
     "plan_heads",
+    "preview",
     "progress",
     "start_pass",
 ]
 
 HISTORY_SOURCE: Final = "history_load"
 """``ops.backfill_task.source`` of the tasks of a history load."""
-MAX_ROUNDS: Final = 2
-"""Load rounds: the first and one retry of the failed ranges."""
-RETRY_AFTER: Final = timedelta(hours=6)
-"""A range that failed is queued again no sooner than this after its last attempt."""
+RETRY_DELAYS: Final = (timedelta(hours=6), timedelta(days=1), timedelta(days=3), timedelta(days=7))
+"""A range that failed is queued again no sooner than this after its last attempt: the delay of
+round ``n`` (counted from 1) is ``RETRY_DELAYS[n - 1]``. Spread over days: an outage of the provider
+that lasts a day or two must not lose the head of the history."""
+MAX_ROUNDS: Final = len(RETRY_DELAYS) + 1
+"""Load rounds: the first and one retry of the failed ranges per entry of :data:`RETRY_DELAYS`."""
+PREVIEW_PREFIX: Final = "preview, nothing queued"
+"""Start of the note of a gap that only says what a load would do (:func:`preview`)."""
 REISSUE_DAYS: Final = 365
 """The reissue covers the current ``eod_final`` cuts of this many days back (12 months)."""
 
@@ -108,11 +128,15 @@ class HistoryLoad:
     load_round: int
     pass_started_at: datetime | None
     note: str | None
+    waiting_reason: str | None = None
+    """Set while every open task waits for a source that is not configured."""
+    failed_ranges: int = 0
+    """Ranges that could not be loaded when the load finished."""
 
 
 _COLUMNS: Final = (
     "dataset, backfill_job, status, history_from, head_to, first_before, first_after, "
-    "load_round, pass_started_at, note"
+    "load_round, pass_started_at, note, waiting_reason, failed_ranges"
 )
 
 
@@ -293,22 +317,93 @@ def detect_and_queue(
     return created
 
 
+@dataclass(frozen=True, slots=True)
+class Preview:
+    """What the load of one new dataset would do (nothing is queued)."""
+
+    dataset: str
+    job: str
+    first_day: date
+    last_day: date
+    tasks: int
+    """Tasks that cover this dataset's head."""
+    job_tasks: int
+    """Tasks of the whole job (shared by ``job_datasets`` datasets)."""
+    job_datasets: int
+    note: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "dataset": self.dataset,
+            "job": self.job,
+            "from": self.first_day.isoformat(),
+            "to": self.last_day.isoformat(),
+            "tasks": self.tasks,
+            "job_tasks": self.job_tasks,
+        }
+
+
+def preview(
+    conn: DictConnection,
+    *,
+    today: date,
+    calendar: CalendarPredicate,
+    why: str,
+    registry: JobRegistry = REGISTRY,
+    only: Collection[str] | None = None,
+) -> list[Preview]:
+    """The detection of :func:`detect_and_queue` without its writes: for every new dataset the
+    range and the number of backfill tasks a load would queue (``why`` it is not queued now). Read
+    only, so the owner sees the scale before the load is switched on."""
+    out: list[Preview] = []
+    for plan in plan_heads(
+        find_heads(conn, today=today, calendar=calendar, registry=registry, only=only)
+    ):
+        for h in plan.heads:
+            n = plan.tasks_of(h)
+            note = (
+                f"{PREVIEW_PREFIX} ({why}): would load {h.first_day}..{h.last_day} in {n} "
+                f"backfill task(s) (job {plan.job}, shared by {len(plan.heads)} dataset(s), "
+                f"{len(plan.tasks)} task(s) in all)"
+            )
+            out.append(
+                Preview(
+                    h.spec.name,
+                    plan.job,
+                    h.first_day,
+                    h.last_day,
+                    n,
+                    len(plan.tasks),
+                    len(plan.heads),
+                    note,
+                )
+            )
+    return out
+
+
 # --------------------------------------------------------------------------------- progress
 
 
-def _latest_tasks(
-    conn: DictConnection, row: HistoryLoad
-) -> list[tuple[str, str, dict[str, Any], Any]]:
-    """The newest task of every range that overlaps this load's head: ``(dataset, status, params,
-    done_at)``. Tasks are queued per backfill job over the union of the heads of its datasets (and
-    under one dataset's name), so a task is matched by overlap, not by containment."""
+@dataclass(frozen=True, slots=True)
+class _Task:
+    dataset: str
+    status: str
+    params: dict[str, Any]
+    done_at: Any
+    error: str | None
+
+
+def _latest_tasks(conn: DictConnection, row: HistoryLoad) -> list[_Task]:
+    """The newest task of every range that overlaps this load's head. Tasks are queued per
+    backfill job over the union of the heads of its datasets (and under one dataset's name), so a
+    task is matched by overlap, not by containment."""
     names = _job_dataset_names(row)
     with conn.cursor(row_factory=tuple_row) as cur:
         return [
-            (r[0], r[1], dict(r[2]), r[3])
+            _Task(r[0], r[1], dict(r[2]), r[3], r[4])
             for r in cur.execute(
                 """
-                SELECT DISTINCT ON (dataset, params) dataset, status, params, done_at
+                SELECT DISTINCT ON (dataset, params) dataset, status, params, done_at, last_error
                 FROM ops.backfill_task
                 WHERE source = %(src)s AND dataset = ANY(%(names)s)
                   AND params ->> 'date_to' >= %(a)s AND params ->> 'date_from' <= %(b)s
@@ -352,48 +447,68 @@ def _set(conn: DictConnection, dataset: str, note: str, **cols: Any) -> None:
     )
 
 
+def _waiting_reason(open_: list[_Task]) -> str | None:
+    """Why the load waits for a source, when every open task does (not configured)."""
+    waiting = [
+        t for t in open_ if t.status == "pending" and (t.error or "").startswith(NOT_CONFIGURED)
+    ]
+    if not open_ or len(waiting) != len(open_):
+        return None
+    text = (waiting[0].error or "")[len(NOT_CONFIGURED) :].lstrip(": ").strip()
+    return text[:120] or "source not configured"
+
+
 def progress(conn: DictConnection, *, now: datetime, requeue: bool = True) -> None:
-    """Advance every ``loading`` row: note the tasks left; queue the failed ranges again once
-    (:data:`MAX_ROUNDS`, :data:`RETRY_AFTER`); when nothing is open and nothing is to be
-    retried, the load is finished: ``reissue`` when it added rows of a dataset that feeds the cut,
-    else ``done``."""
+    """Advance every ``loading`` row: note the tasks left (or that they wait for a source that is
+    not configured); queue the failed ranges again after :data:`RETRY_DELAYS` (at most
+    :data:`MAX_ROUNDS` rounds); when nothing is open and nothing is to be retried, the load is
+    finished: ``reissue`` when it added rows of a dataset that feeds the cut, else ``done``."""
     for row in load_rows(conn):
         if row.status != "loading":
             continue
         tasks = _latest_tasks(conn, row)
-        open_ = [t for t in tasks if t[1] in ("pending", "running")]
-        failed = [t for t in tasks if t[1] == "failed"]
+        open_ = [t for t in tasks if t.status in ("pending", "running")]
+        failed = [t for t in tasks if t.status == "failed"]
         finished = len(tasks) - len(open_) - len(failed)
         job_open = _job_open(conn, row)
         if open_ or job_open:
+            reason = _waiting_reason(open_)
             more = (
                 f"; {job_open - len(open_)} more of job {row.backfill_job}"
                 if job_open > len(open_)
                 else ""
             )
-            _set(
-                conn,
-                row.dataset,
-                f"loading {row.history_from}..{row.head_to}: {len(tasks) - len(open_)} of "
-                f"{len(tasks)} backfill task(s) finished (round {row.load_round}"
-                f"{f', {len(failed)} failed' if failed else ''}{more})",
-            )
+            head = f"loading {row.history_from}..{row.head_to}: "
+            if reason:
+                note = (
+                    f"{head}waiting for the source ({reason}); {len(open_)} backfill task(s) "
+                    f"are tried again every night until it is configured"
+                )
+            else:
+                note = (
+                    f"{head}{len(tasks) - len(open_)} of {len(tasks)} backfill task(s) finished "
+                    f"(round {row.load_round}{f', {len(failed)} failed' if failed else ''}{more})"
+                )
+            if note[:300] != row.note or reason != row.waiting_reason:
+                _set(conn, row.dataset, note, waiting_reason=reason)
             continue
-        last_done = max((t[3] for t in failed if t[3] is not None), default=None)
+        last_done = max((t.done_at for t in failed if t.done_at is not None), default=None)
         if failed and row.load_round < MAX_ROUNDS:
-            if requeue and (last_done is None or now - last_done >= RETRY_AFTER):
-                for dataset, _status, params, _at in failed:
+            delay = RETRY_DELAYS[row.load_round - 1]
+            if requeue and (last_done is None or now - last_done >= delay):
+                for t in failed:
                     conn.execute(
                         "INSERT INTO ops.backfill_task (dataset, params, source) "
                         "VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
-                        (dataset, Jsonb(params), HISTORY_SOURCE),
+                        (t.dataset, Jsonb(t.params), HISTORY_SOURCE),
                     )
                 _set(
                     conn,
                     row.dataset,
                     f"loading {row.history_from}..{row.head_to}: {len(failed)} failed "
-                    f"range(s) queued again (round {row.load_round + 1})",
+                    f"range(s) queued again (round {row.load_round + 1} of {MAX_ROUNDS})",
                     load_round=row.load_round + 1,
+                    waiting_reason=None,
                 )
             continue
         _finish_load(conn, row, finished=finished, failed=len(failed))
@@ -410,7 +525,11 @@ def _finish_load(conn: DictConnection, row: HistoryLoad, *, finished: int, faile
         row.first_before is None or first_after < row.first_before
     )
     feeds_cut = row.backfill_job in SNAPSHOT_INPUT_JOBS
-    tail = f" ({failed} range(s) could not be loaded)" if failed else ""
+    tail = (
+        f" ({failed} range(s) could not be loaded after {row.load_round} round(s))"
+        if failed
+        else ""
+    )
     if gained and feeds_cut:
         _set(
             conn,
@@ -419,6 +538,8 @@ def _finish_load(conn: DictConnection, row: HistoryLoad, *, finished: int, faile
             "eod_final cuts",
             status="reissue",
             first_after=first_after,
+            failed_ranges=failed,
+            waiting_reason=None,
         )
     else:
         why = (
@@ -432,6 +553,8 @@ def _finish_load(conn: DictConnection, row: HistoryLoad, *, finished: int, faile
             f"history load finished{tail}: {why}; no reissue needed",
             status="done",
             first_after=first_after,
+            failed_ranges=failed,
+            waiting_reason=None,
         )
 
 
@@ -440,9 +563,11 @@ def _finish_load(conn: DictConnection, row: HistoryLoad, *, finished: int, faile
 
 def start_pass(conn: DictConnection, *, now: datetime) -> list[str]:
     """Start the one-off reissue pass when no dataset is still loading and some are waiting for
-    it (none has started one): marks them, returns their names (``[]``: nothing to start)."""
+    it (none has started one): marks them, returns their names (``[]``: nothing to start). A load
+    that waits for a source that is not configured does not hold the others back; when it is
+    loaded it gets a pass of its own."""
     rows = load_rows(conn)
-    if any(r.status == "loading" for r in rows):
+    if any(r.status == "loading" and not r.waiting_reason for r in rows):
         return []
     waiting = [r for r in rows if r.status == "reissue"]
     if not waiting or any(r.pass_started_at is not None for r in waiting):
@@ -465,8 +590,12 @@ def pass_datasets(conn: DictConnection) -> list[str]:
 def finish_pass(conn: DictConnection, *, note: str) -> list[str]:
     """Mark the datasets of the pass in progress ``done``; returns their names."""
     names = pass_datasets(conn)
+    failed = {r.dataset: r.failed_ranges for r in load_rows(conn)}
     for n in names:
-        _set(conn, n, note, status="done")
+        tail = (
+            f" ({failed[n]} range(s) of its history could not be loaded)" if failed.get(n) else ""
+        )
+        _set(conn, n, note + tail, status="done")
     return names
 
 

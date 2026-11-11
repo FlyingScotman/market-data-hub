@@ -82,7 +82,11 @@ Environment variables (DESIGN §7 plus a few operational knobs):
 ``MDHUB_SNAPSHOT_HEAL_HISTORY``     ``snapshot_heal`` also loads the history of datasets new to
                                     the hub and reissues the ``eod_final`` cuts of the last 12
                                     months once afterwards (repair mode, night window only);
-                                    default true
+                                    default **false**: it only records in ``/v1/gaps`` what it
+                                    would load (a preview) until the owner switches it on
+``MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT`` backfill tasks of a history load the worker takes
+                                    per night window (the ``MDHUB_SNAPSHOT_HEAL_WINDOW`` hours,
+                                    never outside it), default 30
 ``MDHUB_CURVE_CARRY_DATASETS``      curves a market cut takes from the latest previous day that
                                     has them when no source delivered them on its day, flagged
                                     (contract 1.7); comma separated, empty = no carry; default
@@ -98,7 +102,7 @@ collection schedule (DESIGN §6, §11) and can be changed without a code change.
 from __future__ import annotations
 
 import re
-from datetime import date, time
+from datetime import date, datetime, time, timedelta
 from typing import Any, Final, Literal
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -110,6 +114,7 @@ __all__ = [
     "RATESCALCS_DEFAULT_BASE_URL",
     "ConfigError",
     "Settings",
+    "clock_window_start",
     "get_settings",
     "parse_base_url",
     "parse_hhmm",
@@ -199,6 +204,19 @@ def in_clock_window(now: time, window: tuple[time, time]) -> bool:
     """Whether ``now`` is inside ``window`` (start inclusive, end exclusive; wraps midnight)."""
     start, end = window
     return start <= now < end if start < end else now >= start or now < end
+
+
+def clock_window_start(now: datetime, window: tuple[time, time]) -> datetime | None:
+    """Start of the occurrence of ``window`` that contains ``now`` (same time zone as ``now``,
+    which must be local time); ``None`` when ``now`` is outside the window. For a window that wraps
+    midnight, 03:00 belongs to the window that started the evening before."""
+    if not in_clock_window(now.time(), window):
+        return None
+    start, end = window
+    day = now.date()
+    if start >= end and now.time() < end:
+        day -= timedelta(days=1)
+    return datetime.combine(day, start, tzinfo=now.tzinfo)
 
 
 def _csv(value: str) -> list[str]:
@@ -402,8 +420,16 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("MDHUB_SNAPSHOT_HEAL_PAUSE_S", "snapshot_heal_pause_s"),
     )
     snapshot_heal_history: bool = Field(
-        default=True,
+        default=False,
         validation_alias=AliasChoices("MDHUB_SNAPSHOT_HEAL_HISTORY", "snapshot_heal_history"),
+    )
+    history_load_max_tasks_per_night: int = Field(
+        default=30,
+        ge=1,
+        le=1000,
+        validation_alias=AliasChoices(
+            "MDHUB_HISTORY_LOAD_MAX_TASKS_PER_NIGHT", "history_load_max_tasks_per_night"
+        ),
     )
     bonds_eod_prelim_min_rows: int = Field(
         default=1000,
