@@ -111,6 +111,7 @@ from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 __all__ = [
+    "CURVE_DATASETS",
     "RATESCALCS_DEFAULT_BASE_URL",
     "ConfigError",
     "Settings",
@@ -126,6 +127,18 @@ _NAMED_TOKEN_RE = re.compile(r"^([a-z0-9][a-z0-9._-]{0,63})=([^=].*)$")
 """``name=token`` entry of ``MDHUB_API_TOKENS``. The token part must not start with ``=``, so
 a padded base64 token (``abc==``) is never split."""
 
+
+CURVE_DATASETS: Final = (
+    "cny_futures_yields",
+    "cny_ruonia_xccy",
+    "cny_rusfar_ois",
+    "key_rate_swap",
+    "ruonia_ois",
+    "usd_futures_yields",
+)
+"""The curve datasets the hub stores quote sets of (the datasets of
+:data:`mdhub.snapshot.market.EXPECTED_CURVES`; a test keeps the two in step): the valid names of
+``MDHUB_CURVE_CARRY_DATASETS``."""
 
 RATESCALCS_DEFAULT_BASE_URL: Final = "https://ratescalcs.ru/cnyfuturesyields"
 """Base URL of the Ratescalcs source (host and the path prefix of its pages); the pages are
@@ -552,6 +565,12 @@ class Settings(BaseSettings):
         bad = [n for n in names if not re.fullmatch(r"[a-z][a-z0-9_]*", n)]
         if bad:
             raise ValueError(f"invalid curve dataset name(s) {bad} (lower-case codes)")
+        unknown = [n for n in names if n not in CURVE_DATASETS]
+        if unknown:
+            raise ValueError(
+                f"MDHUB_CURVE_CARRY_DATASETS: unknown curve dataset(s) {unknown}; "
+                f"valid names: {', '.join(CURVE_DATASETS)}"
+            )
         return ",".join(names)
 
     @field_validator("ratescalcs_base_url")

@@ -795,6 +795,19 @@ def test_a_cut_that_stays_outdated_after_a_rebuild_is_not_retried(
     calls.clear()
     again = _heal(settings, db)
     assert calls == [] and again.result["built"] == []
+    # the same data never loops; NEW data does: a newer set of the curve arrives (the 15th can use
+    # it, the 14th cannot), so only the 15th is looked at again - and given up again, with the
+    # id of the set it saw
+    new = curve(world, "ratescalcs", "key_rate_swap", date(2026, 10, 15), 3)
+    world.commit()
+    third = _heal(settings, db)
+    assert calls == [date(2026, 10, 15)] and third.status == "succeeded"
+    gaps = _gaps(world, heal.CARRIED_GAPS)
+    assert {st for st, _ in gaps.values()} == {"unfillable"}
+    assert f"newest quote set {new})" in gaps[date(2026, 10, 15)][1]
+    assert f"newest quote set {new})" not in gaps[date(2026, 10, 14)][1]
+    calls.clear()
+    assert _heal(settings, db).result["built"] == [] and calls == []
 
 
 def test_a_cut_on_an_old_static_that_also_carries_is_rebuilt_once(

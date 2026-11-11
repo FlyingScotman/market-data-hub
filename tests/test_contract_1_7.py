@@ -241,6 +241,65 @@ def test_every_source_of_the_curve_is_carried_with_its_own_set(seeded: Conn, db:
     assert len(doc["carried_curves"]) == 2
 
 
+def test_a_day_whose_selected_set_is_empty_is_not_the_source_day(
+    seeded: Conn, db: Database
+) -> None:
+    """Wednesday has a non-empty set, but the per-source EOD rule selects a later EMPTY bid/ask
+    set: nothing could be carried from it, so it is not the source day. The carry goes on to the
+    latest day whose selected set has quotes (Tuesday) and says nothing about Wednesday."""
+    tue = curve(seeded, "otc_monitor", "key_rate_swap", TUE, 1)
+    curve(seeded, "otc_monitor", "key_rate_swap", WED, 2, basis="mid_only")
+    seeded.execute(
+        "INSERT INTO md.curve_snapshot (source, dataset, quote_basis, fetched_at, snapshot_date,"
+        " content_sha256, parser_version) VALUES ('otc_monitor', 'key_rate_swap', 'bid_ask_mid',"
+        " %s, %s, %s, '1')",
+        (datetime.combine(WED, time(13, 0), tzinfo=MSK), WED, f"{3:064x}"),
+    )
+    seeded.commit()
+    doc = _bundle(seeded, cut(db, THU))
+    (krs,) = sets(doc, "key_rate_swap")
+    assert krs["quote_set_id"] == tue and krs["quotes"]
+    assert krs["carried_forward"]["source_day"] == TUE.isoformat()
+    assert "key_rate_swap" in [c["dataset"] for c in doc["carried_curves"]]
+    reasons = dataset_entry(doc)["stale_reasons"]
+    assert any(f"key_rate_swap: carried forward from {TUE.isoformat()}" in r for r in reasons)
+    assert not any(WED.isoformat() in r for r in reasons)
+    # without the good day nothing is carried at all: no marker, no "carried forward" reason
+    seeded.execute("DELETE FROM md.curve_quote WHERE snapshot_id = %s", (tue,))
+    seeded.execute("DELETE FROM md.curve_snapshot WHERE id = %s", (tue,))
+    seeded.commit()
+    bare = _bundle(seeded, cut(db, FRI))
+    assert sets(bare, "key_rate_swap") == []
+    # (the seed's Thursday ruonia_ois is carried to Friday, as it should)
+    assert [c["dataset"] for c in bare["carried_curves"]] == ["ruonia_ois"]
+    entry = dataset_entry(bare)
+    assert not any("key_rate_swap: carried forward" in r for r in entry["stale_reasons"])
+    assert entry["coverage"]["carried_forward"] == ["ruonia_ois"]
+    assert "key_rate_swap" in entry["coverage"]["required_without_any_source"]
+
+
+def test_an_unknown_carry_dataset_stops_the_start_and_names_the_valid_ones(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pydantic import ValidationError
+
+    from mdhub.config import CURVE_DATASETS
+    from mdhub.snapshot.market import EXPECTED_CURVES
+
+    assert set(CURVE_DATASETS) == {ds for _src, ds in EXPECTED_CURVES}  # kept in step
+    assert set(DEFAULT_CARRY_DATASETS) <= set(CURVE_DATASETS)
+    monkeypatch.setenv("MDHUB_CURVE_CARRY_DATASETS", "key_rate_swap, ruonia_oiss")
+    with pytest.raises(ValidationError) as exc:
+        Settings()
+    text = str(exc.value)
+    assert "ruonia_oiss" in text and "MDHUB_CURVE_CARRY_DATASETS" in text
+    assert all(name in text for name in CURVE_DATASETS)  # the valid names are listed
+    monkeypatch.setenv("MDHUB_CURVE_CARRY_DATASETS", "usd_futures_yields, key_rate_swap")
+    assert Settings().curve_carry_datasets == "key_rate_swap,usd_futures_yields"
+    monkeypatch.setenv("MDHUB_CURVE_CARRY_DATASETS", "")
+    assert parse_name_list(Settings().curve_carry_datasets) == DEFAULT_CARRY_DATASETS  # unset
+
+
 def test_gap_at_the_start_of_history_carries_nothing(seeded: Conn, db: Database) -> None:
     """key_rate_swap exists on no earlier day: the curve stays absent, as before 1.7."""
     doc = _bundle(seeded, cut(db, THU))

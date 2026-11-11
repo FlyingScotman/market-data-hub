@@ -18,9 +18,10 @@ Dedup (both jobs): each payload is parsed first; a dataset whose normalized cont
 equals the latest stored snapshot of ``(source, dataset)`` - legacy-mapped history included -
 is counted as ``unchanged`` and nothing is written - neither a snapshot nor the raw capture -
 unless that latest snapshot is of an earlier Moscow date: the first poll of a day stores the
-curve again (``snapshot_date`` = today), because a market cut of the day reads only snapshots
-fetched on its business date (no forward fill) and an unchanged illiquid curve (KRS) would
-otherwise be missing from it.
+curve again (``snapshot_date`` = today), because a market cut of the day reads the snapshots
+fetched on its business date: this loader never fills a day itself, a curve that is missing on a
+day is carried forward by the snapshot build, flagged (contract 1.7, ``mdhub.snapshot.carry``),
+and an unchanged illiquid curve (KRS) would otherwise be carried instead of observed.
 Changed content stores the raw capture (one per fetch, shared by the curves parsed from it) and
 a new snapshot with its quotes (mid recomputed as (bid+ask)/2; mid-only quotes keep the quoted
 mid with bid/ask NULL). Without credentials a job ends ``skipped``.
@@ -226,7 +227,8 @@ def _store_if_changed(
     """Write the capture + snapshots for curves whose content changed, or whose latest
     snapshot is of an earlier Moscow date: the first observation of each day is stored even
     when the quotes did not change, so the market snapshot of that day (which reads the
-    snapshots fetched on its business date, no forward fill) has the quote set."""
+    snapshots fetched on its business date) has the quote set of the day itself; this loader
+    does not fill a missing day, the snapshot build carries it forward with a marker (1.7)."""
     day = fetched_at.astimezone(MSK).date()
     changed: list[tuple[src.ParsedCurve, str, bool]] = []
     for c in curves:

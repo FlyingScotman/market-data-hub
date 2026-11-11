@@ -85,7 +85,7 @@ from mdhub.db.pool import DictConnection
 from mdhub.jobs import JobContext, job
 from mdhub.loaders.snapshots import _cut_ts, market_params
 from mdhub.quality import history_load
-from mdhub.snapshot.carry import pending_carried_cuts
+from mdhub.snapshot.carry import fresher_set_ids
 from mdhub.snapshot.readiness import SNAPSHOT_INPUT_JOBS, eod_final_cuts
 from mdhub.snapshot.runner import publish_market_snapshot
 from mdhub.snapshot.static import BOND_CALENDAR
@@ -513,7 +513,8 @@ def snapshot_heal(
         with_quotes = days_with_bond_quotes(conn, missing, min_rows)
         waiting = days_waiting_for_inputs(conn, [d for d in missing if d in with_quotes])
         reissue = pending_reissue(conn)
-        carried = pending_carried_cuts(conn, first, last)
+        fresher = fresher_set_ids(conn, first, last)
+        carried = sorted(fresher)
         found_missing = {
             gap_id(d): _missing_note(d in with_quotes, waiting.get(d)) for d in missing
         }
@@ -525,11 +526,12 @@ def snapshot_heal(
         sync_gaps(conn, MISSING_GAPS, found_missing, _missing_closed(first, last, is_bday))
         found_carried = {
             gap_id(d, ts): "eod_final carries a curve forward from an earlier day, but newer data "
-            "of it is stored now; will be reissued"
+            f"of it is stored now (newest quote set {fresher[(d, ts)]}); will be reissued"
             for d, ts in carried
         }
         sync_gaps(conn, REISSUE_GAPS, found_reissue, _reissue_closed(conn))
         sync_gaps(conn, CARRIED_GAPS, found_carried, _carried_closed(conn, first, last))
+        _reopen_given_up_carried(conn, found_carried)
         missing_state = _gap_state(conn, MISSING_GAPS)
         reissue_state = _gap_state(conn, REISSUE_GAPS)
         carried_state = _gap_state(conn, CARRIED_GAPS)
@@ -710,9 +712,11 @@ def snapshot_heal(
                         "left the cut on the static of its build day",
                     )
                 else:
+                    fresher_id = _carried_fresher_id(conn, day, cut_ts)
                     still, why = (
-                        _still_carried_outdated(conn, day, cut_ts),
-                        "left the cut carrying a curve for which newer data is stored",
+                        fresher_id is not None,
+                        "left the cut carrying a curve for which newer data is stored"
+                        f" (newest quote set {fresher_id})",
                     )
                 if not still:
                     _close_gap(conn, dataset, gid, f"reissued: snapshot {out.market.id}")
@@ -763,10 +767,32 @@ def _still_on_build_day_static(conn: DictConnection, day: date, cut_ts: datetime
     return any(ts == cut_ts for _, ts in pending_reissue(conn, day, day))
 
 
-def _still_carried_outdated(conn: DictConnection, day: date, cut_ts: datetime) -> bool:
-    """Whether the current ``eod_final`` cut ``(day, cut_ts)`` still carries a curve for which
-    newer data is stored (the rebuild did not change that)."""
-    return any(ts == cut_ts for _, ts in pending_carried_cuts(conn, day, day))
+def _carried_fresher_id(conn: DictConnection, day: date, cut_ts: datetime) -> int | None:
+    """The newest quote set that makes the current ``eod_final`` cut ``(day, cut_ts)`` outdated:
+    set when the cut still carries a curve for which newer data is stored (the rebuild did not
+    change that), else ``None``."""
+    return fresher_set_ids(conn, day, day).get((day, cut_ts))
+
+
+_FRESHER: Final = re.compile(r"newest quote set (\d+)")
+
+
+def _reopen_given_up_carried(conn: DictConnection, found: dict[GapId, str]) -> None:
+    """A carried cut given up because a rebuild left it outdated (``unfillable``, "not retried")
+    is looked at again when the newest quote set that outdates it is another one than the one the
+    rebuild saw: new data arrived since, so a rebuild may now differ. The same data never loops. A
+    give-up after failures has its own retry (:func:`_due`)."""
+    for gid, (status, note, _at) in _gap_state(conn, CARRIED_GAPS).items():
+        if status != "unfillable" or note.startswith(_FAILED) or gid not in found:
+            continue
+        seen = _FRESHER.search(note)
+        now_id = _FRESHER.search(found[gid])
+        if now_id is not None and (seen is None or seen.group(1) != now_id.group(1)):
+            conn.execute(
+                "UPDATE ops.data_gap SET status = 'open', note = %s, detected_at = now() "
+                "WHERE dataset = %s AND key = %s AND gap_date = %s",
+                (found[gid][:_NOTE_CHARS], CARRIED_GAPS, _gap_key(gid, CARRIED_GAPS), gid[0]),
+            )
 
 
 # ------------------------------------------------------------- history of new datasets (#138)

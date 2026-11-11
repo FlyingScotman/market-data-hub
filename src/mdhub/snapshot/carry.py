@@ -5,7 +5,10 @@ an empty one, and gaps are not restored by hand. When **no source** delivered a 
 carried set (default ``ruonia_ois`` and ``key_rate_swap``: :data:`DEFAULT_CARRY_DATASETS`) on the
 business date of a market cut, the cut takes that curve - every quote set of it, per source - from
 the **latest previous day that has it**. The carry may span more than one day; there is no
-refusal by age: ``max_age`` only sets ``age_limit_exceeded`` in the marker.
+refusal by age: ``max_age`` only sets ``age_limit_exceeded`` in the marker. The source day is the
+latest day whose quote set, chosen by the same per-source rule as for the business date itself,
+holds quotes (:func:`source_days`): a day that has only sets the rule does not choose, or empty
+ones, is skipped and is never named in a marker or a stale reason.
 
 The substitution is never silent:
 
@@ -50,9 +53,10 @@ __all__ = [
     "REASON_NO_QUOTE_SET",
     "CarryRule",
     "carried_curves",
-    "latest_source_day",
+    "fresher_set_ids",
     "marker",
     "pending_carried_cuts",
+    "source_days",
     "summary_item",
     "working_days_between",
 ]
@@ -77,21 +81,23 @@ class CarryRule:
     max_age: int = DEFAULT_CARRY_MAX_AGE
 
 
-def latest_source_day(conn: DictConnection, t: datetime, d: date, dataset: str) -> date | None:
-    """The latest ``snapshot_date`` before ``d`` with a stored, non-empty quote set of ``dataset``
-    from any source, known at ``t`` (fetched and ingested by then); ``None`` at the start of the
-    history."""
+def source_days(conn: DictConnection, t: datetime, d: date, dataset: str) -> list[date]:
+    """Every ``snapshot_date`` before ``d`` with a stored, non-empty quote set of ``dataset`` from
+    any source known at ``t``, latest first: the candidates for the source day of a carry (the
+    first one whose per-source EOD selection holds a set with quotes is used; see
+    :func:`mdhub.snapshot.market._curve_sets`)."""
     with conn.cursor(row_factory=tuple_row) as cur:
-        row = cur.execute(
+        rows = cur.execute(
             """
-            SELECT max(s.snapshot_date) FROM md.curve_snapshot s
+            SELECT DISTINCT s.snapshot_date FROM md.curve_snapshot s
             WHERE s.dataset = %(ds)s AND s.snapshot_date < %(d)s
               AND s.fetched_at <= %(t)s AND s.ingested_at <= %(t)s
               AND EXISTS (SELECT 1 FROM md.curve_quote q WHERE q.snapshot_id = s.id)
+            ORDER BY 1 DESC
             """,
             {"ds": dataset, "d": d, "t": t},
-        ).fetchone()
-    return row[0] if row else None
+        ).fetchall()
+    return [r[0] for r in rows]
 
 
 def working_days_between(
@@ -186,6 +192,37 @@ def carried_curves(
     return out
 
 
+def fresher_set_ids(
+    conn: DictConnection, first: date, last: date
+) -> dict[tuple[date, datetime], int]:
+    """``(business_date, cut_ts) -> id`` of the newest quote set that makes a cut outdated, for the
+    current ``eod_final`` cuts of ``[first, last]`` that carry a curve for which the store now has
+    a quote set of a day after the carried source day, up to the cut's own business date: the
+    real data arrived (or a newer carry source), so a rebuild differs. The id says *which* data:
+    a later one means that more data arrived since."""
+    with conn.cursor(row_factory=tuple_row) as cur:
+        rows = cur.execute(
+            """
+            SELECT p.business_date, p.cut_ts, max(s.id)
+            FROM ops.published_snapshot p
+            CROSS JOIN LATERAL jsonb_array_elements(p.manifest -> 'carried_curves') c
+            JOIN md.curve_snapshot s
+              ON s.dataset = c ->> 'dataset'
+             AND s.snapshot_date > (c ->> 'source_day')::date
+             AND s.snapshot_date <= p.business_date
+             AND EXISTS (SELECT 1 FROM md.curve_quote q WHERE q.snapshot_id = s.id)
+            WHERE p.kind = 'market' AND p.cut_type = 'eod_final'
+              AND p.business_date BETWEEN %(a)s AND %(b)s
+              AND jsonb_typeof(p.manifest -> 'carried_curves') = 'array'
+              AND NOT EXISTS (SELECT 1 FROM ops.published_snapshot n WHERE n.supersedes = p.id)
+            GROUP BY p.business_date, p.cut_ts
+            ORDER BY 1, 2
+            """,
+            {"a": first, "b": last},
+        ).fetchall()
+    return {(r[0], r[1]): int(r[2]) for r in rows}
+
+
 def pending_carried_cuts(
     conn: DictConnection, first: date, last: date
 ) -> list[tuple[date, datetime]]:
@@ -193,25 +230,4 @@ def pending_carried_cuts(
     carry a curve for which the store now has a quote set of a day after the carried source day,
     up to the cut's own business date: the real data arrived (or a newer carry source), so a
     rebuild differs and the cut is outdated."""
-    with conn.cursor(row_factory=tuple_row) as cur:
-        rows = cur.execute(
-            """
-            SELECT DISTINCT p.business_date, p.cut_ts
-            FROM ops.published_snapshot p
-            WHERE p.kind = 'market' AND p.cut_type = 'eod_final'
-              AND p.business_date BETWEEN %(a)s AND %(b)s
-              AND jsonb_typeof(p.manifest -> 'carried_curves') = 'array'
-              AND NOT EXISTS (SELECT 1 FROM ops.published_snapshot n WHERE n.supersedes = p.id)
-              AND EXISTS (
-                  SELECT 1 FROM jsonb_array_elements(p.manifest -> 'carried_curves') c
-                  WHERE EXISTS (
-                      SELECT 1 FROM md.curve_snapshot s
-                      WHERE s.dataset = c ->> 'dataset'
-                        AND s.snapshot_date > (c ->> 'source_day')::date
-                        AND s.snapshot_date <= p.business_date
-                        AND EXISTS (SELECT 1 FROM md.curve_quote q WHERE q.snapshot_id = s.id)))
-            ORDER BY 1, 2
-            """,
-            {"a": first, "b": last},
-        ).fetchall()
-    return [(r[0], r[1]) for r in rows]
+    return list(fresher_set_ids(conn, first, last))

@@ -5,7 +5,9 @@ insert-only tables filter on ``ingested_at``). Facts are published as the hub st
 ``dataset`` and tenor codes, price bases as separate labelled fields, units in field names,
 MOEX analytics under ``source_analytics``. No forward fill: a series without a value on the
 business date is reported in the dataset's coverage / stale flags, never copied from an earlier
-date (dated datasets carry each row's own date inside an explicit window).
+date (dated datasets carry each row's own date inside an explicit window) - except the curves of
+the carried set (contract 1.7, :mod:`mdhub.snapshot.carry`), which are taken from the latest
+earlier day that has them and flagged.
 
 Bond quotes are published only for instruments of the referenced static snapshot; quotes of
 other SECIDs are listed in ``excluded`` (reason ``not_in_static_snapshot``). RUB FX is RUB per
@@ -42,10 +44,10 @@ from mdhub.snapshot.carry import (
     DEFAULT_CARRY_DATASETS,
     DEFAULT_CARRY_MAX_AGE,
     CarryRule,
-    latest_source_day,
     working_days_between,
 )
 from mdhub.snapshot.carry import marker as carry_marker
+from mdhub.snapshot.carry import source_days as carry_source_days
 from mdhub.snapshot.carry import summary_item as carry_summary
 from mdhub.sources.moex_market import INDEX_GROUPS
 
@@ -625,15 +627,22 @@ def _curve_sets(
         for ds in sorted(carry.datasets):
             if ds in present_datasets:
                 continue
-            source_day = latest_source_day(conn, t, d, ds)
-            if source_day is None:
+            # the latest day whose selected quote set (the same per-source rule as the day itself)
+            # holds quotes: a day with only sets that the rule does not select, or with empty
+            # ones, is not a curve to carry, and nothing is said about it
+            chosen: tuple[date, list[dict[str, Any]], dict[int, list[dict[str, Any]]]] | None = None
+            for source_day in carry_source_days(conn, t, d, ds):
+                csnaps, cquotes = _day_snapshots(conn, t, source_day, eod_cutoff)
+                usable = [s for s in csnaps if s["dataset"] == ds and cquotes[s["id"]]]
+                if usable:
+                    chosen = (source_day, usable, cquotes)
+                    break
+            if chosen is None:
                 continue  # the start of the history: nothing to carry, the curve stays absent
+            source_day, usable, cquotes = chosen
             age = working_days_between(conn, calendar_t or t, source_day, d)
             mark = carry_marker(source_day, age, carry.max_age)
-            csnaps, cquotes = _day_snapshots(conn, t, source_day, eod_cutoff)
-            for s in csnaps:
-                if s["dataset"] != ds or not cquotes[s["id"]]:
-                    continue
+            for s in usable:
                 add(s, cquotes[s["id"]], mark)
                 carried.append(carry_summary(out[-1]))
             over = f"; age limit of {carry.max_age} exceeded" if mark["age_limit_exceeded"] else ""
