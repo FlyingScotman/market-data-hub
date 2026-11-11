@@ -24,6 +24,15 @@ an operator:
   longer carries it. A cut that legitimately carries a curve (nothing newer is stored) is not a
   defect and is left alone: the job never loops on it. Gaps: dataset :data:`CARRIED_GAPS`.
 
+* **History of a new dataset** (market-data-hub#138, owner decision of 2026-11-11) - not a defect of
+  a cut but its cause: a dataset registered with a ``history_start`` whose earliest stored day is
+  later has its history queued in the backfill queue (:mod:`mdhub.quality.history_load`; gaps
+  :data:`HISTORY_GAPS`), and when the loads are finished the current ``eod_final`` cuts of the last
+  12 months are reissued **once** in one pass (gaps :data:`NEW_SERIES_GAPS`, one per cut; one
+  rebuild per cut closes all of its gaps). The state is ``ops.dataset_history_load``; a dataset
+  with a row is never loaded or reissued again. Repair mode and the night window only
+  (``MDHUB_SNAPSHOT_HEAL_HISTORY``).
+
 Status: every defect is an ``ops.data_gap`` row (``/v1/gaps?dataset=...`` lists the open ones
 with the reason; a repaired one becomes ``backfilled``; a gap that is not detected any more
 for another reason (the checked range moved, the calendar no longer counts the day) becomes
@@ -73,6 +82,7 @@ from mdhub.datasets import datasets_for_job
 from mdhub.db.pool import DictConnection
 from mdhub.jobs import JobContext, job
 from mdhub.loaders.snapshots import _cut_ts, market_params
+from mdhub.quality import history_load
 from mdhub.snapshot.carry import pending_carried_cuts
 from mdhub.snapshot.readiness import SNAPSHOT_INPUT_JOBS, eod_final_cuts
 from mdhub.snapshot.runner import publish_market_snapshot
@@ -80,7 +90,9 @@ from mdhub.snapshot.static import BOND_CALENDAR
 
 __all__ = [
     "CARRIED_GAPS",
+    "HISTORY_GAPS",
     "MISSING_GAPS",
+    "NEW_SERIES_GAPS",
     "REISSUE_FROM",
     "REISSUE_GAPS",
     "REISSUE_TO",
@@ -92,6 +104,13 @@ MISSING_GAPS: Final = "snapshot_cut_missing"
 REISSUE_GAPS: Final = "snapshot_cut_reissue"
 """``ops.data_gap`` dataset: ``eod_final`` cuts still on the static of their build day."""
 
+HISTORY_GAPS: Final = "snapshot_history_load"
+"""``ops.data_gap`` dataset: the automatic history load of a dataset that is new to the hub
+(:mod:`mdhub.quality.history_load`), one gap per dataset (``key.dataset``), open while it loads or
+waits for the reissue, ``backfilled`` when it is done."""
+NEW_SERIES_GAPS: Final = "snapshot_cut_new_series"
+"""``ops.data_gap`` dataset: the ``eod_final`` cuts of the one-off reissue pass that follows a
+history load (``key.cut_ts``; one per current cut of the last 12 months)."""
 CARRIED_GAPS: Final = "snapshot_cut_carried"
 """``ops.data_gap`` dataset: ``eod_final`` cuts that carry a curve forward from an earlier day
 (contract 1.7, :mod:`mdhub.snapshot.carry`) although the store now has newer data of it: outdated
@@ -255,8 +274,12 @@ def gap_id(day: date, cut_ts: datetime | None = None) -> GapId:
     return (day, "" if cut_ts is None else cut_ts.astimezone(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"))
 
 
-def _gap_key(gid: GapId) -> Jsonb:
-    return Jsonb({"cut_ts": gid[1]} if gid[1] else {})
+def _gap_key(gid: GapId, dataset: str) -> Jsonb:
+    """The ``key`` of a gap: ``{"cut_ts": ...}`` (a cut), ``{"dataset": ...}`` for
+    :data:`HISTORY_GAPS`, ``{}`` for a missing day."""
+    if not gid[1]:
+        return Jsonb({})
+    return Jsonb({("dataset" if dataset == HISTORY_GAPS else "cut_ts"): gid[1]})
 
 
 def sync_gaps(
@@ -282,13 +305,13 @@ def sync_gaps(
             conn.execute(
                 "INSERT INTO ops.data_gap (dataset, key, gap_date, status, note) "
                 "VALUES (%s, %s, %s, 'open', %s) ON CONFLICT DO NOTHING",
-                (dataset, _gap_key(gid), gid[0], note),
+                (dataset, _gap_key(gid, dataset), gid[0], note),
             )
         elif known[0] in ("backfilled", "not_expected"):
             conn.execute(
                 "UPDATE ops.data_gap SET status = 'open', note = %s, detected_at = now() "
                 "WHERE dataset = %s AND key = %s AND gap_date = %s",
-                (note, dataset, _gap_key(gid), gid[0]),
+                (note, dataset, _gap_key(gid, dataset), gid[0]),
             )
         elif known[0] == "open" and not known[1].startswith(_FAILED) and known[1] != note:
             _set_gap(conn, dataset, gid, "open", note)
@@ -301,7 +324,7 @@ def _set_gap(conn: DictConnection, dataset: str, gid: GapId, status: str, note: 
     conn.execute(
         "UPDATE ops.data_gap SET status = %s, note = %s "
         "WHERE dataset = %s AND key = %s AND gap_date = %s",
-        (status, note[:_NOTE_CHARS], dataset, _gap_key(gid), gid[0]),
+        (status, note[:_NOTE_CHARS], dataset, _gap_key(gid, dataset), gid[0]),
     )
 
 
@@ -310,8 +333,8 @@ def _gap_state(conn: DictConnection, dataset: str) -> dict[GapId, tuple[str, str
         return {
             (r[0], r[1]): (r[2], r[3] or "", r[4])
             for r in cur.execute(
-                "SELECT gap_date, coalesce(key ->> 'cut_ts', ''), status, note, detected_at "
-                "FROM ops.data_gap WHERE dataset = %s",
+                "SELECT gap_date, coalesce(key ->> 'cut_ts', key ->> 'dataset', ''), status, "
+                "note, detected_at FROM ops.data_gap WHERE dataset = %s",
                 (dataset,),
             ).fetchall()
         }
@@ -338,7 +361,7 @@ def _fail_gap(
     conn.execute(
         "UPDATE ops.data_gap SET status = %s, note = %s, detected_at = %s "
         "WHERE dataset = %s AND key = %s AND gap_date = %s",
-        (status, note[:_NOTE_CHARS], now, dataset, _gap_key(gid), gid[0]),
+        (status, note[:_NOTE_CHARS], now, dataset, _gap_key(gid, dataset), gid[0]),
     )
     return status
 
@@ -447,6 +470,8 @@ def snapshot_heal(
     max_cuts: int | None = None,
     min_bond_rows: int | None = None,
     ignore_window: bool = False,
+    history: bool | None = None,
+    history_only: list[str] | None = None,
 ) -> dict[str, Any]:
     """Detect and repair (module doc).
 
@@ -456,6 +481,9 @@ def snapshot_heal(
     :param min_bond_rows: rows a day needs in ``md.bond_eod`` to be cut (default
         ``MDHUB_BONDS_EOD_PRELIM_MIN_ROWS``).
     :param ignore_window: build outside ``MDHUB_SNAPSHOT_HEAL_WINDOW`` too (manual runs, tests).
+    :param history: the history load of new datasets and the one-off reissue that follows it
+        (default ``MDHUB_SNAPSHOT_HEAL_HISTORY``; only in ``repair`` mode, only in the window).
+    :param history_only: look for new datasets among these only (manual runs, tests).
     """
     s = ctx.settings
     mode = mode or s.snapshot_heal
@@ -505,6 +533,35 @@ def snapshot_heal(
     states = {MISSING_GAPS: missing_state, REISSUE_GAPS: reissue_state, CARRIED_GAPS: carried_state}
 
     now = _now()
+    window = parse_clock_window(s.snapshot_heal_window)
+
+    def in_window() -> bool:
+        return ignore_window or in_clock_window(_now().astimezone(s.zone).time(), window)
+
+    # the history of datasets new to the hub and the one-off reissue after it: only in repair
+    # mode and inside the night window (the load queues backfill tasks, the pass starts cuts)
+    history_on = mode == "repair" and (history if history is not None else s.snapshot_heal_history)
+    hist: dict[str, Any] = {}
+    if history_on and in_window():
+        try:
+            hist = _history_step(ctx, last_live=last_live, now=now, only=history_only)
+        except Exception as exc:  # the repair of the cuts must not depend on it
+            ctx.logger.exception("snapshot_heal: the history step failed")
+            hist = {"error": f"{type(exc).__name__}: {exc}"[:200]}
+            ctx.run.mark_partial(f"history step failed: {hist['error']}")
+    if history_on:
+        with ctx.connection() as conn:
+            _sync_history_gaps(conn)
+    with ctx.connection() as conn:
+        new_series_state = _gap_state(conn, NEW_SERIES_GAPS)
+        history_active = history_load.active(history_load.load_rows(conn))
+    states[NEW_SERIES_GAPS] = new_series_state
+    new_series = sorted(
+        (d, _cut_ts_of(key))
+        for (d, key), (status, _note, _at) in new_series_state.items()
+        if status == "open"
+    )
+
     todo_missing = [
         d
         for d in missing
@@ -512,6 +569,7 @@ def snapshot_heal(
     ]
     todo_reissue = [(d, ts) for d, ts in reissue if _due(reissue_state.get(gap_id(d, ts)), now)]
     todo_carried = [(d, ts) for d, ts in carried if _due(carried_state.get(gap_id(d, ts)), now)]
+    todo_new = [(d, ts) for d, ts in new_series if _due(new_series_state.get(gap_id(d, ts)), now)]
     result: dict[str, Any] = {
         "mode": mode,
         "from": first.isoformat(),
@@ -521,44 +579,45 @@ def snapshot_heal(
         "missing_waiting_inputs": len(waiting),
         "reissue_pending": len(reissue),
         "carried_pending": len(carried),
+        "new_series_pending": len(new_series),
+        "history": hist,
         "built": [],
         "failed": [],
     }
-    # one build per cut: a cut that is both on an old static and carrying an outdated curve is
-    # rebuilt once and closes both of its gaps
+    # one build per cut: a cut that is on an old static, carries an outdated curve and/or is
+    # part of the reissue after a history load is rebuilt once and closes all of its gaps
     work: list[tuple[date, datetime | None, list[str]]] = [
         (d, None, [MISSING_GAPS]) for d in todo_missing
     ]
     by_cut: dict[GapId, tuple[date, datetime, list[str]]] = {}
-    for dataset, cuts in ((REISSUE_GAPS, todo_reissue), (CARRIED_GAPS, todo_carried)):
+    for dataset, cuts in (
+        (REISSUE_GAPS, todo_reissue),
+        (CARRIED_GAPS, todo_carried),
+        (NEW_SERIES_GAPS, todo_new),
+    ):
         for d, ts in cuts:
             by_cut.setdefault(gap_id(d, ts), (d, ts, []))[2].append(dataset)
     work.extend(by_cut[k] for k in sorted(by_cut))
     pending = len(work)
-    if not missing and not reissue and not carried:
+    summary = (
+        f"{len(missing)} missing, {len(reissue)} to reissue, {len(carried)} outdated carried, "
+        f"{len(new_series)} to reissue after a history load"
+    )
+    if not missing and not reissue and not carried and not new_series and not history_active:
         ctx.run.mark_skipped("nothing to heal")
         return result
     if mode == "detect" or pending == 0:
         ctx.run.mark_skipped(
-            f"{len(missing)} missing, {len(reissue)} to reissue, {len(carried)} outdated "
-            "carried; "
+            f"{summary}; "
             + (
                 "mode=detect"
                 if mode == "detect"
-                else "nothing due (waiting for quotes, inputs or retry)"
+                else "nothing due (waiting for quotes, inputs, a history load or retry)"
             )
         )
         return result
-    window = parse_clock_window(s.snapshot_heal_window)
-
-    def in_window() -> bool:
-        return ignore_window or in_clock_window(_now().astimezone(s.zone).time(), window)
-
     if not in_window():
-        ctx.run.mark_skipped(
-            f"{len(missing)} missing, {len(reissue)} to reissue, {len(carried)} outdated "
-            f"carried; builds only {s.snapshot_heal_window} (MSK)"
-        )
+        ctx.run.mark_skipped(f"{summary}; builds only {s.snapshot_heal_window} (MSK)")
         return result
 
     published = unchanged = built = 0
@@ -581,7 +640,9 @@ def snapshot_heal(
                 known_at=ka,
                 run_id=ctx.run.id,
                 params=market_params(ctx),
-                historical=True,
+                # a cut of the previous business day (the reissue after a history load reaches
+                # it) is built like the scheduled one, as snapshot_rebuild does
+                historical=day < last_live,
             )
         except Exception as exc:  # one bad day must not stop the others
             ctx.logger.exception("snapshot_heal: %s %s failed", datasets, day)
@@ -609,6 +670,18 @@ def snapshot_heal(
                     _close_gap(conn, dataset, gid, f"cut published: snapshot {out.market.id}")
                     continue
                 assert cut_ts is not None
+                if dataset == NEW_SERIES_GAPS:
+                    # one pass over a cut: done whatever the rebuild found (an unchanged cut
+                    # already holds the data); nothing to retry, so no loop
+                    _close_gap(
+                        conn,
+                        dataset,
+                        gid,
+                        f"reissued: snapshot {out.market.id}"
+                        if out.market.status == "published"
+                        else "rebuilt: the cut already holds the data (nothing to publish)",
+                    )
+                    continue
                 if dataset == REISSUE_GAPS:
                     still, why = (
                         _still_on_build_day_static(conn, day, cut_ts),
@@ -630,7 +703,7 @@ def snapshot_heal(
                         (
                             f"rebuild ({out.market.status}) {why}; not retried",
                             dataset,
-                            _gap_key(gid),
+                            _gap_key(gid, dataset),
                             day,
                         ),
                     )
@@ -652,6 +725,10 @@ def snapshot_heal(
             "snapshot_heal: %s %s -> %s %s", datasets, day, out.market.id, out.market.status
         )
     ctx.run.add_counts(UpsertResult(inserted=published, unchanged=unchanged))
+    if history_on:
+        with ctx.connection() as conn:
+            result["history"]["finished"] = _finish_pass_if_done(conn)
+            _sync_history_gaps(conn)
     result["remaining"] = max(0, pending - built)
     if failures:
         ctx.run.mark_partial(f"{len(failures)} cut(s) failed: " + "; ".join(failures)[:500])
@@ -668,3 +745,96 @@ def _still_carried_outdated(conn: DictConnection, day: date, cut_ts: datetime) -
     """Whether the current ``eod_final`` cut ``(day, cut_ts)`` still carries a curve for which
     newer data is stored (the rebuild did not change that)."""
     return any(ts == cut_ts for _, ts in pending_carried_cuts(conn, day, day))
+
+
+# ------------------------------------------------------------- history of new datasets (#138)
+
+
+def _cut_ts_of(key: str) -> datetime:
+    """The ``cut_ts`` of a :func:`gap_id` key."""
+    return datetime.fromisoformat(key.replace("Z", "+00:00"))
+
+
+def _open_gap(conn: DictConnection, dataset: str, gid: GapId, note: str) -> None:
+    conn.execute(
+        "INSERT INTO ops.data_gap (dataset, key, gap_date, status, note) "
+        "VALUES (%s, %s, %s, 'open', %s) "
+        "ON CONFLICT (dataset, key, gap_date) DO UPDATE SET status = 'open', "
+        "note = EXCLUDED.note, detected_at = now()",
+        (dataset, _gap_key(gid, dataset), gid[0], note[:_NOTE_CHARS]),
+    )
+
+
+def _history_step(
+    ctx: JobContext, *, last_live: date, now: datetime, only: list[str] | None = None
+) -> dict[str, Any]:
+    """The history of datasets new to the hub (:mod:`mdhub.quality.history_load`): register and
+    queue the new ones, advance the loads, and start the one-off reissue pass of the cuts of the
+    last 12 months when the loads are done (one gap ``snapshot_cut_new_series`` per current cut).
+    Returns what happened, for the run result."""
+    today = ctx.today()
+    out: dict[str, Any] = {}
+    with ctx.connection() as conn:
+        created = history_load.detect_and_queue(
+            conn, today=today, calendar=ctx.calendar, hub_version=_hub_version, only=only
+        )
+        history_load.progress(conn, now=now)
+        names = history_load.start_pass(conn, now=now)
+        if names:
+            cuts = eod_final_cuts(
+                conn, today - timedelta(days=history_load.REISSUE_DAYS), last_live
+            )
+            note = "reissue after the history load of " + ", ".join(names)
+            for d, ts in cuts:
+                _open_gap(conn, NEW_SERIES_GAPS, gap_id(d, ts), note)
+            out["pass_started"] = {"datasets": names, "cuts": len(cuts)}
+        out["finished"] = _finish_pass_if_done(conn)
+        rows = history_load.load_rows(conn)
+    if created:
+        out["new"] = [r.dataset for r in created]
+    out["loading"] = sum(r.status == "loading" for r in rows)
+    out["reissue"] = sum(r.status == "reissue" for r in rows)
+    return out
+
+
+def _finish_pass_if_done(conn: DictConnection) -> list[str]:
+    """The datasets of the reissue pass in progress are ``done`` once no cut of it is ``open``
+    (a cut given up after failures counts as finished: it is noted in its gap)."""
+    if not history_load.pass_datasets(conn):
+        return []
+    with conn.cursor(row_factory=tuple_row) as cur:
+        row = cur.execute(
+            "SELECT count(*) FILTER (WHERE status = 'open'), count(*) "
+            "FROM ops.data_gap WHERE dataset = %s",
+            (NEW_SERIES_GAPS,),
+        ).fetchone()
+    assert row is not None
+    if row[0]:
+        return []
+    return history_load.finish_pass(
+        conn, note=f"history loaded and {row[1]} eod_final cut(s) reissued once"
+    )
+
+
+def _sync_history_gaps(conn: DictConnection) -> None:
+    """Make the gaps of :data:`HISTORY_GAPS` say where each history load is (written only when the
+    note or the status changes): open while loading or waiting for the reissue, ``backfilled``
+    when done."""
+    state = _gap_state(conn, HISTORY_GAPS)
+    for row in history_load.load_rows(conn):
+        gid: GapId = (row.history_from, row.dataset)
+        note = (row.note or row.status)[:_NOTE_CHARS]
+        want = "open" if row.status in ("loading", "reissue") else "backfilled"
+        known = state.get(gid)
+        if known is not None and known[0] == want and known[1] == note:
+            continue
+        if want == "open":
+            _open_gap(conn, HISTORY_GAPS, gid, note)
+        elif known is None:
+            conn.execute(
+                "INSERT INTO ops.data_gap (dataset, key, gap_date, status, note) "
+                "VALUES (%s, %s, %s, 'backfilled', %s) ON CONFLICT DO NOTHING",
+                (HISTORY_GAPS, _gap_key(gid, HISTORY_GAPS), gid[0], note),
+            )
+        else:
+            _set_gap(conn, HISTORY_GAPS, gid, "backfilled", note)

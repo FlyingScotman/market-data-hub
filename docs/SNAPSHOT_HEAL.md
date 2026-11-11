@@ -33,6 +33,53 @@ zcyc_params (open gap), ..."). Otherwise the cut would be built from incomplete 
 autocorrection would publish a correction as soon as that backfill ends, and the consumer would
 download the day twice. When the gaps and tasks are done, the next run builds the day.
 
+### New datasets: history load and a one-off reissue (#138)
+
+Owner decision of 2026-11-11: when a dataset is added to the hub, its history is backfilled **and**
+the `eod_final` cuts of the last 12 months are reissued **once**, so that past cuts contain the new
+series, with no operator action. Code: `src/mdhub/quality/history_load.py` (the dataset side) and
+this job (the cut side); state: `ops.dataset_history_load` (one row per dataset, migration 0840).
+
+1. **Detection.** In repair mode, inside the night window, every run looks at the registered
+   datasets that have a backfill job and a `history_start` (daily, business-daily or monthly; not
+   event, intraday or rolling-window ones). A dataset **without a row** in
+   `ops.dataset_history_load` whose earliest stored day is later than its `history_start`, with at
+   least one expected day of its calendar in between (an empty table: up to the expected latest
+   day), is new. The scheduled gap scan cannot see this head of the history (it scans from the
+   earliest stored day; an empty table is only `no rows`), which is why such a history used to wait
+   for a manual run. A dataset that already has its history, or has a row, is never touched again.
+2. **Load.** The head `[history_start, earliest stored day - 1]` is queued in `ops.backfill_task`
+   with source `history_load`, in chunks of the dataset's `max_task_days`, **one set of tasks per
+   backfill job** (datasets that share a job share its tasks). The ordinary `backfill_worker`
+   runs them (every 10 minutes, with its time budget; it yields to scheduled runs as always) and
+   takes them **after the tasks of every other source**, so repairs of live gaps are not delayed.
+   "As far as each source allows": a day the source has nothing for stays empty. A range whose task
+   failed (after the worker's own 5 attempts) is queued again once, no sooner than 6 hours later;
+   what is still missing then stays missing, noted in the row and in `/v1/gaps`.
+   The worker's autocorrection (a rebuild of the cuts of the days a backfill touched) is **not**
+   applied to these tasks: it would reissue the same cuts once per task and dataset.
+3. **One reissue pass.** When no dataset is still loading, the datasets whose load added rows (the
+   earliest stored day moved back) and whose job feeds the cut (`SNAPSHOT_INPUT_JOBS`: fixings,
+   FX, curves, CPI, ...) start **one** pass together: every current `eod_final` cut of the last
+   365 days (up to the previous business day) gets a gap `snapshot_cut_new_series` and is rebuilt
+   as known now (a correction that `supersedes` the old snapshot, which stays readable; a cut that
+   already holds the data publishes nothing). The pass runs in the night window, at most
+   `MDHUB_SNAPSHOT_HEAL_MAX_PER_RUN` cuts per run with the pause between them, like every other
+   repair, and one rebuild closes all gaps of a cut. A dataset detected while a pass runs waits
+   for the next pass. A cut that fails is retried and given up like any other (see "Failures").
+4. **Done.** When no cut of the pass is `open`, its datasets are `done`: the row stays, nothing is
+   detected, queued or reissued for them again. A dataset whose load added nothing, or whose job
+   does not feed the cut, is `done` without a pass.
+
+Status: `GET /v1/gaps?dataset=snapshot_history_load` (one gap per dataset, `open` while it loads
+or waits for the pass, with the progress in `note`; `backfilled` when done) and
+`...=snapshot_cut_new_series` (the cuts of the pass still to reissue); `GET /v1/runs?job=snapshot_heal`
+(the run result lists `history`: new datasets, loading / reissue counts, the pass started and
+finished). `MDHUB_SNAPSHOT_HEAL_HISTORY=false` switches this part off; `mode=detect` and the
+daytime do not start anything. Limits of this design: a dataset is judged as a whole (a new
+*series* inside an existing dataset, e.g. one more index code in a table, is not detected), and the
+cuts are reissued from the data stored at the time of the pass.
+
 ### Carried curves: when a cut is outdated, and why the job does not loop
 
 A cut that carries a curve is **not** a defect by itself: the day really has no data, and the cut
@@ -100,6 +147,7 @@ curve is rebuilt once and closes both gaps.
 | `MDHUB_SNAPSHOT_HEAL_WINDOW` | `21:00-06:00` | MSK hours in which cuts are built (`HH:MM-HH:MM`, may wrap midnight) |
 | `MDHUB_SNAPSHOT_HEAL_MAX_PER_RUN` | `10` | cuts per run |
 | `MDHUB_SNAPSHOT_HEAL_PAUSE_S` | `20` | pause between two cuts, seconds |
+| `MDHUB_SNAPSHOT_HEAL_HISTORY` | `true` | the history load of new datasets and the one-off reissue after it (repair mode, night window) |
 
 **Why `repair` is the default.** The owner decision is that a normal deploy repairs the history with
 no manual step, and a setting only the operator can change would be that step. The risk is bounded:
@@ -122,6 +170,15 @@ deploy that contains it repairs the history without anyone running anything:
 * **Consumers download these snapshots again.** Any client that follows `eod_final` sees about 249
   new snapshot ids over those nights: new days and replacements of existing days. Expect that
   download (and whatever the client recomputes from the history).
+* **History of new datasets (the same job).** In the same nights the job finds the datasets that
+  are new to the hub (their earliest stored day is later than their `history_start`: the ones added
+  in 0.3.2 and any other registered dataset with such a gap), queues their history in the backfill
+  queue (a one-off load; the backfill worker needs hours to days, depending on the sources) and,
+  when the loads are finished, reissues the `eod_final` cuts of the last 12 months **once more**
+  (a second wave of up to about 250 correction ids; a cut that is still waiting for its reissue
+  above is rebuilt once for both reasons). Plan for that download as well. The list of what is
+  loading is `/v1/gaps?dataset=snapshot_history_load`. `MDHUB_SNAPSHOT_HEAL_HISTORY=false` leaves
+  this part out.
 * Afterwards the runs end `skipped` ("nothing to heal") and publish nothing.
 * **Switch.** `MDHUB_SNAPSHOT_HEAL=off` makes the job do nothing; `detect` only records the gaps and
   builds nothing (watch the scale first, then set `repair`). The server configuration is read at
@@ -133,6 +190,6 @@ deploy that contains it repairs the history without anyone running anything:
   carried forward from the latest earlier day, flagged (contract 1.7, #143), and stays visible as a
   gap of `curves_ruonia_ois` / `curves_key_rate_swap` and as stale reasons of the cut. The carry is
   configured by `MDHUB_CURVE_CARRY_DATASETS` / `MDHUB_CURVE_CARRY_MAX_AGE_DAYS`.
-* Loading the history of datasets added later (v0.3.2: €STR, SOFR, FX crosses, proxy curves, ...).
-* Corrections of cuts after such a history load: that is the existing `MDHUB_SNAPSHOT_AUTOCORRECT`
-  mechanism, unchanged.
+* A new series inside a dataset that already has its history (one more index code in a table): the
+  load is judged per dataset (see "New datasets"). The corrections of cuts after an ordinary
+  backfill of live gaps are the existing `MDHUB_SNAPSHOT_AUTOCORRECT` mechanism, unchanged.

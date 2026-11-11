@@ -16,7 +16,8 @@ the next 10-minute trigger) or ``max_tasks`` is used up. For a task the worker:
    range) -> ``not_expected``. A ``partial`` run whose range still has open gaps counts as a failed
    attempt (step 4), so a persistently failing day ends ``failed`` instead of looping; a
    ``partial`` run that filled the range marks the task done,
-   After a done task whose run changed rows of a job that feeds the ``eod_final`` cut
+   After a done task (not one of a history load, whose reissue is a single pass of
+   ``snapshot_heal``) whose run changed rows of a job that feeds the ``eod_final`` cut
    (:data:`mdhub.snapshot.readiness.SNAPSHOT_INPUT_JOBS`), the published ``eod_final`` cuts of
    the business dates in the range are queued for a rebuild (dataset ``snapshot_eod_final``,
    job ``snapshot_rebuild``; ``MDHUB_SNAPSHOT_AUTOCORRECT``): a cut whose content changed is
@@ -51,6 +52,7 @@ from mdhub.datasets import DatasetSpec, get_dataset
 from mdhub.db.pool import Database
 from mdhub.jobs import REGISTRY, JobContext, JobParamError, JobRegistry, job, run_job
 from mdhub.quality.checks import compress_ranges, job_datasets, queue_range, reconcile_gaps
+from mdhub.quality.history_load import HISTORY_SOURCE
 from mdhub.snapshot.readiness import EOD_FINAL_DATASET, SNAPSHOT_INPUT_JOBS, eod_final_cuts
 
 __all__ = [
@@ -79,6 +81,8 @@ class Task:
     dataset: str
     params: dict[str, Any]
     attempts: int
+    source: str = "quality"
+    """Who queued it (``ops.backfill_task.source``)."""
 
 
 @dataclass(slots=True)
@@ -135,7 +139,7 @@ def claim_task(db: Database) -> Task | None:
             WITH c AS (
                 SELECT id FROM ops.backfill_task
                 WHERE status = 'pending' AND (not_before IS NULL OR not_before <= now())
-                ORDER BY created_at, id
+                ORDER BY (source = 'history_load'), created_at, id
                 LIMIT 1
                 FOR UPDATE SKIP LOCKED
             )
@@ -143,12 +147,18 @@ def claim_task(db: Database) -> Task | None:
             SET status = 'running', attempts = t.attempts + 1, started_at = now(),
                 not_before = NULL
             FROM c WHERE t.id = c.id
-            RETURNING t.id, t.dataset, t.params, t.attempts
+            RETURNING t.id, t.dataset, t.params, t.attempts, t.source
             """
         ).fetchone()
     if row is None:
         return None
-    return Task(id=int(row[0]), dataset=str(row[1]), params=dict(row[2]), attempts=int(row[3]))
+    return Task(
+        id=int(row[0]),
+        dataset=str(row[1]),
+        params=dict(row[2]),
+        attempts=int(row[3]),
+        source=str(row[4]),
+    )
 
 
 def _finish(
@@ -418,7 +428,13 @@ def process_task(
         summary.gaps_backfilled += res.backfilled
         summary.gaps_unfillable += res.unfillable
         entry.update(status="done", backfilled=res.backfilled, unfillable=res.unfillable)
-        corrections = queue_snapshot_corrections(db, settings, spec, d1, d2, res.run_id)
+        # the history load of a new dataset is followed by one reissue pass of the cuts
+        # (snapshot_heal), not by a rebuild per task
+        corrections = (
+            []
+            if task.source == HISTORY_SOURCE
+            else queue_snapshot_corrections(db, settings, spec, d1, d2, res.run_id)
+        )
         if corrections:
             entry["snapshot_rebuilds_queued"] = [
                 [a.isoformat(), b.isoformat()] for a, b in corrections

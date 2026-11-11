@@ -77,6 +77,7 @@ __all__ = [
     "day_predicate",
     "expected_days",
     "expected_latest",
+    "first_stored_day",
     "gap_series",
     "job_datasets",
     "max_task_days",
@@ -359,6 +360,21 @@ def _bounds(conn: Conn, info: TableInfo) -> tuple[date | None, date | None, int]
         row = cur.execute(q, []).fetchone()  # params given: '%%' in `where` is unescaped
     assert row is not None
     return info.to_day(row[0]), info.to_day(row[1]), int(row[2])
+
+
+def first_stored_day(conn: Conn, spec: DatasetSpec) -> date | None:
+    """Earliest stored date of ``spec`` (all series; its ``where`` applies); ``None`` for an empty
+    or missing table. One index-friendly ``min()``, cheap on a large table (unlike
+    :func:`_bounds`, which counts)."""
+    info = probe_table(conn, spec)
+    if info is None:
+        return None
+    q = sql.SQL("SELECT min({c}) FROM {t} WHERE true{w}").format(
+        c=info.col, t=info.table, w=info.where_extra()
+    )
+    with conn.cursor(row_factory=tuple_row) as cur:
+        row = cur.execute(q, []).fetchone()
+    return info.to_day(row[0]) if row else None
 
 
 def _series_bounds(

@@ -5,7 +5,9 @@ interruption and does nothing when nothing is left."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
+import dataclasses
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
 
@@ -13,12 +15,23 @@ import pytest
 from psycopg.types.json import Jsonb
 
 import mdhub.loaders.snapshot_heal as heal
+import mdhub.quality.backfill as backfill
+import mdhub.quality.history_load as history_load
 from mdhub.config import Settings, in_clock_window, parse_clock_window
 from mdhub.core.bizday import DbCalendar
 from mdhub.core.timeutil import MSK
-from mdhub.datasets import datasets_for_job
+from mdhub.core.upsert import UpsertResult
+from mdhub.datasets import (
+    DatasetSpec,
+    datasets_for_job,
+    get_dataset,
+    register_dataset,
+    unregister_dataset,
+)
 from mdhub.db.pool import Database
-from mdhub.jobs import JobOutcome, discover_jobs, run_job
+from mdhub.jobs import REGISTRY, JobContext, JobOutcome, discover_jobs, run_job
+from mdhub.quality.checks import queue_range
+from mdhub.snapshot.readiness import SNAPSHOT_INPUT_JOBS
 from mdhub.snapshot.runner import publish_market_snapshot
 from mdhub.snapshot.static import STATIC_BASIS_AS_OF_DATE
 from test_api_seed import seed
@@ -64,7 +77,8 @@ def fixed_clock(monkeypatch: pytest.MonkeyPatch) -> list[datetime]:
 
 
 def _heal(settings: Settings, db: Database, **params: Any) -> JobOutcome:
-    params = {"date_from": FROM.isoformat(), "min_bond_rows": 1, **params}
+    # the history load of new datasets has its own tests (test_history_load.py)
+    params = {"date_from": FROM.isoformat(), "min_bond_rows": 1, "history": False, **params}
     # the database calendar, as in production (it counts the Saturday 2026-10-17 of the seed as a
     # business day: a working weekend day)
     return run_job("snapshot_heal", params, settings=settings, db=db, calendar=DbCalendar(db))
@@ -774,3 +788,442 @@ def test_a_cut_on_an_old_static_that_also_carries_is_rebuilt_once(
     assert len(_eod_final(world)[DAY]) == 2
     assert _gaps(world, heal.REISSUE_GAPS)[DAY][0] == "backfilled"
     assert _gaps(world, heal.CARRIED_GAPS)[DAY][0] == "backfilled"
+
+
+# ----------------------------------------- history of new datasets and its reissue (#138)
+
+
+@dataclass
+class Series:
+    """A fake dataset on ``md.fixing`` (index code ``code``) with its backfill job."""
+
+    code: str
+    job: str
+    dataset: str
+    calls: list[tuple[date, date]] = field(default_factory=list)
+    fail: bool = False
+    no_data: set[date] = field(default_factory=set)
+
+
+FIRST_STORED = date(2026, 10, 12)  # the live loader started on Monday the 12th
+HISTORY_START = date(2026, 10, 1)
+
+
+def _weekdays(lo: date, hi: date) -> list[date]:
+    out, d = [], lo
+    while d <= hi:
+        if d.weekday() < 5:
+            out.append(d)
+        d += timedelta(days=1)
+    return out
+
+
+@pytest.fixture
+def new_series(world: Conn, monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[str], Series]]:
+    """Factory of a registered fake dataset: ``md.fixing`` rows of one index code, stored by its
+    own backfill job from the 12th on (the live loader), history start 2026-10-01. Its job feeds
+    the ``eod_final`` cut like the real input jobs."""
+    made: list[Series] = []
+
+    def make(code: str) -> Series:
+        s = Series(code=code, job=f"test_hl_{code.lower()}", dataset=f"test_hl_{code.lower()}")
+
+        def loader(
+            ctx: JobContext,
+            *,
+            date_from: date | None = None,
+            date_to: date | None = None,
+        ) -> None:
+            assert date_from is not None and date_to is not None
+            s.calls.append((date_from, date_to))
+            if s.fail:
+                raise RuntimeError("source down")
+            days = [d for d in _weekdays(date_from, date_to) if d not in s.no_data]
+            with ctx.connection() as c, c.cursor() as cur:
+                cur.executemany(
+                    "INSERT INTO md.fixing (index_code, fixing_date, source, value) "
+                    "VALUES (%s, %s, 'ecb', 1.5) ON CONFLICT DO NOTHING",
+                    [(s.code, d) for d in days],
+                )
+            ctx.run.add_counts(UpsertResult(inserted=len(days)))
+
+        REGISTRY.register(s.job, "fake history loader", loader)
+        register_dataset(
+            DatasetSpec(
+                name=s.dataset,
+                table="md.fixing",
+                date_column="fixing_date",
+                calendar="MOEX_STOCK",
+                frequency="business_daily",
+                max_lag_days=1,
+                description="t",
+                backfill_job=s.job,
+                history_start=HISTORY_START,
+                where=f"index_code = '{s.code}'",
+            )
+        )
+        for d in (FIRST_STORED, date(2026, 10, 13)):
+            world.execute(
+                "INSERT INTO md.fixing (index_code, fixing_date, source, value) "
+                "VALUES (%s, %s, 'ecb', 1.5)",
+                (code, d),
+            )
+        world.commit()
+        made.append(s)
+        jobs = frozenset({*SNAPSHOT_INPUT_JOBS, *(m.job for m in made)})
+        monkeypatch.setattr(history_load, "SNAPSHOT_INPUT_JOBS", jobs)
+        monkeypatch.setattr(backfill, "SNAPSHOT_INPUT_JOBS", jobs)
+        return s
+
+    try:
+        yield make
+    finally:
+        for s in made:
+            REGISTRY.unregister(s.job)
+            unregister_dataset(s.dataset)
+
+
+def _hl(settings: Settings, db: Database, only: list[Series], **params: Any) -> JobOutcome:
+    """A heal run with the history load of exactly ``only`` (night, default window)."""
+    return _heal(
+        settings,
+        db,
+        history=True,
+        history_only=[s.dataset for s in only],
+        **params,
+    )
+
+
+def _work(settings: Settings, db: Database) -> backfill.WorkerSummary:
+    """What the backfill worker does with the queued tasks."""
+    return backfill.process_tasks(settings=settings, db=db, calendar=DbCalendar(db))
+
+
+def _tasks(conn: Conn, dataset: str, source: str = history_load.HISTORY_SOURCE) -> list[Any]:
+    return conn.execute(
+        "SELECT params ->> 'date_from' AS a, params ->> 'date_to' AS b, status "
+        "FROM ops.backfill_task WHERE dataset = %s AND source = %s ORDER BY id",
+        (dataset, source),
+    ).fetchall()
+
+
+def _history_row(conn: Conn, dataset: str) -> Any:
+    return conn.execute(
+        "SELECT * FROM ops.dataset_history_load WHERE dataset = %s", (dataset,)
+    ).fetchone()
+
+
+def _cuts_with(conn: Conn, code: str) -> dict[date, bool]:
+    """Whether the current eod_final cut of each day holds the history (before the first stored
+    day) of the series ``code``."""
+    out = {}
+    for d in QUOTED:
+        doc = _doc_of_current(conn, d)
+        out[d] = any(
+            f["index_code"] == code and f["fixing_date"] < FIRST_STORED.isoformat()
+            for f in doc["data"]["fixings"]
+        )
+    return out
+
+
+def test_new_dataset_history_is_loaded_and_the_cuts_reissued_once(
+    world: Conn,
+    settings: Settings,
+    db: Database,
+    new_series: Callable[[str], Series],
+) -> None:
+    s = new_series("TESTHLA")
+    _heal(settings, db)  # the cuts of the 13th..15th, built before the history exists
+    base = {d: ids[:] for d, ids in _eod_final(world).items()}
+    assert sorted(base) == QUOTED and all(len(v) == 1 for v in base.values())
+
+    # 1) the next night run finds the dataset, queues its history and says so
+    out = _hl(settings, db, [s])
+    assert out.status == "skipped" and out.result["history"]["new"] == [s.dataset]
+    assert [(t["a"], t["b"], t["status"]) for t in _tasks(world, s.dataset)] == [
+        ("2026-10-01", "2026-10-09", "pending")  # up to the Friday before the first stored day
+    ]
+    row = _history_row(world, s.dataset)
+    assert row["status"] == "loading" and row["first_before"] == FIRST_STORED
+    assert row["history_from"] == HISTORY_START and row["backfill_job"] == s.job
+    gap = _gaps_by_key(world, heal.HISTORY_GAPS)[s.dataset]
+    assert gap[0] == "open" and "1 backfill task" in gap[1]
+    listed = world.execute(
+        "SELECT key ->> 'dataset' AS d FROM ops.v_open_gaps WHERE dataset = %s",
+        (heal.HISTORY_GAPS,),
+    ).fetchall()
+    assert [r["d"] for r in listed] == [s.dataset]  # visible in /v1/gaps
+    # a second run queues nothing again and builds nothing
+    count = _count(world)
+    again = _hl(settings, db, [s])
+    assert again.result["history"].get("new") is None and len(_tasks(world, s.dataset)) == 1
+    assert _count(world) == count and _cuts_with(world, s.code) == dict.fromkeys(QUOTED, False)
+
+    # 2) the ordinary backfill worker loads it; it does not queue a rebuild per task
+    summary = _work(settings, db)
+    assert summary.done == 1 and s.calls == [(HISTORY_START, date(2026, 10, 9))]
+    assert _tasks(world, s.dataset)[0]["status"] == "done"
+    assert "queued" not in str(summary.tasks[0].get("snapshot_rebuilds_queued", ""))
+    assert world.execute(
+        "SELECT count(*) AS n FROM ops.backfill_task WHERE dataset = 'snapshot_eod_final'"
+    ).fetchone() == {"n": 0}
+    assert _eod_final(world) == base  # no cut was touched yet
+
+    # 3) the next night run reissues the cuts of the last 12 months, once
+    out = _hl(settings, db, [s])
+    assert out.status == "succeeded", out
+    assert [b["day"] for b in out.result["built"]] == [d.isoformat() for d in QUOTED]
+    assert all(b["datasets"] == [heal.NEW_SERIES_GAPS] for b in out.result["built"])
+    assert out.result["history"]["pass_started"] == {"datasets": [s.dataset], "cuts": 3}
+    assert out.result["history"]["finished"] == [s.dataset]
+    cuts = _eod_final(world)
+    for d in QUOTED:
+        assert len(cuts[d]) == 2 and cuts[d][0] == base[d][0]  # a correction; the old one stays
+        row = world.execute(
+            "SELECT supersedes FROM ops.published_snapshot WHERE id = %s", (cuts[d][1],)
+        ).fetchone()
+        assert row is not None and row["supersedes"] == cuts[d][0]
+    assert _cuts_with(world, s.code) == dict.fromkeys(QUOTED, True)  # the past cuts hold the series
+    gaps = _gaps(world, heal.NEW_SERIES_GAPS)
+    assert {d: st for d, (st, _n) in gaps.items()} == dict.fromkeys(QUOTED, "backfilled")
+    assert gaps[QUOTED[0]][1].startswith("reissued: snapshot")
+    row = _history_row(world, s.dataset)
+    assert row["status"] == "done" and row["first_after"] == date(2026, 10, 1)
+    assert row["pass_started_at"] is not None
+    assert _gaps_by_key(world, heal.HISTORY_GAPS)[s.dataset][0] == "backfilled"
+    assert _all_snapshots_valid(world) >= 6
+
+    # 4) it never happens again: nothing detected, queued or reissued
+    count, tasks = _count(world), len(_tasks(world, s.dataset))
+    for _ in range(2):
+        idle = _hl(settings, db, [s])
+        assert idle.status == "skipped" and idle.result["built"] == []
+        assert idle.result["history"] == {"finished": [], "loading": 0, "reissue": 0}
+    assert _count(world) == count and len(_tasks(world, s.dataset)) == tasks
+    assert _eod_final(world) == cuts
+
+
+def _gaps_by_key(conn: Conn, dataset: str) -> dict[str, tuple[str, str]]:
+    return {
+        r["k"]: (r["status"], r["note"])
+        for r in conn.execute(
+            "SELECT coalesce(key ->> 'dataset', key ->> 'cut_ts') AS k, status, note "
+            "FROM ops.data_gap WHERE dataset = %s",
+            (dataset,),
+        ).fetchall()
+    }
+
+
+def test_the_pass_waits_for_every_loading_dataset_and_reissues_once(
+    world: Conn,
+    settings: Settings,
+    db: Database,
+    new_series: Callable[[str], Series],
+) -> None:
+    a, b = new_series("TESTHLA"), new_series("TESTHLB")
+    _heal(settings, db)
+    base = _eod_final(world)
+    _hl(settings, db, [a, b])
+    assert len(_tasks(world, a.dataset)) == 1 and len(_tasks(world, b.dataset)) == 1
+    # only A is loaded so far (B's task waits behind a stuck source)
+    world.execute(
+        "UPDATE ops.backfill_task SET not_before = now() + interval '1 day' WHERE dataset = %s",
+        (b.dataset,),
+    )
+    world.commit()
+    _work(settings, db)
+    out = _hl(settings, db, [a, b])
+    assert out.status == "skipped" and out.result["built"] == []
+    assert _history_row(world, a.dataset)["status"] == "reissue"  # waits for B
+    assert _history_row(world, b.dataset)["status"] == "loading"
+    assert _eod_final(world) == base and "pass_started" not in out.result["history"]
+    # B is loaded: ONE pass for both
+    world.execute("UPDATE ops.backfill_task SET not_before = NULL WHERE dataset = %s", (b.dataset,))
+    world.commit()
+    _work(settings, db)
+    out = _hl(settings, db, [a, b])
+    assert out.result["history"]["pass_started"] == {"datasets": [a.dataset, b.dataset], "cuts": 3}
+    assert sorted(out.result["history"]["finished"]) == [a.dataset, b.dataset]
+    cuts = _eod_final(world)
+    assert all(len(cuts[d]) == 2 for d in QUOTED)  # each cut reissued once, not once per dataset
+    assert (
+        _cuts_with(world, "TESTHLA") == _cuts_with(world, "TESTHLB") == dict.fromkeys(QUOTED, True)
+    )
+
+
+def _fail_open_tasks(conn: Conn, dataset: str, finished: datetime) -> None:
+    """The worker gave up on the open tasks of ``dataset`` after its own attempts."""
+    conn.execute(
+        "UPDATE ops.backfill_task SET status = 'failed', attempts = 5, done_at = %s "
+        "WHERE dataset = %s AND status IN ('pending', 'running')",
+        (finished, dataset),
+    )
+    conn.commit()
+
+
+def test_a_failed_range_is_queued_again_once_and_then_given_up(
+    world: Conn,
+    settings: Settings,
+    db: Database,
+    fixed_clock: list[datetime],
+    new_series: Callable[[str], Series],
+) -> None:
+    s = new_series("TESTHLA")
+    s.fail = True
+    _heal(settings, db)
+    base = _eod_final(world)
+    _hl(settings, db, [s])
+    now = fixed_clock[0]
+    _fail_open_tasks(world, s.dataset, now - timedelta(hours=1))
+    _hl(settings, db, [s])
+    assert [t["status"] for t in _tasks(world, s.dataset)] == ["failed"]  # too soon to retry
+    world.execute("UPDATE ops.backfill_task SET done_at = %s", (now - timedelta(hours=7),))
+    world.commit()
+    out = _hl(settings, db, [s])
+    assert [t["status"] for t in _tasks(world, s.dataset)] == ["failed", "pending"]
+    assert _history_row(world, s.dataset)["load_round"] == 2
+    assert "queued again" in _history_row(world, s.dataset)["note"] and out.status == "skipped"
+    # it fails again: no third round; the load ends with what there is - nothing, so no reissue
+    _fail_open_tasks(world, s.dataset, now - timedelta(hours=7))
+    out = _hl(settings, db, [s])
+    row = _history_row(world, s.dataset)
+    assert row["status"] == "done" and "could not be loaded" in row["note"]
+    assert "no rows were added" in row["note"] and row["pass_started_at"] is None
+    assert len(_tasks(world, s.dataset)) == 2 and _eod_final(world) == base
+    assert out.result["built"] == []
+
+
+def test_nothing_is_loaded_for_a_complete_dataset_or_outside_repair_in_the_window(
+    world: Conn,
+    settings: Settings,
+    db: Database,
+    fixed_clock: list[datetime],
+    new_series: Callable[[str], Series],
+) -> None:
+    s = new_series("TESTHLA")
+    # a series whose stored data already reaches the history start has no head to load
+    world.execute(
+        "INSERT INTO md.fixing (index_code, fixing_date, source, value) "
+        "VALUES (%s, %s, 'ecb', 1.5)",
+        (s.code, HISTORY_START),
+    )
+    world.commit()
+    _hl(settings, db, [s])
+    assert _history_row(world, s.dataset) is None and _tasks(world, s.dataset) == []
+    world.execute(
+        "DELETE FROM md.fixing WHERE index_code = %s AND fixing_date = %s", (s.code, HISTORY_START)
+    )
+    world.commit()
+
+    # detect mode, the switch, and the daytime do nothing
+    _hl(settings, db, [s], mode="detect")
+    _heal(settings, db, history=False, history_only=[s.dataset])
+    assert _history_row(world, s.dataset) is None
+    fixed_clock[0] = datetime(2026, 10, 20, 12, 0, tzinfo=MSK).astimezone(UTC)  # daytime
+    _hl(settings, db, [s])
+    assert _history_row(world, s.dataset) is None and _tasks(world, s.dataset) == []
+    # the night, repair: now it is found
+    fixed_clock[0] = NIGHT.astimezone(UTC)
+    _hl(settings, db, [s])
+    assert _history_row(world, s.dataset)["status"] == "loading"
+
+
+def test_an_empty_dataset_is_loaded_up_to_the_expected_latest_day(
+    world: Conn,
+    settings: Settings,
+    db: Database,
+    new_series: Callable[[str], Series],
+) -> None:
+    s = new_series("TESTHLA")
+    world.execute("DELETE FROM md.fixing WHERE index_code = %s", (s.code,))
+    world.commit()
+    _hl(settings, db, [s])
+    row = _history_row(world, s.dataset)
+    assert row["first_before"] is None and row["status"] == "loading"
+    # today is Tuesday 10-20, max_lag_days 1: the expected latest day is Monday 10-19
+    assert row["head_to"] == date(2026, 10, 19)
+    assert [(t["a"], t["b"]) for t in _tasks(world, s.dataset)] == [("2026-10-01", "2026-10-19")]
+
+
+def test_the_history_load_applies_only_to_datasets_that_can_have_one() -> None:
+    spec = DatasetSpec(
+        name="x",
+        table="md.fixing",
+        date_column="fixing_date",
+        calendar="MOEX_STOCK",
+        frequency="business_daily",
+        max_lag_days=1,
+        description="t",
+        backfill_job="snapshot_heal",
+        history_start=HISTORY_START,
+    )
+    assert history_load.eligible(spec)
+    for change in (
+        {"backfill_job": None},
+        {"backfill_job": "no_such_job"},
+        {"history_start": None},
+        {"frequency": "event"},
+        {"frequency": "intraday"},
+        {"min_rows_per_day": 0},
+        {"rolling_window_setting": "algopack_retention_days"},
+    ):
+        assert not history_load.eligible(dataclasses.replace(spec, **change)), change
+
+
+def test_history_tasks_go_last_and_only_other_tasks_queue_the_autocorrection(
+    world: Conn,
+    settings: Settings,
+    db: Database,
+    new_series: Callable[[str], Series],
+) -> None:
+    s = new_series("TESTHLA")
+    _heal(settings, db)
+    _hl(settings, db, [s])  # a history task is queued first ...
+    spec = get_dataset(s.dataset)
+    quality = queue_range(world, spec, date(2026, 10, 13), date(2026, 10, 15), source="quality")
+    world.commit()
+    assert quality[0][0] is not None
+    # ... yet the worker takes the other task first: live gap repairs are not delayed by it
+    first = backfill.claim_task(db)
+    assert first is not None and first.source == "quality"
+    backfill.process_task(first, settings=settings, db=db, calendar=DbCalendar(db))
+    queued = world.execute(
+        "SELECT count(*) AS n FROM ops.backfill_task WHERE dataset = 'snapshot_eod_final'"
+    ).fetchone()
+    assert queued is not None and queued["n"] >= 1  # the ordinary autocorrection of the cuts
+    second = backfill.claim_task(db)  # the rebuild that autocorrection queued, then the history
+    assert second is not None and second.source == "snapshot_autocorrect"
+    third = backfill.claim_task(db)
+    assert third is not None and third.source == history_load.HISTORY_SOURCE
+
+
+def test_a_dataset_that_cannot_be_checked_does_not_stop_the_others(
+    world: Conn,
+    settings: Settings,
+    db: Database,
+    new_series: Callable[[str], Series],
+) -> None:
+    s = new_series("TESTHLA")
+    REGISTRY.register("test_hl_bad", "fake", lambda ctx, *, date_from=None, date_to=None: None)
+    register_dataset(
+        DatasetSpec(
+            name="test_hl_bad",
+            table="md.fixing",
+            date_column="no_such_column",
+            calendar="MOEX_STOCK",
+            frequency="business_daily",
+            max_lag_days=1,
+            description="t",
+            backfill_job="test_hl_bad",
+            history_start=HISTORY_START,
+        )
+    )
+    try:
+        out = _hl(settings, db, [s])
+        assert out.result["history"]["new"] == [s.dataset]
+        assert _history_row(world, "test_hl_bad") is None
+        other = _heal(settings, db, history=True, history_only=["test_hl_bad", s.dataset])
+        assert other.result["history"].get("new") is None
+    finally:
+        REGISTRY.unregister("test_hl_bad")
+        unregister_dataset("test_hl_bad")

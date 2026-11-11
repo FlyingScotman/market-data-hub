@@ -74,6 +74,10 @@ Environment variables (DESIGN §7 plus a few operational knobs):
                                     builds, default 21:00-06:00
 ``MDHUB_SNAPSHOT_HEAL_MAX_PER_RUN`` cuts built per run, default 10
 ``MDHUB_SNAPSHOT_HEAL_PAUSE_S``     pause between two cuts in seconds, default 20
+``MDHUB_SNAPSHOT_HEAL_HISTORY``     ``snapshot_heal`` also loads the history of datasets new to
+                                    the hub and reissues the ``eod_final`` cuts of the last 12
+                                    months once afterwards (repair mode, night window only);
+                                    default true
 ``MDHUB_CURVE_CARRY_DATASETS``      curves a market cut takes from the latest previous day that
                                     has them when no source delivered them on its day, flagged
                                     (contract 1.7); comma separated, empty = no carry; default
@@ -357,6 +361,10 @@ class Settings(BaseSettings):
         ge=0,
         le=600,
         validation_alias=AliasChoices("MDHUB_SNAPSHOT_HEAL_PAUSE_S", "snapshot_heal_pause_s"),
+    )
+    snapshot_heal_history: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("MDHUB_SNAPSHOT_HEAL_HISTORY", "snapshot_heal_history"),
     )
     bonds_eod_prelim_min_rows: int = Field(
         default=1000,
