@@ -167,7 +167,7 @@ tokens are random values, not signed blobs. Rotating the key re-encrypts the sec
 
 ### 6.1 Release artifacts
 
-- A tag `vX.Y.Z` triggers a GitHub Actions workflow on the private repository. It runs the tests, `ruff` and `mypy`,
+- A pushed tag `vX.Y.Z`, or *Run workflow* on `main` with a version (the workflow then makes the tag itself after signing, README_DEPLOY §11), starts a GitHub Actions workflow on the private repository. It runs the tests, `ruff` and `mypy`,
   then builds a **code-only bundle** `market-data-hub-X.Y.Z.tar.gz`. The bundle is `git archive` plus a `MANIFEST.json`
   (version, commit, migrations with checksums, minimum previous version) and `SHA256SUMS`. It contains no seed dump.
   `make_bundle.sh` gains `--code-only`.

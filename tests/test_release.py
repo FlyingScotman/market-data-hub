@@ -605,10 +605,15 @@ def test_ci_workflow() -> None:
 
 def test_release_workflow() -> None:
     wf = _workflow("release.yml")
-    assert wf[True] == {"push": {"tags": ["v*"]}}
+    triggers = wf[True]
+    # a pushed tag and "Run workflow" with the version (main only, checked in the job `check`)
+    assert triggers["push"] == {"tags": ["v*"]}
+    version_input = triggers["workflow_dispatch"]["inputs"]["version"]
+    assert version_input["required"] is True and version_input["type"] == "string"
     assert wf["permissions"] == {}
     jobs = wf["jobs"]
-    assert jobs["ci"]["uses"] == "./.github/workflows/ci.yml"
+    assert list(jobs) == ["check", "ci", "build", "sign", "verify", "publish"]
+    assert jobs["ci"]["uses"] == "./.github/workflows/ci.yml" and jobs["ci"]["needs"] == "check"
     assert jobs["build"]["needs"] == "ci"
     sign = jobs["sign"]
     assert sign["environment"] == "release" and sign["needs"] == "build"
@@ -633,6 +638,47 @@ def test_release_workflow() -> None:
             uses = step.get("uses")
             if uses:
                 assert "@" in uses and len(uses.split("@")[1]) == 40, uses  # pinned by SHA
+
+
+def test_release_workflow_run_workflow_path() -> None:
+    """ "Run workflow" (a session may start it): main only, a version that is new, the tag made by
+    the release after sign and verify, and no input text in any script."""
+    text = (WORKFLOWS / "release.yml").read_text()
+    wf = _workflow("release.yml")
+    jobs = wf["jobs"]
+    # the version input reaches the scripts only as an environment value, never in script text
+    for name, job in jobs.items():
+        for step in job.get("steps", []):
+            run = step.get("run", "")
+            assert "${{" not in run, (name, step.get("name"))
+            assert "git push" not in run, (name, step.get("name"))  # a local tag is never pushed
+    assert "VERSION: ${{ inputs.version }}" in text
+    # check: only on a dispatch, only main, a strict new version, no tag and no release yet
+    check = jobs["check"]
+    assert check["permissions"] == {"contents": "read"}
+    check_text = "\n".join(step.get("run", "") for step in check["steps"])
+    for needle in (
+        "refs/heads/main",
+        "version_key",
+        "is not greater than the latest tag",
+        "release not found",
+        "exists already",
+    ):
+        assert needle in check_text, needle
+    assert all("workflow_dispatch" in str(step.get("if", "")) for step in check["steps"]), (
+        "check does nothing on a pushed tag"
+    )
+    # build: the commit gets the tag v<version> in this checkout only, so that hatch-vcs,
+    # make_bundle.sh and .git_archival.txt see what a tag build sees; it is never pushed
+    build_text = "\n".join(step.get("run", "") for step in jobs["build"]["steps"])
+    assert 'git tag "$RELEASE_TAG"' in build_text
+    assert "ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || '' }}" in text
+    # the tag is made by publish only, on the built commit, after verify (which needs sign)
+    publish_text = "\n".join(step.get("run", "") for step in jobs["publish"]["steps"])
+    assert '--target "$GITHUB_SHA"' in publish_text and "--verify-tag" in publish_text
+    assert "git/ref/tags/$RELEASE_TAG" in publish_text
+    assert [n for n, j in jobs.items() if "--target" in str(j)] == ["publish"]
+    assert "sign" in jobs["verify"]["needs"] and "verify" in jobs["publish"]["needs"]
 
 
 def test_deploy_readme_documents_release_keys() -> None:

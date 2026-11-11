@@ -246,8 +246,19 @@ service (`systemctl edit caddy` -> `[Service] Environment=...`), `systemctl relo
 ## 11. Release bundles and signing
 
 A release is a **code-only bundle** signed with an ed25519 key in minisign format
-(ADMIN_DESIGN §6.1). The tag `vX.Y.Z` triggers `.github/workflows/release.yml`, which publishes
-three files on the GitHub Release:
+(ADMIN_DESIGN §6.1). `.github/workflows/release.yml` starts in one of two ways and publishes three
+files on the GitHub Release:
+
+1. **The owner pushes the tag** `vX.Y.Z` (`git tag vX.Y.Z && git push origin vX.Y.Z`).
+2. **Run workflow:** Actions -> *release* -> *Run workflow*, *Use workflow from:* `main`, field `version`
+   = `X.Y.Z` or `X.Y.Z{a|b|rc}N`. The owner starts it, or a session does at the owner's direct request.
+   The job `check` refuses, in seconds and before the tests, a branch other than `main`, a malformed
+   version, a version that is not greater than the latest tag `v*` (compared as versions, not as text) and a
+   version for which the tag or a release exists. The jobs then run as for a tag (`ci`, `build`, `sign`,
+   `verify`, `publish`), all on the commit that was current when the run started. The tag `vX.Y.Z` is made
+   **by `publish`, on that commit, after `sign` and `verify` succeeded** (a release that fails earlier leaves
+   no tag), and `publish` checks that the tag points to the built commit. What this path needs in the
+   repository settings: "The protected environment `release`" below.
 
 | file | content |
 |---|---|
@@ -330,8 +341,11 @@ Repository **Settings -> Environments -> New environment** `release`:
 
 - **Required reviewers**: the owner (and a second maintainer when there is one). The `sign` job
   waits for an approval in the Actions tab before it can read the secrets.
-- **Deployment branches and tags**: *Selected branches and tags*, add the tag pattern `v*`.
-  Nothing else may deploy to `release`.
+- **Deployment branches and tags**: *Selected branches and tags*, add the tag pattern `v*` and, for the
+  Run workflow path, the branch `main` (the `sign` job of that run deploys from `refs/heads/main`; without
+  it the job is refused and nothing is signed). Nothing else may deploy to `release`. With `main` allowed,
+  any workflow that reaches `main` could name this environment; each use still waits for the required
+  reviewers, so read the workflow and the commit in the approval prompt before approving.
 - **Environment secrets** (environment secrets, not repository secrets):
 
 ```bash
@@ -340,13 +354,18 @@ gh secret set MINISIGN_PASSWORD --env release          # prompts; paste the key 
 ```
 
 Also add a tag ruleset (**Settings -> Rules -> Rulesets**, target tags `v*`) so that only admins
-can create, update or delete release tags.
+can create, update or delete release tags. The Run workflow path makes the tag with the workflow's own
+token, which such a ruleset rejects: in the ruleset's **Bypass list** add **GitHub Actions** (*Add
+bypass*), otherwise the release fails at its last step, after signing, and no tag or release is made.
+This is an action of the owner in Settings -> Rules -> Rulesets; pushing a tag by an admin keeps working
+either way.
 
 Only the `sign` job reads the secrets. It downloads the build artifact, installs `minisign` from
 Ubuntu and runs `minisign -S`. It has no checkout, no Python, no project dependencies and no
 token permissions. `verify` then checks the result against the pinned keys of the tagged
-commit, and only `publish` can write, to create the Release. The workflow pins every action
-to a commit SHA.
+commit, and only `publish` can write: it creates the Release and, on the Run workflow path, the tag. The
+workflow pins every action to a commit SHA, and the `version` field is never part of a script (only an
+environment value, checked by `check`).
 
 Plan limits: required reviewers on a **private** repository need a plan that offers them
 (GitHub Enterprise at the time of writing). Without them, keep the environment with its tag rule
@@ -359,6 +378,10 @@ mdhub release verify dist/market-data-hub-X.Y.Z.tar.gz
 gh release create vX.Y.Z --verify-tag dist/market-data-hub-X.Y.Z.tar.gz \
     dist/market-data-hub-X.Y.Z.SHA256SUMS dist/market-data-hub-X.Y.Z.SHA256SUMS.minisig
 ```
+
+(`git rev-parse vX.Y.Z` and `--verify-tag` assume that the tag exists; after a Run workflow run that stopped
+at `sign` it does not. Use the commit of the run in the trusted comment, and `--target <commit>` instead of
+`--verify-tag`.)
 
 ### Rotating the key
 
