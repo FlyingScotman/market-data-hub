@@ -21,6 +21,8 @@ Environment variables (DESIGN §7 plus a few operational knobs):
 ``MDHUB_OPS_LOG_RETENTION_DAYS``    retention of ``ops.api_request`` / ``source_probe`` /
                                     ``worker_heartbeat`` rows, default 90
 ``MDHUB_ENABLE_SDFI``               enable the MOEX SDFI curve loader, default false
+``MDHUB_ENABLE_SPB_BONDS``          read the SPB Exchange public website (``spb_bonds_daily`` job
+                                    and the ``spb`` source probe), default true
 ``MDHUB_LOG_LEVEL``                 logging level, default ``INFO`` (extension)
 ``MDHUB_HTTP_TIMEOUT``              HTTP timeout in seconds, default 30 (extension)
 ``MDHUB_API_POOL_SIZE``             read-API connection pool size, default 8 (extension)
@@ -461,6 +463,13 @@ class Settings(BaseSettings):
     enable_sdfi: bool = Field(
         default=False, validation_alias=AliasChoices("MDHUB_ENABLE_SDFI", "enable_sdfi")
     )
+    enable_spb_bonds: bool = Field(
+        default=True,
+        validation_alias=AliasChoices("MDHUB_ENABLE_SPB_BONDS", "enable_spb_bonds"),
+    )
+    """Read the SPB Exchange public website (owner decision 2026-11-11). ``false``: the
+    ``spb_bonds_daily`` job ends ``skipped`` and the ``spb`` source probe sends nothing; stored
+    data stays and is still served."""
     skip_sources: str | None = Field(
         default=None, validation_alias=AliasChoices("MDHUB_SKIP_SOURCES", "skip_sources")
     )

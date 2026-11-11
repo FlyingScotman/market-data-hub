@@ -224,6 +224,33 @@ def test_source_probe_intervals_hours_and_subset(db_url: str, db: Database, conn
     assert not sp.ratescalcs_hours(datetime(2026, 10, 16, 5, 49, tzinfo=UTC))  # 08:49 MSK
 
 
+def test_spb_probe_hourly_and_off_with_its_setting(db_url: str, db: Database) -> None:
+    """The SPB site is not a contracted feed: one light request an hour, none when switched off
+    (not even with ``force``)."""
+    (spec,) = (p for p in sp.PROBES if p.source == "spb")
+    assert spec.min_interval_s == 3600.0
+
+    def run(settings: Settings, params: dict[str, Any]) -> tuple[Any, respx.Route]:
+        with respx.mock(assert_all_called=False) as router:
+            routes = _mock_sources(router)
+            out = run_job(
+                "source_probe", params, settings=settings, db=db, http_factory=_http_factory
+            )
+        return out, routes["spb"]
+
+    on = Settings(database_url=db_url)
+    first, route = run(on, {"sources": "spb"})
+    assert set(first.result["probed"]) == {"spb"} and route.call_count == 1
+    again, route = run(on, {"sources": "spb"})  # 5 minutes later: inside the hour
+    assert again.result["probed"] == {} and again.result["skipped"] == ["spb"]
+    assert route.call_count == 0
+    off = Settings(database_url=db_url, enable_spb_bonds=False)
+    for params in ({"sources": "spb"}, {"sources": "spb", "force": "true"}, {"force": "true"}):
+        out, route = run(off, params)
+        assert "spb" not in out.result["probed"] and "spb" in out.result["skipped"]
+        assert route.call_count == 0
+
+
 def test_tls_expiry_from_network_stream() -> None:
     ssl_object = MagicMock()
     ssl_object.getpeercert.return_value = {"notAfter": "Jan 15 12:00:00 2027 GMT"}

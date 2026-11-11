@@ -32,7 +32,10 @@ the feed is slow), ``ratescalcs`` the JSON snapshot
 ``/api/bond/`` (bearer), ``cbonds`` one ``get_emissions`` query for a fixed ISIN with ``limit=1``
 - at most hourly (:attr:`ProbeSpec.min_interval_s`), so a rejected login does not hit the
 provider 288 times a day; the rating agencies ``nkr``, ``nra``, ``raexpert`` (WEB-18)
-their ``robots.txt``, at most hourly.
+their ``robots.txt``, at most hourly; ``spb`` (SPB Exchange public website, not a contracted
+feed) the instrument list of the Russian market (the one light JSON request the loader also
+starts with; no ``robots.txt`` is among the saved responses, so it is not assumed to exist),
+at most hourly, and only while ``MDHUB_ENABLE_SPB_BONDS`` is on (:attr:`ProbeSpec.enabled`).
 """
 
 from __future__ import annotations
@@ -112,6 +115,9 @@ class ProbeSpec:
     """Probe at most this often (0 = every run)."""
     active: Callable[[datetime], bool] | None = None
     """Only probe when this returns true for the current time (service hours)."""
+    enabled: Callable[[Settings], bool] | None = None
+    """Only probe when this returns true for the settings (a source that can be switched off:
+    a disabled source gets no request at all, not even with ``force``)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,7 +220,13 @@ def ratescalcs_hours(now: datetime) -> bool:
 
 
 PROBES: Final = (
-    ProbeSpec("spb", _public(spb.BASE_URL + spb.UNIVERSE_PATH)),
+    # not a contracted feed: at most hourly (the loader reads it once a day), off with its job
+    ProbeSpec(
+        "spb",
+        _public(spb.BASE_URL + spb.UNIVERSE_PATH),
+        min_interval_s=3600.0,
+        enabled=lambda s: s.enable_spb_bonds,
+    ),
     ProbeSpec("moex_iss", _public(f"{ISS_BASE_URL}/engines.json?iss.meta=off")),
     ProbeSpec("moex_apim", _apim),
     ProbeSpec("cbr", _public(cbr.BASE_URL + cbr.XML_DAILY_PATH)),
@@ -374,7 +386,7 @@ def source_probe(
     """Probe every source of :data:`PROBES` (or only ``sources``) and record the results.
 
     :param sources: subset of source codes (default: all).
-    :param force: ignore service hours and minimum intervals.
+    :param force: ignore service hours and minimum intervals (not a switched-off source).
     """
     known = {p.source for p in PROBES}
     unknown = sorted(set(sources or ()) - known)
@@ -386,6 +398,9 @@ def source_probe(
     with ctx.http(max_retries=0, timeout=PROBE_TIMEOUT_S) as http:
         for spec in PROBES:
             if sources and spec.source not in sources:
+                continue
+            if spec.enabled is not None and not spec.enabled(ctx.settings):
+                skipped.append(spec.source)
                 continue
             if not force and spec.active is not None and not spec.active(now):
                 skipped.append(spec.source)
