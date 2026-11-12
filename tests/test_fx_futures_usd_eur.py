@@ -80,11 +80,14 @@ def _history_page() -> dict[str, Any]:
                 _history_row("SiZ6", "Si-12.26", "Si", 85219.0),
                 _history_row("SiH7", "Si-3.27", "Si", 86500.0),
                 _history_row("EuZ6", "Eu-12.26", "Eu", 97390.0),
-                # a contract the listing does not know (no description answer): minimal row, no FX
+                # a rates future (RGBI) of the listing: stored, never an FX contract
                 _history_row("RBZ6", "RGBI-12.26", "RGBI", 11200.0),
+                # the perpetual USD proxy and the EUR/USD cross: FX, but no RUB-curve outrights
+                _history_row("USDRUBF", "USDRUBF", "USDRUBTOM", 83.76),
+                _history_row("EDZ6", "ED-12.26", "ED", 1.1227),
             ],
         },
-        "history.cursor": {"columns": ["INDEX", "TOTAL", "PAGESIZE"], "data": [[0, 4, 100]]},
+        "history.cursor": {"columns": ["INDEX", "TOTAL", "PAGESIZE"], "data": [[0, 6, 100]]},
     }
 
 
@@ -113,8 +116,9 @@ def consumer_rows(
 
 
 @respx.mock
+@pytest.mark.parametrize("cut_type", ["eod_preliminary", "eod_final"])
 def test_usd_and_eur_futures_are_in_the_eod_snapshot(
-    settings: Settings, db: Database, conn: Conn
+    cut_type: str, settings: Settings, db: Database, conn: Conn
 ) -> None:
     seed(conn)
     respx.get(ISS_BASE_URL + fx.RFUD_SECURITIES).mock(
@@ -131,7 +135,7 @@ def test_usd_and_eur_futures_are_in_the_eod_snapshot(
 
     published = publish_market_snapshot(
         db,
-        cut_type="eod_preliminary",
+        cut_type=cut_type,
         business_date=DAY,
         cut_ts=datetime(2026, 10, 15, 19, 45, tzinfo=MSK),
         known_at=utc_now(),
@@ -161,34 +165,17 @@ def test_usd_and_eur_futures_are_in_the_eod_snapshot(
     )
     assert eur[0]["labels"] == []  # a contract with static and a settlement price: no flag
 
-    # the RGBI future is stored but is not an FX input
-    assert not [r for r in prices if r["secid"] == "RBZ6" and r["is_fx"]]
+    # the rates future, the perpetual proxy and the cross are in the snapshot, but are no input
+    by_secid = {r["secid"]: r for r in prices}
+    assert by_secid["RBZ6"]["is_fx"] is False
+    assert (by_secid["USDRUBF"]["contract_type"], by_secid["USDRUBF"]["base_ccy"]) == (
+        "perpetual",
+        "USD",
+    )
+    assert (by_secid["EDZ6"]["base_ccy"], by_secid["EDZ6"]["quote_ccy"]) == ("EUR", "USD")
+    consumed = {r["secid"] for r in usd + eur}
+    assert not consumed & {"RBZ6", "USDRUBF", "EDZ6"}
+    fx_secids = {r["secid"] for r in prices if r["is_fx"]}
+    assert fx_secids == {"SiZ6", "SiH7", "EuZ6", "USDRUBF", "EDZ6"}
     coverage = next(d for d in doc["datasets"] if d["name"] == "futures_prices")["coverage"]
-    assert coverage["fx_contracts"] >= 3
-
-
-@pytest.mark.parametrize("ccy", ["USD", "EUR"])
-def test_consumer_rows_skip_perpetuals_and_crosses(ccy: str) -> None:
-    """The perpetual proxy (``USDRUBF``) and the cross futures (``ED``: EUR in USD) are never an
-    outright of the RUB implied curve."""
-    base = {
-        "is_fx": True,
-        "trade_date": DAY.isoformat(),
-        "settle_rub_per_unit": "1",
-        "last_del_date": "2026-12-17",
-        "contract_type": "dated",
-        "quote_ccy": "RUB",
-    }
-    rows = [
-        {**base, "secid": "A", "base_ccy": ccy},
-        {
-            **base,
-            "secid": "PERP",
-            "base_ccy": ccy,
-            "contract_type": "perpetual",
-            "last_del_date": None,
-        },
-        {**base, "secid": "CROSS", "base_ccy": ccy, "quote_ccy": "USD"},
-        {**base, "secid": "NOPRICE", "base_ccy": ccy, "settle_rub_per_unit": None},
-    ]
-    assert [r["secid"] for r in consumer_rows(rows, ccy, DAY)] == ["A"]
+    assert coverage["fx_contracts"] == len(fx_secids)
