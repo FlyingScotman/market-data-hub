@@ -107,6 +107,7 @@ def _creds(db_url: str) -> Settings:
 
 def _mock_sources(router: respx.MockRouter) -> dict[str, respx.Route]:
     return {
+        "spb": router.get(sp.spb.BASE_URL + sp.spb.UNIVERSE_PATH).respond(200, json=[]),
         "moex_iss": router.get("https://iss.moex.com/iss/engines.json").respond(
             200, json={"engines": {}}
         ),
@@ -163,6 +164,7 @@ def test_source_probe_job_records_every_source(
     rows = _probe_rows(conn)
     assert set(rows) == {p.source for p in sp.PROBES}
     assert {k: (r["ok"], r["auth"], r["http_status"]) for k, r in rows.items()} == {
+        "spb": (True, "n/a", 200),
         "moex_iss": (True, "n/a", 200),
         "moex_apim": (False, "rejected", 401),
         "cbr": (True, "n/a", 200),
@@ -220,6 +222,48 @@ def test_source_probe_intervals_hours_and_subset(db_url: str, db: Database, conn
     assert not sp.ratescalcs_hours(datetime(2026, 10, 16, 23, 0, tzinfo=sp.MSK))
     assert not sp.ratescalcs_hours(datetime(2026, 10, 17, 12, 0, tzinfo=sp.MSK))  # Saturday
     assert not sp.ratescalcs_hours(datetime(2026, 10, 16, 5, 49, tzinfo=UTC))  # 08:49 MSK
+
+
+def test_spb_probe_three_a_day_and_off_with_its_setting(db_url: str, db: Database) -> None:
+    """The SPB site is not a contracted feed (the owner allowed a few reads a day): one light
+    request every 8 hours, none when switched off (not even with ``force``)."""
+    (spec,) = (p for p in sp.PROBES if p.source == "spb")
+    assert spec.min_interval_s == 8 * 3600.0 == sp.SPB_PROBE_INTERVAL_S
+
+    def run(settings: Settings, params: dict[str, Any]) -> tuple[Any, respx.Route]:
+        with respx.mock(assert_all_called=False) as router:
+            routes = _mock_sources(router)
+            out = run_job(
+                "source_probe", params, settings=settings, db=db, http_factory=_http_factory
+            )
+        return out, routes["spb"]
+
+    on = Settings(database_url=db_url)
+    first, route = run(on, {"sources": "spb"})
+    assert set(first.result["probed"]) == {"spb"} and route.call_count == 1
+    again, route = run(on, {"sources": "spb"})  # 5 minutes later: inside the interval
+    assert again.result["probed"] == {} and again.result["skipped"] == ["spb"]
+    assert route.call_count == 0
+
+    def age_probes(hours: int) -> None:
+        with db.connection() as c:
+            c.execute(
+                "UPDATE ops.source_probe SET ts = ts - make_interval(hours => %s) "
+                "WHERE source = 'spb'",
+                (hours,),
+            )
+
+    age_probes(7)  # 7 hours later: still inside it
+    later, route = run(on, {"sources": "spb"})
+    assert later.result["probed"] == {} and route.call_count == 0
+    age_probes(1)  # 8 hours after the first probe: due again
+    due, route = run(on, {"sources": "spb"})
+    assert set(due.result["probed"]) == {"spb"} and route.call_count == 1
+    off = Settings(database_url=db_url, enable_spb_bonds=False)
+    for params in ({"sources": "spb"}, {"sources": "spb", "force": "true"}, {"force": "true"}):
+        out, route = run(off, params)
+        assert "spb" not in out.result["probed"] and "spb" in out.result["skipped"]
+        assert route.call_count == 0
 
 
 def test_tls_expiry_from_network_stream() -> None:

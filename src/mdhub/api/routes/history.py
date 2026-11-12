@@ -9,6 +9,7 @@ Endpoints:
 * ``GET /v1/history/index`` - datasets and series with depth and row counts.
 * ``GET /v1/history/bonds`` - EOD prices, accrued, volumes and MOEX analytics per (date, bond)
   on the bond's main board (``board=primary``) or on all / chosen boards.
+* ``GET /v1/history/spb-bonds`` - separate Russian SPB bond daily chart OHLC by ISIN.
 * ``GET /v1/history/curves/{dataset}`` - per business day and source the end-of-day quote set
   chosen by the ``eod_final`` rule (``rule=eod``), or every stored snapshot (``rule=all``).
 * ``GET /v1/history/zcyc`` - MOEX KBD parameters and standard yields per day.
@@ -56,12 +57,14 @@ from mdhub.snapshot.market import (
     curve_eod_order,
     rusfar_unit,
 )
+from mdhub.sources.spb import valid_isin
 
 router = APIRouter(prefix="/history", tags=["history"])
 
 MAX_SECIDS: Final = 500
 MAX_CODES: Final = 200
 MAX_PAIRS: Final = 100
+MAX_SPB_DAYS: Final = 366
 INDEX_CACHE_TTL_S: Final = 300.0
 _DATASET_RE: Final = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
@@ -420,6 +423,147 @@ def history_bonds(
             },
             version=version,
             cursor_key=key,
+        )
+
+
+# -------------------------------------------------------------------------- SPB bonds
+
+SPB_COLUMNS: Final = [
+    Col("trade_date", "p.trade_date"),
+    Col("isin", "p.isin"),
+    Col("venue", "p.venue"),
+    Col("source", "p.source"),
+    Col("price_basis", "p.price_basis"),
+    Col("price_unit", "p.price_unit"),
+    Col("ticker", "p.ticker"),
+    Col("open", "p.open"),
+    Col("high", "p.high"),
+    Col("low", "p.low"),
+    Col("close", "p.close"),
+    Col("unit_reference_date", "p.unit_reference_date"),
+    Col("card_price_unit", "p.card_price_unit"),
+    Col("unit_conflict", "p.unit_conflict"),
+    Col("capture_id", "p.capture_id"),
+    Col("run_id", "p.run_id"),
+    Col("hub_ingested_at", "p.ingested_at"),
+    Col("hub_updated_at", "p.updated_at"),
+]
+# Always retain the identity and meaning of a price, including in projected responses: the unit
+# and the evidence behind it (a consumer that asks for ``close`` only must still be able to tell
+# which bars carry a unit it can use). Additive; the rows of ``/v1/history/index`` are unchanged.
+SPB_KEYS: Final = (
+    "trade_date",
+    "isin",
+    "venue",
+    "source",
+    "price_basis",
+    "price_unit",
+    "unit_reference_date",
+    "unit_conflict",
+)
+
+
+@router.get("/spb-bonds", summary="Russian SPB bond daily chart OHLC by ISIN")
+def history_spb_bonds(
+    request: Request,
+    date_from: FromQ,
+    isin: Annotated[str, Query(max_length=12, description="one Russian bond ISIN")],
+    venue: Annotated[str, Query(max_length=8, description="SPB")],
+    date_to: ToQ = None,
+    fields: str | None = None,
+    limit: LimitQ = DEFAULT_LIMIT,
+    cursor: CursorQ = None,
+    known_at: KnownAtQ = None,
+) -> Response:
+    """Stored chart bars only, without a MOEX reference join or missing-day fill."""
+    if not valid_isin(isin):
+        raise bad_request("isin must be one valid Russian ISIN with its check digit")
+    if venue != "SPB":
+        raise bad_request("venue must be SPB")
+    known = _known(known_at)
+    d1, d2 = _range(date_from, date_to)
+    if (d2 - d1).days >= MAX_SPB_DAYS:
+        raise bad_request(f"at most {MAX_SPB_DAYS} calendar dates per call")
+    cols = _select_fields(SPB_COLUMNS, SPB_KEYS, fields)
+    qhash = query_hash(
+        "spb-bonds",
+        {
+            "isin": isin,
+            "venue": venue,
+            "from": d1,
+            "to": d2,
+            "fields": [c.name for c in cols],
+            "known_at": known,
+        },
+    )
+    key = decode_cursor(cursor, qhash, 1)
+    if key is not None:
+        try:
+            date.fromisoformat(key[0])
+        except (ValueError, TypeError):
+            raise bad_request("invalid SPB date cursor") from None
+    params: dict[str, Any] = {"isin": isin, "venue": venue, "d1": d1, "d2": d2, "ka": known}
+    params.update(_cursor_params("c", key))
+    source = sql.SQL(
+        "md.spb_bond_daily_known_at(%(ka)s, %(d1)s, %(d2)s)"
+        if known is not None
+        else "md.spb_bond_daily"
+    )
+    selection = sql.SQL(
+        " FROM {} p WHERE p.isin = %(isin)s AND p.venue = %(venue)s "
+        "AND p.trade_date BETWEEN %(d1)s AND %(d2)s"
+    ).format(source)
+    version_q = (
+        sql.SQL("SELECT count(*), max(COALESCE(p.updated_at, p.ingested_at))") + selection
+        if known is None
+        else None
+    )
+    page_q = (
+        sql.SQL("SELECT ")
+        + _json_array(cols)
+        + sql.SQL(", json_build_array(p.trade_date)::text")
+        + selection
+    )
+    if key is not None:
+        page_q += sql.SQL(" AND p.trade_date > %(c0)s::date")
+    page_q += sql.SQL(" ORDER BY p.trade_date LIMIT {}").format(sql.Literal(limit + 1))
+    with history_connection(request) as conn:
+        version, hit = _version_or_304(
+            request,
+            conn,
+            dataset="spb-bonds",
+            qhash=qhash,
+            query=version_q,
+            params=params,
+            cursor_key=key,
+            limit=limit,
+        )
+        if hit is not None:
+            return hit
+        return _page(
+            request,
+            conn,
+            dataset="spb-bonds",
+            qhash=qhash,
+            cols=cols,
+            page_query=page_q,
+            params=params,
+            limit=limit,
+            known_at=known,
+            version=version,
+            cursor_key=key,
+            meta={
+                "order": ["trade_date"],
+                "from": d1,
+                "to": d2,
+                "isin": isin,
+                "venue": venue,
+                "source": "spb",
+                "price_basis": "chart_close",
+                "price_units": {"PCT": "pct_of_nominal", "currency_code": "currency amount"},
+                "unit_reference": "observed official report at ingestion; not historical proof",
+                "calendar": "observed chart dates; no assumed MOEX sessions; no forward fill",
+            },
         )
 
 
@@ -1266,6 +1410,14 @@ SELECT json_build_array('bond_yields', NULL, 'moex_iss', NULL, min(trade_date), 
 FROM md.bond_eod_yield
 UNION ALL
 SELECT j FROM (
+  SELECT json_build_array('spb-bonds', isin, source, price_unit, min(trade_date),
+         max(trade_date), count(*), count(DISTINCT trade_date), 1,
+         '/v1/history/spb-bonds?isin=' || isin || '&venue=' || venue)::text AS j,
+         isin, venue, source, price_unit
+  FROM md.spb_bond_daily GROUP BY isin, venue, source, price_unit
+  ORDER BY isin, venue, source, price_unit) spb
+UNION ALL
+SELECT j FROM (
   SELECT json_build_array('curves', dataset, source, 'pct', min(snapshot_date),
          max(snapshot_date), count(*), count(DISTINCT snapshot_date), NULL,
          '/v1/history/curves/' || dataset)::text AS j, dataset, source
@@ -1365,6 +1517,7 @@ def history_index(request: Request) -> Response:
                 "max_secids": MAX_SECIDS,
                 "max_codes": MAX_CODES,
                 "max_pairs": MAX_PAIRS,
+                "max_spb_days": MAX_SPB_DAYS,
             },
         },
     )

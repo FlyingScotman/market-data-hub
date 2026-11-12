@@ -95,6 +95,7 @@ Columns: `dataset`, `series`, `source`, `unit`, `date_from`, `date_to`, `rows`, 
 |---|---|---|---|
 | `bonds` | null | null | `md.bond_eod`: `series_count` = number of bonds (SECIDs) |
 | `bond_yields` | null | null | `md.bond_eod_yield` (MOEX yields endpoint), served by `/v1/history/bonds` |
+| `spb-bonds` | ISIN | `PCT` or currency code | `md.spb_bond_daily`, separate SPB chart series per ISIN / venue / unit; endpoint includes `isin` and `venue=SPB` |
 | `curves` | curve dataset (`ruonia_ois`, ...) | `pct` | one row per (dataset, source); `rows` = stored snapshots, `days` = days with a snapshot |
 | `zcyc` | null | null | `rows` = publications, `days` = days |
 | `fixings` | index code | `pct` / `index` | `md.fixing` per (code, source) and the served RUSFAR series |
@@ -150,6 +151,63 @@ Example row (`fields` omitted):
 
 Request a year for 500 bonds, close and yield only:
 `GET /v1/history/bonds?from=2025-10-21&to=2026-10-20&secid=SU26238RMFS4,...&fields=close_pct,effective_yield_pct,yield_date,accrued_per_bond&limit=50000`
+
+## `GET /v1/history/spb-bonds`
+
+Daily chart OHLC for Russian-issued SPB bonds, stored in `md.spb_bond_daily` independently
+of MOEX instruments and snapshots. Requires the same bearer token with `read` scope as
+the other history endpoints. A MOEX listing is not required.
+
+| parameter | meaning |
+|---|---|
+| `isin` | required: one Russian ISIN with a valid check digit; no ticker or comma lists |
+| `venue` | required: `SPB` |
+| `from`, `to` | inclusive dates, at most 366 calendar dates; `to` defaults to today (MSK) |
+| `fields`, `limit`, `cursor`, `known_at` | common columnar pagination and as-known-at conventions |
+
+Always-returned columns (also with `fields=`): `trade_date`, `isin`, `venue`, `source`,
+`price_basis`, `price_unit`, `unit_reference_date`, `unit_conflict`.
+Additional columns: `ticker`, `open`, `high`, `low`, `close`, `card_price_unit`, `capture_id`,
+`run_id`, `hub_ingested_at`, `hub_updated_at`.
+Order: `trade_date`. Empty ranges return no rows, never zero or prices from another day.
+
+`source=spb`, `venue=SPB`, `price_basis=chart_close`: close is the daily **chart** bar close,
+not the exchange's official closing price. For example, MGKL1P1 on 2026-11-10 had chart close
+7.43, while the official report close was 7.23; these series must not be interchanged.
+`price_unit=PCT` means percent of nominal (`pct_of_nominal`); another unit is a currency
+code and means a currency amount. The OHLC numbers are kept verbatim, without guessing
+units from `RUB` settlement currency or converting them.
+
+Units come from an official report observed at ingestion. `unit_reference_date` names that
+report date. The unit is proven for a date only when `trade_date = unit_reference_date`; with
+`trade_date <` it the unit comes from a later report (a bond's first loaded history), with `>`
+from an earlier one: an assumption that the unit did not change in between, see
+[SPB_BONDS.md](SPB_BONDS.md). If a bond's unit changes, its stored bars keep their old unit and
+`unit_reference_date`, and **no price is written** for the dates that may still be in the old
+unit or for the window in which the change happened, so a series has gaps there instead of
+numbers of unproven unit: filter on `price_unit` (and `unit_reference_date`), not on the ISIN
+alone.
+`card_price_unit` retains the instrument card's text; `unit_conflict=true` exposes disagreement
+between that card and the report (observed for XMED1P1: card RUB, report PCT).
+`capture_id` identifies the chart response and `run_id` links the run's card/report captures.
+`known_at` reads replay stored corrections and never expose bars first ingested afterwards.
+
+Chart daily buckets use their UTC bucket date; the loader admits only dates before the
+current Moscow date, so unfinished current-day bars are excluded. Stored dates alone do
+not assert that every exchange session traded; no MOEX holiday calendar is assumed.
+
+Examples:
+`GET /v1/history/spb-bonds?isin=RU000A10DTC8&venue=SPB&from=2026-11-01&to=2026-11-10&fields=close`
+and the same request with `isin=RU000A10G0R1` for XMED1P1.
+History discovery includes each stored SPB ISIN in `/v1/history/index`.
+
+Operators load older history from **Jobs → spb_bonds_daily → Run now**: enter both first and
+last date, at most 31 completed calendar dates per request. Both dates empty loads the last
+three completed dates (or, after a longer outage of the worker, from the day after the newest
+stored bar, at most 31 dates). Use successive ranges for longer history; the normal requested-runs
+queue shows progress and permits cancelling a queued run. The event dataset deliberately
+does not use automatic history-head loading or invent expected exchange sessions.
+Source validation, unit evidence and scheduling: [SPB Russian bond prices](SPB_BONDS.md).
 
 ## `GET /v1/history/curves/{dataset}`
 

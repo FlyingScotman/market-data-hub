@@ -287,6 +287,7 @@ def default_rate_limits(settings: Settings) -> dict[str, float]:
         "fred.stlouisfed.org": 1.0,
         "markets.newyorkfed.org": 2.0,
         "data.snb.ch": 1.0,
+        "spbexchange.ru": 1.0,
         "home.treasury.gov": 1.0,
     }
     # the Ratescalcs address is a setting: its host is as polite as the default one

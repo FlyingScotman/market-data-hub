@@ -125,6 +125,7 @@ compose), `MDHUB_ADMIN_ORIGIN` (по умолчанию `https://<MDHUB_ADMIN_DO
 | `MDHUB_LOG_LEVEL`, `MDHUB_TZ`, `MDHUB_ISS_RPS`, `MDHUB_HTTP_TIMEOUT`, `MDHUB_API_POOL_SIZE` | обычно не нужны |
 | `MDHUB_*RETENTION*`, `MDHUB_ALGOPACK_*` | сроки хранения; значения по умолчанию подходят |
 | `MDHUB_ENABLE_SDFI` | только при подписке MOEX SDFI |
+| `MDHUB_ENABLE_SPB_BONDS` | по умолчанию включено; `false` отключает чтение сайта биржи СПБ (задача и проверка источника) |
 | `MDHUB_UPDATE_*` | раздел самообновления (шаг 11); значения по умолчанию подходят для этой раскладки |
 | `MDHUB_PG_HOST_PORT`, `MDHUB_API_HOST_PORT` | только если 5432 или 8080 на хосте заняты |
 | `MDHUB_VERSION` | не нужна: версия берётся из бандла (`v0.1.0`) |

@@ -26,6 +26,7 @@ dependencies = [
   "psutil>=6,<8",
   "jsonschema>=4.23,<5",
   "jsonschema-rs==0.59.0",
+  "pypdf>=6,<7",
 ]
 
 [project.scripts]

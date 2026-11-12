@@ -101,6 +101,7 @@ KNOWN_JOBS: Final = (
     "bond_terms_curated",
     "zcyc_floater_fit",
     "bonds_eod",
+    "spb_bonds_daily",
     "bonds_intraday",
     "fx_moex_intraday",
     "fx_moex_eod",
@@ -293,6 +294,13 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
     "bonds_eod": (
         _r("20 19 * * *", mode="prelim", days_back=[0]),
         _r("15 7 * * *", mode="final", days_back=[1, 2], note="post-session revisions"),
+    ),
+    "spb_bonds_daily": (
+        _r(
+            "40 7 * * *",
+            days="all",
+            note="SPB: re-read last 3 completed calendar dates; chart bars, no MOEX holiday gating",
+        ),
     ),
     "bonds_intraday": (
         _poll("*/15 10-18 * * *", note="every 15 min 10:00-19:00"),

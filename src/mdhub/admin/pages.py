@@ -32,10 +32,12 @@ from mdhub.admin import store
 from mdhub.admin.web import Ctx, Denied, render, require
 from mdhub.api.auth import SCOPES, TokenError, create_token, list_tokens, revoke_token
 from mdhub.core.bizday import DbCalendar
+from mdhub.core.timeutil import msk_today
 from mdhub.db.migrate import applied_migrations
 from mdhub.db.pool import DictConnection
 from mdhub.hostmon.status import Machine, format_value, machine_status, worst
-from mdhub.jobs import REGISTRY
+from mdhub.jobs import REGISTRY, JobParamError
+from mdhub.loaders.spb_bonds import load_range as spb_load_range
 from mdhub.quality.health import job_health
 from mdhub.release import (
     MAX_UPLOAD_BYTES,
@@ -373,13 +375,29 @@ def jobs_page(
         flash=_flash(done),
         registered=set(REGISTRY.names()),
         snapshot_modes=SNAPSHOT_RUN_MODES,
+        spb_last_date=(msk_today() - timedelta(days=1)).isoformat(),
         statuses=("running", "succeeded", "partial", "failed", "skipped"),
     )
 
 
-def _run_params(ctx: Ctx, name: str, mode: str, day: str) -> dict[str, str]:
-    """Run-now parameters: only ``snapshot_market`` takes any, a cut mode from
-    :data:`SNAPSHOT_RUN_MODES` and an optional business date (not in the future)."""
+def _run_params(
+    ctx: Ctx, name: str, mode: str, day: str, date_from: str = "", date_to: str = ""
+) -> dict[str, str]:
+    """Allow-listed snapshot cut/date or bounded SPB historical dates."""
+    if name == "spb_bonds_daily":
+        if mode:
+            raise Denied(400, "These parameters are not accepted for this job.")
+        params = {
+            k: v for k, v in {"day": day, "date_from": date_from, "date_to": date_to}.items() if v
+        }
+        try:
+            dates = {k: date.fromisoformat(v) for k, v in params.items()}
+            spb_load_range(today=msk_today(), **dates)
+        except (ValueError, JobParamError) as exc:
+            raise Denied(400, f"Invalid SPB dates: {exc}") from None
+        return params
+    if date_from or date_to:
+        raise Denied(400, "These parameters are not accepted for this job.")
     if not (mode or day):
         return {}
     if name != "snapshot_market" or mode not in SNAPSHOT_RUN_MODES:
@@ -402,11 +420,13 @@ def job_run_now(
     name: str,
     mode: Annotated[str, Form(max_length=32)] = "",
     day: Annotated[str, Form(max_length=10)] = "",
+    date_from: Annotated[str, Form(max_length=10)] = "",
+    date_to: Annotated[str, Form(max_length=10)] = "",
 ) -> Response:
     """Queue a run for the worker (``ops.job_request``); the console runs no job itself."""
     if name not in REGISTRY:
         raise Denied(404, "Unknown job.")
-    params = _run_params(ctx, name, mode, day)
+    params = _run_params(ctx, name, mode, day, date_from, date_to)
     with ctx.db.connection() as conn:
         try:
             with conn.transaction():

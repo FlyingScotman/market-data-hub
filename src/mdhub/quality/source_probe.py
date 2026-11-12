@@ -32,7 +32,14 @@ the feed is slow), ``ratescalcs`` the JSON snapshot
 ``/api/bond/`` (bearer), ``cbonds`` one ``get_emissions`` query for a fixed ISIN with ``limit=1``
 - at most hourly (:attr:`ProbeSpec.min_interval_s`), so a rejected login does not hit the
 provider 288 times a day; the rating agencies ``nkr``, ``nra``, ``raexpert`` (WEB-18)
-their ``robots.txt``, at most hourly.
+their ``robots.txt``, at most hourly; ``spb`` (SPB Exchange public website, not a contracted
+feed) the instrument list of the Russian market (the one light JSON request the loader also
+starts with; no ``robots.txt`` is among the saved responses, so it is not assumed to exist),
+at most every 8 hours (three a day: the owner allowed the site to be read a few times a day, and
+the daily loader reads it once as well), and only while ``MDHUB_ENABLE_SPB_BONDS`` is on
+(:attr:`ProbeSpec.enabled`). Nothing in the hub treats an old probe as a problem (a failed or
+missing one is; the Sources page shows the age), so a source probed this rarely stays green
+between probes.
 """
 
 from __future__ import annotations
@@ -73,6 +80,7 @@ from mdhub.sources import (
     ratescalcs,
     rosstat,
     snb,
+    spb,
     us_treasury,
 )
 from mdhub.sources.moex_apim import apim_headers
@@ -111,6 +119,9 @@ class ProbeSpec:
     """Probe at most this often (0 = every run)."""
     active: Callable[[datetime], bool] | None = None
     """Only probe when this returns true for the current time (service hours)."""
+    enabled: Callable[[Settings], bool] | None = None
+    """Only probe when this returns true for the settings (a source that can be switched off:
+    a disabled source gets no request at all, not even with ``force``)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,7 +223,18 @@ def ratescalcs_hours(now: datetime) -> bool:
     return local.weekday() < 5 and dtime(8, 50) <= local.time() < dtime(23, 0)
 
 
+SPB_PROBE_INTERVAL_S: Final = 8 * 3600.0
+"""``spb`` is probed every 8 hours (three times a day)."""
+
 PROBES: Final = (
+    # not a contracted feed: the owner allowed a few reads a day, so three probes a day (every
+    # 8 hours; the loader adds one), off with its job
+    ProbeSpec(
+        "spb",
+        _public(spb.BASE_URL + spb.UNIVERSE_PATH),
+        min_interval_s=SPB_PROBE_INTERVAL_S,
+        enabled=lambda s: s.enable_spb_bonds,
+    ),
     ProbeSpec("moex_iss", _public(f"{ISS_BASE_URL}/engines.json?iss.meta=off")),
     ProbeSpec("moex_apim", _apim),
     ProbeSpec("cbr", _public(cbr.BASE_URL + cbr.XML_DAILY_PATH)),
@@ -372,7 +394,7 @@ def source_probe(
     """Probe every source of :data:`PROBES` (or only ``sources``) and record the results.
 
     :param sources: subset of source codes (default: all).
-    :param force: ignore service hours and minimum intervals.
+    :param force: ignore service hours and minimum intervals (not a switched-off source).
     """
     known = {p.source for p in PROBES}
     unknown = sorted(set(sources or ()) - known)
@@ -384,6 +406,9 @@ def source_probe(
     with ctx.http(max_retries=0, timeout=PROBE_TIMEOUT_S) as http:
         for spec in PROBES:
             if sources and spec.source not in sources:
+                continue
+            if spec.enabled is not None and not spec.enabled(ctx.settings):
+                skipped.append(spec.source)
                 continue
             if not force and spec.active is not None and not spec.active(now):
                 skipped.append(spec.source)
