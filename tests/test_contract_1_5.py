@@ -221,7 +221,12 @@ def test_futures_datasets(market: tuple[dict[str, Any], dict[str, Any]]) -> None
     assert (si["is_fx"], si["base_ccy"], si["last_trade_date"]) == (True, "USD", "2026-12-17")
     assert "perpetual" in fut["USDRUBF"]["labels"] and fut["BRZ6"]["is_fx"] is False
     assert _ds(eod, "futures_prices")["coverage"]["fx_contracts"] == 2
-    assert eod["data"]["futures_prices_intraday"] == []
+    # 1.8: eod_preliminary holds the last intraday quote at or before its cut (19:45 MSK)
+    # (tests/test_contract_1_8.py); the same quote as the intraday cut of 15:00 MSK here
+    assert [(r["secid"], r["settle_price"]) for r in eod["data"]["futures_prices_intraday"]] == [
+        ("SiZ6", "82506")
+    ]
+    assert _ds(eod, "futures_prices_intraday")["coverage"]["basis"] == "intraday_last_at_cut"
     assert intraday["data"]["futures_prices"] == []
     live = intraday["data"]["futures_prices_intraday"]
     assert [(r["secid"], r["source"], r["settle_price"]) for r in live] == [

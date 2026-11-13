@@ -55,6 +55,7 @@ from mdhub.sources.moex_market import INDEX_GROUPS
 __all__ = [
     "BASIS_HISTORY",
     "BASIS_INTRADAY_CLOSE",
+    "BASIS_INTRADAY_LAST",
     "CPI_CODES",
     "CURRENCY_CALENDARS",
     "CURVE_EOD_RULE",
@@ -122,6 +123,11 @@ BASIS_HISTORY: Final = "moex_history"
 BASIS_INTRADAY_CLOSE: Final = "intraday_close"
 """``bond_quotes`` coverage ``basis``: ISS history of the business date, or (``eod_preliminary``
 before ISS publishes the history) the latest intraday marketdata of the date."""
+BASIS_INTRADAY_LAST: Final = "intraday_last_at_cut"
+"""``futures_prices_intraday`` coverage ``basis`` in ``eod_preliminary`` (contract 1.8): per
+contract the latest intraday quote on the business date with quote time and ``source_ts`` at or
+before ``cut_ts``. The cut's ``futures_prices`` (ISS history) is empty at that time; these rows
+are intraday quotes, not end-of-day data."""
 
 DEFAULT_CURVE_EOD_CUTOFF: Final = "19:00"
 DEFAULT_CPI_FROM: Final = date(2015, 1, 1)
@@ -1009,14 +1015,23 @@ def _futures_eod(
     )
 
 
-def _futures_intraday(
-    conn: DictConnection, t: datetime, d: date, eod: bool, prov: Provenance
-) -> Dataset:
-    """Latest stored FORTS FX futures quote per contract on ``d`` (``md.futures_intraday``: APIM
-    realtime, else public ISS delayed; contract 1.5, H11): ``settle_price`` is MOEX's current
-    estimate of the day's settlement price. Empty in EOD cuts (``futures_prices``)."""
-    if eod:
+def _futures_intraday(conn: DictConnection, cut: Cut, prov: Provenance) -> Dataset:
+    """Latest stored FORTS FX futures quote per contract on the business date
+    (``md.futures_intraday``: APIM realtime, else public ISS delayed; contract 1.5, H11):
+    ``settle_price`` is MOEX's current estimate of the day's settlement price.
+
+    * ``intraday``: the latest quote known at ``known_at``.
+    * ``eod_preliminary`` (contract 1.8, market-data-hub#154): ISS has not published the FORTS
+      history of the day at the cut (``futures_prices`` is empty), so the dataset carries the
+      same rows as an intraday cut would, but only quotes whose quote time (``ts``) and
+      ``source_ts`` are at or before ``cut_ts``: a rebuild of the cut later gives the same rows,
+      not the evening quotes. Coverage ``basis = intraday_last_at_cut`` and ``latest_source_ts``
+      say what they are and how old.
+    * ``eod_final``: empty (``futures_prices`` comes from the ISS history)."""
+    if cut.cut_type == "eod_final":
         return Dataset("futures_prices_intraday", [], {"not_in_cut": "eod"})
+    t, d = cut.known_at, cut.business_date
+    prelim = cut.cut_type == "eod_preliminary"
     start, end = _day_bounds(d)
     rows = conn.execute(
         """
@@ -1027,12 +1042,14 @@ def _futures_intraday(
             SELECT DISTINCT ON (f.secid) f.*
             FROM md.futures_intraday f
             WHERE f.ts >= %(start)s AND f.ts < %(end)s AND f.ingested_at <= %(t)s
+              AND (%(cut)s::timestamptz IS NULL
+                   OR (f.ts <= %(cut)s AND (f.source_ts IS NULL OR f.source_ts <= %(cut)s)))
             ORDER BY f.secid, f.ts DESC, f.source, f.source_variant
         ) q
         LEFT JOIN ref.futures_contract_known_at(%(t)s) c ON c.secid = q.secid
         ORDER BY q.secid
         """,
-        {"start": start, "end": end, "t": t},
+        {"start": start, "end": end, "t": t, "cut": cut.cut_ts if prelim else None},
     ).fetchall()
     out = []
     for r in rows:
@@ -1066,12 +1083,20 @@ def _futures_intraday(
             }
         )
     latest = max((r["ts"] for r in out), default=None)
-    return Dataset(
-        "futures_prices_intraday",
-        out,
-        {"contracts": len(out), "latest_ts": latest},
-        [] if out else [f"no intraday FORTS futures quotes on {d.isoformat()}"],
-    )
+    coverage: dict[str, Any] = {"contracts": len(out), "latest_ts": latest}
+    stale = [] if out else [f"no intraday FORTS futures quotes on {d.isoformat()}"]
+    if prelim:
+        coverage = {
+            "basis": BASIS_INTRADAY_LAST,
+            **coverage,
+            "latest_source_ts": max((r["source_ts"] for r in out if r["source_ts"]), default=None),
+        }
+        stale = (
+            []
+            if out
+            else [f"no intraday FORTS futures quotes on {d.isoformat()} at or before the cut"]
+        )
+    return Dataset("futures_prices_intraday", out, coverage, stale)
 
 
 # -------------------------------------------------------------------------------- FX
@@ -1505,7 +1530,7 @@ def build_market(
         _meetings(conn, t, prov),
         _fx_swaps(swap_rows, d, eod, settle, prov, excluded),
         _futures_eod(conn, t, d, eod, prov),
-        _futures_intraday(conn, t, d, eod, prov),
+        _futures_intraday(conn, cut, prov),
         _cpi(conn, t, d, params.cpi_from, prov),
     ]
     for ds in datasets:
