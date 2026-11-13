@@ -1,7 +1,7 @@
 # market-data-hub — design
 
 Status: living design, first written 2026-10-15 (v0.1) and kept current with `main` (contract
-`market_snapshot/1.8`, 46 migrations; production v0.4.0 = contract 1.5). Owner: FiveLimaGolf. Target: a single VPS that is the
+`market_snapshot/1.9`, 55 migrations; production v0.4.0 = contract 1.5). Owner: FiveLimaGolf. Target: a single VPS that is the
 market data hub for the trading desk backend (trading_desk_monitor + rub-fixed-income-core).
 
 Inputs to this design (audits, 2026-10-15): market-data-store (curves/FX/fixings loaders),
@@ -144,6 +144,8 @@ published values only. Legacy derived tables are kept verbatim in `legacy_*` sch
 - `md.fx_intraday(ts, secid, board, source, source_variant, bid, offer, last, waprice, …, latency, capture_id)` PK (secid, board, source, source_variant, ts) — change-only, row history on (same-ts updates keep the old image). `ts` of a quote later than SYSTIME = the previous **trading day** of the engine (business day or weekend session, `mdhub.core.timeutil.previous_session_day`); a changed row older than the last stored `ts` of its series is logged. CETS has no weekend sessions; bond quotes (`md.bond_quote_intraday`) use business days (`BONDS_TRADE_WEEKEND_SESSIONS = False`: bond boards are assumed not to trade in the stock engine's weekend sessions).
 - `md.futures_eod(trade_date, secid, open, low, high, close, settle_price, waprice, volume, value, open_position, capture_id)`
 - `md.futures_intraday(ts, secid, source, source_variant, bid, offer, bid_depth, offer_depth, last, open_position, latency, capture_id)` PK (secid, source, source_variant, ts) — row history on. Dated with FORTS trading days: the Monday 07:00 poll that still shows the Sunday session's last trade dates it Sunday, not Friday.
+- `md.fx_input_pair_group(run_id, currency, known_at, document, content_sha256, ingested_at)` PK (run_id, currency) (0290) — append-only selected FX spot/futures input facts, their source clocks, contract terms, hashes and missing reasons. Data is retained independently of raw-capture retention. The repeatable-read materialization and snapshot visibility rules are specified in the [contract](../schemas/market_snapshot/v1/README.md#timestamp-aligned-fx-inputs-19); the hub does not compute curves or discount factors.
+- `md.fx_input_pair_completion_evidence` (0290) — records a terminal FX job status read after its transaction committed, with a subsequent observation clock (not a commit timestamp). `md.fx_input_pair_cut_selection` (0290) retains the first published FX selection, including absence and provenance, per full cut and knowledge time. Both remain after ordinary snapshot retention; publication fixes the selection under its existing transaction lock.
 - `md.futures_trade(secid, source, trade_no, trade_ts, price, quantity, buysell, open_position, source_ts, latency)` PK (secid, source, trade_no) — trades of the rates contracts; append-only.
 - RGBI monitor inputs (migration 0280): `md.zcyc_security_quote` PK (secid, ts), `md.index_intraday` PK (secid, ts), `md.index_candle` PK (secid, interval_min, begin_ts), `md.index_constituent` PK (index_id, trade_date, secid), `md.repo_intraday` PK (market, board, secid, ts), `md.repo_eod` PK (market, trade_date, board, secid), `md.bond_close_quote` PK (trade_date, secid, board, basis) — row history on all but `md.futures_trade`; every intraday row carries `source_ts` (exchange clock), `ingested_at` and `latency`. As-known-at readers over an instant range: `ops.create_known_at_ts_function` (0560). Read API: [INTRADAY_API.md](INTRADAY_API.md).
 - `md.algopack_fo_tradestats` PK (secid, interval_ts) and `md.algopack_futoi` PK (ticker, interval_ts, clgroup) — AlgoPack 5-minute bars of FX futures (`*_rub_per_unit` normalized prices). **Rolling window, no history beyond it**: only `trade_date` within the last `MDHUB_ALGOPACK_RETENTION_DAYS` (90) calendar days is kept (§6 `maintenance`); row history stays on for revisions inside the window. `md.algopack_fo_obstats` (order-book stats) was dropped in 0423 (owner decision, AlgoPack scope option b; it was ~2 GB of the seed).
@@ -215,6 +217,7 @@ Migration ownership (to avoid conflicts): `0001-0099` core/ops; `0100-0199` ref 
 | `bonds_eod` | 19:20 (prelim, D) and 07:15 next day (final, D-1 + D-2) | ISS history by date | final run captures post-session revisions; backfill tasks of 5 days |
 | `bonds_intraday` | every 15 min 10:00–19:00 | ISS marketdata (delayed) | store changed rows only |
 | `fx_moex_intraday` | every 5 min 07:00–23:55 (MOEX_FX) | ISS CETS marketdata | change-only |
+| `fx_input_pairs` | every 1 min 07:00–23:50 on MOEX_FORTS trading days | NTPro public FX snapshot + previously captured MOEX FX/FORTS observations | retained indicative inputs and clocks, not rates; see contract 1.9 |
 | `fx_moex_eod` | 00:20 (prelim, the session that just ended) and 07:20 (final, D-1 recheck) | ISS selt history | |
 | `fx_indicative` | 14:10, 19:10 | ISS indicativerates + fixings | |
 | `futures_intraday` | every 1 min 07:00–23:50 on MOEX_FORTS trading days (business days + weekend sessions) | APIM realtime marketdata (FX futures + perpetuals; rates contracts of `MDHUB_FUTURES_RATES_ASSETS`: RGBI `RB*`, `RGBIF`, `KEYRATE`, `RUONIA`) + trades of the rates contracts (`/securities/{secid}/trades`, incremental `tradeno=&next_trade=1`) | fallback ISS delayed, labelled: the whole request when APIM fails, or the rates contracts an APIM answer lacks (run `partial`); trades through APIM only when APIM served the rates marketdata -> `md.futures_trade` |
@@ -494,7 +497,8 @@ The hub's dispatch layer (system ADR-002, doc 02 §3/§6; milestone M1). The des
 only immutable snapshots; the TDM CSV export stays until it does.
 
 **Contract.** JSON Schema and golden fixtures in `schemas/market_snapshot/v1/` (see its
-README; `schema_version` `market_snapshot/1.8` since market-data-hub#154: `futures_prices_intraday` also in
+README; `schema_version` `market_snapshot/1.9` adds `fx_input_pairs` (indicative source observations, not curves);
+1.8 since market-data-hub#154: `futures_prices_intraday` also in
 `eod_preliminary` (the last intraday quotes at or before the cut, labelled `basis = intraday_last_at_cut`);
 1.7 since market-data-hub#143: curves carried forward
 from the latest earlier day, flagged (`carried_forward` per quote set, `carried_curves` in the

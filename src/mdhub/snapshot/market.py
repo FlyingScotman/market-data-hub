@@ -52,6 +52,7 @@ from mdhub.snapshot.carry import (
 from mdhub.snapshot.carry import marker as carry_marker
 from mdhub.snapshot.carry import source_days as carry_source_days
 from mdhub.snapshot.carry import summary_item as carry_summary
+from mdhub.snapshot.fx_input_pairs import fx_input_pairs
 from mdhub.sources.moex_market import INDEX_GROUPS
 
 __all__ = [
@@ -1551,6 +1552,7 @@ def build_market(
         _fx_swaps(swap_rows, d, eod, settle, prov, excluded),
         _futures_eod(conn, t, d, eod, prov),
         _futures_intraday(conn, cut, prov),
+        fx_input_pairs(conn, cut, prov),
         _cpi(conn, t, d, params.cpi_from, prov),
     ]
     for ds in datasets:

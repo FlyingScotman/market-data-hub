@@ -14,7 +14,7 @@ are in [`docs/DESIGN.md`](../../../docs/DESIGN.md) §11.
 | `common.schema.json` | Shared definitions: decimal strings, dates, UTC instants, sha256, labels |
 | `fixtures/` | Golden bundles built from public data (`index.json` lists their ids) |
 
-`schema_version` is `market_snapshot/1.8`. Every schema object has
+`schema_version` is `market_snapshot/1.9`. Every schema object has
 `additionalProperties: false`: a new field is a schema version bump, so a consumer pinned to
 an older version fails its conformance tests instead of silently ignoring it.
 
@@ -23,7 +23,7 @@ never removes, renames or changes the meaning or unit of an existing field. A co
 reads `1.x` and ignores unknown additive fields stays correct; a new major (`2.0`) is refused.
 
 First hub release with each version: 1.0 = 0.1.3, 1.1 = 0.1.7, 1.2 = 0.2.0, 1.3 = 0.3.2,
-1.4 = 0.3.4, 1.5 = 0.4.0 (in production since 2026-10-23); 1.6 = 0.6.0, 1.7 = 0.7.0, 1.8 = 0.8.0.
+1.4 = 0.3.4, 1.5 = 0.4.0 (in production since 2026-10-23); 1.6 = 0.6.0, 1.7 = 0.7.0, 1.8 = 0.8.0; 1.9 is not yet released.
 
 | Version | Change (all additive) |
 |---|---|
@@ -37,6 +37,7 @@ First hub release with each version: 1.0 = 0.1.3, 1.1 = 0.1.7, 1.2 = 0.2.0, 1.3 
 | 1.6 (TDM brief H17, market-data-hub#38) | Calendars `MOEX_SPFI`, `CBR_RUONIA`, `MOEX_RUSFAR` (`calendar_code`): the calendars the MOEX RUB swap specifications name besides MOSCOW (= `RU_PRODUCTION`; MOEX OIS RUONIA: joint SPFI + MOSCOW + RUONIA), derived by documented rules with curated exceptions; Calendar `provisional_from` also counts the derived calendars' provisional days (sources `rule_*_unverified`) |
 | 1.7 (market-data-hub#143; owner decision of 2026-11-11) | **Curves carried forward.** When no source stored a curve of the carried set (default `ruonia_ois`, `key_rate_swap`; setting `MDHUB_CURVE_CARRY_DATASETS`) on the business date of a market cut, the cut holds that curve - every quote set of it, per source - from the latest earlier day that has it, flagged. New optional fields, present **only** when something is carried: CurveQuoteSet `carried_forward` (`source_day`, `age_working_days`, `age_limit_working_days`, `age_limit_exceeded`, `reason` = `no_quote_set_on_business_date`; also the label `carried_forward`; `snapshot_date` is the source day) and the snapshot-level list `carried_curves` (envelope and manifest: `dataset`, `source`, `quote_set_id` and the same marker fields); the manifest parameters then also record `curve_carry_datasets` and `curve_carry_max_age_working_days`; `curve_quote_sets` coverage gains `carried_forward` (the datasets). A snapshot of a day without a gap has none of these and is byte for byte what a 1.6 hub published, apart from `schema_version` |
 | 1.8 (market-data-hub#154; owner decision of 2026-11-13) | **`futures_prices_intraday` in `eod_preliminary`.** At the preliminary cut ISS has not published the FORTS history of the day, so `futures_prices` is empty. The cut now carries `futures_prices_intraday` instead of `not_in_cut: eod`: per contract the latest intraday quote on the business date whose quote time (`ts`) and `source_ts` are at or before `cut_ts`, same row shape as in an intraday cut. The rows are intraday quotes, not end-of-day data: coverage `basis = intraday_last_at_cut` and `latest_source_ts` (with `contracts`, `latest_ts`) say so; with no such quote the dataset is empty and stale (`no intraday FORTS futures quotes on <date> at or before the cut`). No new field and no schema change beyond the version: a consumer that ignores unknown coverage keys and reads `futures_prices_intraday` rows by cut type keeps working; one that takes the dataset to mean "intraday cut" must read `cut_type`. **Reproducible:** the rows are the row versions *known at the cut* (version time `ingested_at`, in-place updates through the row history, `md.futures_intraday_known_at(min(known_at, cut_ts), ...)`), so a rebuild of the cut later - a retry, a catch-up run - gives the same snapshot: a poll after the cut with `source_ts` equal to `cut_ts`, or a later update of a row, does not change it. Trade-off: quotes stored after the cut (a legacy import, a backfill of a historical day) are "not known at the cut", so a rebuild of such a day gives an empty, stale set. `intraday` and `eod_final` cuts are unchanged (`eod_final`: `not_in_cut: eod`) apart from `schema_version` |
+| 1.9 (market-data-hub#153) | `fx_input_pairs`: retained indicative spot observations with up to four individually clocked, normalized FORTS input observations; missing nodes and missing information remain explicit. These are inputs only; they do not declare a curve, an executable quote, or rate suitability. See below. |
 
 ## Identity
 
@@ -175,6 +176,94 @@ A consumer of 1.6 that ignores unknown additive fields keeps working: it reads t
 set as any other and sees `snapshot_date` earlier than the business date, the label and the stale
 reason; it cannot tell the age without reading the new fields.
 
+## Timestamp-aligned FX inputs (1.9)
+
+`fx_input_pairs` contains up to three currency groups from one completed capture job on the
+business date. USD/EUR use the NTPro public indicative `USD/RUB_TOM` / `EUR/RUB_TOM` rows;
+CNY uses the public MOEX `CNYRUB_TOM` LAST. NTPro CNH is not CNY. There is no source fallback.
+The job polls NTPro once per minute during the FORTS trading session; the CNY source itself is
+polled by its existing five-minute job. A separate hourly reachability probe does not store a
+quote. Polling does not refresh a source's old quote timestamp.
+Source availability, public-feed lag and cadence are not guaranteed.
+
+Each group has one `spot`, one knowledge snapshot (`known_at`), and exactly four ordered
+`nodes` for the first four full-size dated quarterly contracts known at the spot time. A missing
+fourth node is not replaced with the fifth; unavailable nodes retain a reason. The group's
+`coverage.observed_nodes` counts individually present, valid-clock, positive non-crossed future
+BBOs; `spot_observed` requires a valid spot clock and positive LAST or ordered BBO;
+`all_four_observed` requires both. These are data-presence counts, not an economic-quality,
+synchronization-threshold, executable, or rate-ready verdict. Consumers decide tolerable age,
+skew, spread and the treatment of LAST versus BBO.
+
+* `spot.quote_ts` is NTPro's `creationDateTime` or MOEX's dated LAST `TIME`; the latter is used
+  only when the source's trade date and session establish the date and a trade is reported.
+  `spot.update_time` is MOEX UPDATETIME as a time of day; `spot.update_ts` and `spot.source_ts`
+  are separately its dated row update (when dateable) and its `SYSTIME`. If a clock is absent,
+  other independently available clocks and LAST remain visible with unknown reasons.
+  `spot.captured_at` is the hub's raw-capture stamp; `spot.received_at` is set for NTPro just
+  after the HTTP response arrives, and null for MOEX where exact receipt was not recorded.
+  MOEX time-of-day fields are Moscow local time (`Europe/Moscow`); dated instants are UTC.
+  NTPro's offset-aware row timestamp is converted to UTC, without retaining the original offset.
+  `clock_semantics` names the observation, not an
+  independently timestamped bid or offer. NTPro value date stays `null` with a reason; CNY
+  `settle_date` is the source's session SETTLEDATE when present, not an inferred calendar rule.
+* Each future carries its own `update_time` (UPDATETIME as a time of day), `update_ts` (dated
+  UPDATETIME when the date can be established), `source_ts` (SYSTIME), `captured_at`,
+  `update_skew_seconds = spot.quote_ts - update_ts` and `source_skew_seconds = spot.quote_ts -
+  source_ts`. The latter is a source snapshot watermark, not a side-tick timestamp. For MOEX,
+  `captured_at` is stamped after the existing collector parsed the response; it is not an exact
+  network receipt time. If one clock is missing or malformed, any independently available
+  clock is retained and the node remains unavailable; no date is guessed for a lone time.
+  Clock deltas
+  do not prove physical simultaneity across providers. `spot_age_seconds_at_cut` is the cut time
+  minus the source quote time; receipt/source/quote ages can also be derived from the separate
+  clocks. Prices are exact decimal strings in RUB per one currency unit; deltas are decimal
+  seconds, and the contract terms retain their own units. A normalization that would require
+  rounding is unavailable rather than silently rounded.
+* The collector selects exactly the newest visible `moex_apim` futures capture received at or
+  before spot time within five minutes, ordered by `(fetched_at, id)` descending. Each node's
+  source and update clocks must be no later than the spot clock; no second capture is tried if
+  that one is missing or invalid. CNY selects the newest visible public spot capture in a
+  ten-minute receipt window. These are technical bounds, not validated economic tolerances.
+  The selected capture's hash is verified, and each future's own source contract terms are used
+  for normalization. `last_trade_date`, `last_del_date` and `underlying_value_date` remain
+  separate; no underlying value date is derived from either exchange date.
+* A single repeatable-read transaction selects physically committed inputs and definitions and
+  retains their values, clocks, terms and source capture hashes in the group's immutable
+  document. This prevents a later-committing capture with an earlier receipt timestamp from
+  leaking into the group. After the group and terminal job status commit, a separate transaction
+  reads that committed status and records its subsequent observation time. A group is eligible
+  only when the matching status and completion time were observed no later than both the cut
+  and knowledge times. This observation is not the database commit time. If the latest attempt
+  is unfinished, failed, skipped, has no matching evidence, or the evidence was observed too
+  late, the dataset reports unavailability instead of substituting an older run. An attempt
+  whose start visibility cannot be proven can conservatively result in unavailability.
+* The first publication of each `(business_date, cut_type, cut_ts, known_at)` fixes the FX
+  selection, including an empty result and its provenance, in the publication transaction
+  under the existing publish lock. Concurrent publishers use that same decision; a failed
+  transaction leaves no decision. It survives normal intraday snapshot and raw-capture
+  retention, so rebuilding that identity cannot pick a later completion or evidence commit.
+  Different knowledge times keep separate decisions. A prior snapshot is reused only when its
+  FX manifest entry and provenance match that decision and its knowledge time is not later
+  than requested. Unmaterialized historical observations cannot be reconstructed after raw
+  retention.
+* `content_sha256` hashes the canonical group excluding the snapshot-derived
+  `spot_age_seconds_at_cut` and `content_sha256` themselves. The retained group remains usable
+  to inspect after raw captures expire; a later run/revision has its own identity and hash.
+
+**RUONIA for a consumer.** The hub does not build or copy a curve for these groups. Read the
+existing `ruonia_ois` raw quote sets, for example through
+`/v1/history/curves/ruonia_ois` with `rule=all` and the pair's `known_at`, then select one
+explicit source and keep its `quote_set_id`, `content_sha256`, `source_ts`, `fetched_at`,
+`hub_ingested_at`, `quote_basis` and quotes. Require a known `source_ts` no later than the FX
+spot clock and fetched/ingested times no later than the pair's `known_at`; otherwise report the
+input unavailable. The market snapshot's latest/carried curve is not automatically aligned
+with an FX pair. These timestamp filters alone cannot prove the quote-set transaction committed
+before a historical `known_at`, and old imported quote sets can be revised in place: the
+existing history API cannot always reproduce the prior image. A consumer requiring strict
+historical replay must have independently retained the original immutable snapshot/hash and
+refuse an absent or mismatched image. No replacement RUONIA table or bootstrap is introduced.
+
 ## Market objects (`data`)
 
 | Array | Object | Notes |
@@ -188,6 +277,7 @@ reason; it cannot tell the age without reading the new fields.
 | `fx_swaps` | FxSwap | 1.5 (H13), EOD cuts: MOEX X/RUB swaps of the business date on every selt board (CETS, CNGD, LICU...): `close` / `waprice` = the swap price as published = far-leg rate minus near-leg rate in RUB per `quote_units` (swap points; `*_rub_per_unit` per 1 unit), `near_leg` / `far_leg` codes, `near_settle_date` (SETTLEDATE of the swap = its near leg), `far_settle_date` (a named far leg TOD/TOM/SPT...: the SETTLEDATE of the same pair's outright of that code; a tenor far leg `1W`, `1M`...: null + label `far_settle_date_not_published` - MOEX publishes no far date; resolve the tenor from the near date on `settlement_calendars`). Rows without trades carry `no_price`. Non-RUB and precious-metal swaps are excluded |
 | `futures_prices` | FuturesPrice | 1.5 (H11), EOD cuts: every outright FORTS future of `md.futures_eod` on the business date (FX, rate, index, commodity, equity) with `settle_price` (SETTLEPRICE, the price variation margin is computed on), OHLC, WAP, volume, open interest, `swap_rate` (perpetuals) and the contract static (`asset_code`, `sec_type`, `contract_type`, `is_fx`, `base_ccy`/`quote_ccy`, `last_trade_date`, `last_del_date`, `lot_volume`, `min_step`, `step_price`); `settle_rub_per_unit` / `close_rub_per_unit` only for RUB-quoted FX futures. Labels `perpetual`, `no_settle_price`, `contract_static_unknown` |
 | `futures_prices_intraday` | FuturesPriceIntraday | 1.5 (H11), intraday cuts (1.8: also `eod_preliminary`, quotes at or before `cut_ts`, coverage `basis = intraday_last_at_cut`, `latest_source_ts`; `eod_final`: `not_in_cut: eod`): the latest stored FX futures quote per contract on the business date (APIM realtime, else public ISS delayed: `source`, `source_variant`, `latency`), `settle_price` = MOEX's current estimate, plus the same contract static |
+| `fx_input_pairs` | FxInputGroup | 1.9: timestamp-aligned, indicative spot/futures input facts with separate source clocks and explicit missing nodes; see above |
 | `cpi` | Fixing | 1.5 (H10): monthly CPI from `parameters.cpi_from` (default 2015-01: covers every OFZ-IN's base month) to the business date, whatever the fixing window: `CPI_RU_MOM` (Rosstat, index to the previous month in %, `unit = index`) and `CPI_RU_YOY` (CBR, y/y, `unit = pct`), `fixing_date` = first day of the month. `published_on` is the release date where the source stated it (Rosstat: the newest month of each workbook the hub loaded), else null with label `published_on_unknown`. No index levels: chain the m/m values |
 | `cross_rates` | CrossRate | units of `ccy` per 1 `base_ccy`, `rate_date` in [D-7, D]. `kind` `ecb` (ECB reference rates, base EUR); 1.3: `cbr_cross` (two CBR official RUB rates in force on the effective date, divided), `moex_indicative_cross` (two MOEX 19:00 indicative RUB rates), `moex_cets` (traded CETS cross, close per unit), `fred_h10` (Fed H.10 via FRED) - separate series, never merged; derived kinds have 10 significant digits and label `derived_cross`; `source` = hub source code; `coverage.latest_by_kind` |
 | `cbr_meetings` | CbrMeeting | |

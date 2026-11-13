@@ -4,6 +4,86 @@
   "title": "Market Snapshot Contract v1: market snapshot bundle",
   "description": "The canonical bundle document: envelope (manifest.schema.json) plus data. snapshot_id = sha256 of its canonical JSON.",
   "$defs": {
+    "fx_input_spot": {
+      "description": "Indicative observed spot fact, not an executable quote or a per-side tick clock.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["currency", "source", "instrument", "quote_kind", "quote_ts", "bid", "offer", "last", "update_time", "update_ts", "source_ts", "trade_date", "trade_time", "settle_date", "reasons", "received_at", "captured_at", "capture_sha256", "clock_semantics", "source_variant"],
+      "properties": {
+        "currency": {"enum": ["USD", "EUR", "CNY"]},
+        "source": {"enum": ["ntpro_public", "moex_iss"]},
+        "instrument": {"type": "string"},
+        "quote_kind": {"enum": ["indicative_bid_offer", "last"]},
+        "quote_ts": {"$ref": "common.schema.json#/$defs/utc_instant_or_null"},
+        "bid": {"$ref": "common.schema.json#/$defs/decimal_or_null"},
+        "offer": {"$ref": "common.schema.json#/$defs/decimal_or_null"},
+        "last": {"$ref": "common.schema.json#/$defs/decimal_or_null"},
+        "update_time": {"type": ["string", "null"], "pattern": "^[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?$"},
+        "update_ts": {"$ref": "common.schema.json#/$defs/utc_instant_or_null"},
+        "source_ts": {"$ref": "common.schema.json#/$defs/utc_instant_or_null"},
+        "trade_date": {"$ref": "common.schema.json#/$defs/date_or_null"},
+        "trade_time": {"type": ["string", "null"], "pattern": "^[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?$"},
+        "settle_date": {"$ref": "common.schema.json#/$defs/date_or_null"},
+        "reasons": {"$ref": "common.schema.json#/$defs/labels"},
+        "received_at": {"$ref": "common.schema.json#/$defs/utc_instant_or_null"},
+        "captured_at": {"$ref": "common.schema.json#/$defs/utc_instant_or_null"},
+        "capture_sha256": {"$ref": "common.schema.json#/$defs/sha256_or_null"},
+        "clock_semantics": {"enum": ["ntpro_creation_datetime", "moex_last_trade_time"]},
+        "source_variant": {"enum": ["public_indicative", "iss_public"]}
+      }
+    },
+    "fx_input_node": {
+      "description": "One expected full-size quarterly future; source clocks and their deltas are independent facts.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["position", "secid", "asset_code", "first_trade_date", "last_trade_date", "last_del_date", "underlying_value_date", "definition_source", "definition_run_id", "definition_capture_sha256", "lot_volume", "min_step", "step_price", "bid_rub_per_unit", "offer_rub_per_unit", "update_time", "update_ts", "source_ts", "captured_at", "capture_sha256", "update_skew_seconds", "source_skew_seconds", "reasons"],
+      "properties": {
+        "position": {"type": "integer", "minimum": 1, "maximum": 4},
+        "secid": {"type": ["string", "null"]},
+        "asset_code": {"type": ["string", "null"]},
+        "first_trade_date": {"$ref": "common.schema.json#/$defs/date_or_null"},
+        "last_trade_date": {"$ref": "common.schema.json#/$defs/date_or_null"},
+        "last_del_date": {"$ref": "common.schema.json#/$defs/date_or_null"},
+        "underlying_value_date": {"type": "null"},
+        "definition_source": {"type": ["string", "null"]},
+        "definition_run_id": {"type": ["integer", "null"]},
+        "definition_capture_sha256": {"$ref": "common.schema.json#/$defs/sha256_or_null"},
+        "lot_volume": {"$ref": "common.schema.json#/$defs/decimal_or_null"},
+        "min_step": {"$ref": "common.schema.json#/$defs/decimal_or_null"},
+        "step_price": {"$ref": "common.schema.json#/$defs/decimal_or_null"},
+        "bid_rub_per_unit": {"$ref": "common.schema.json#/$defs/decimal_or_null"},
+        "offer_rub_per_unit": {"$ref": "common.schema.json#/$defs/decimal_or_null"},
+        "update_time": {"type": ["string", "null"], "pattern": "^[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?$"},
+        "update_ts": {"$ref": "common.schema.json#/$defs/utc_instant_or_null"},
+        "source_ts": {"$ref": "common.schema.json#/$defs/utc_instant_or_null"},
+        "captured_at": {"$ref": "common.schema.json#/$defs/utc_instant_or_null"},
+        "capture_sha256": {"$ref": "common.schema.json#/$defs/sha256_or_null"},
+        "update_skew_seconds": {"$ref": "common.schema.json#/$defs/decimal_or_null"},
+        "source_skew_seconds": {"$ref": "common.schema.json#/$defs/decimal_or_null"},
+        "reasons": {"$ref": "common.schema.json#/$defs/labels"}
+      }
+    },
+    "fx_input_group": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["run_id", "currency", "known_at", "future_source", "future_source_variant", "spot", "nodes", "coverage", "content_sha256", "spot_age_seconds_at_cut"],
+      "properties": {
+        "run_id": {"type": "integer"},
+        "currency": {"enum": ["USD", "EUR", "CNY"]},
+        "known_at": {"$ref": "common.schema.json#/$defs/utc_instant"},
+        "future_source": {"const": "moex_apim"},
+        "future_source_variant": {"const": "apim_marketdata"},
+        "spot": {"$ref": "#/$defs/fx_input_spot"},
+        "nodes": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"$ref": "#/$defs/fx_input_node"}},
+        "coverage": {
+          "type": "object", "additionalProperties": false,
+          "required": ["expected_nodes", "observed_nodes", "spot_observed", "all_four_observed"],
+          "properties": {"expected_nodes": {"const": 4}, "observed_nodes": {"type": "integer", "minimum": 0, "maximum": 4}, "spot_observed": {"type": "boolean"}, "all_four_observed": {"type": "boolean"}}
+        },
+        "content_sha256": {"$ref": "common.schema.json#/$defs/sha256"},
+        "spot_age_seconds_at_cut": {"$ref": "common.schema.json#/$defs/decimal_or_null"}
+      }
+    },
     "bond_quote": {
       "description": "BondQuote, end of day (md.bond_eod + md.bond_eod_yield); prices in % of face; timing = the snapshot cut",
       "type": "object",
@@ -1704,6 +1784,7 @@
         "fx_swaps",
         "futures_prices",
         "futures_prices_intraday",
+        "fx_input_pairs",
         "cpi"
       ],
       "properties": {
@@ -1772,6 +1853,11 @@
           "items": {
             "$ref": "#/$defs/futures_price_intraday"
           }
+        },
+        "fx_input_pairs": {
+          "description": "Timestamp-aligned indicative input facts; consumers assess clocks, value dates, spreads and economic suitability.",
+          "type": "array",
+          "items": {"$ref": "#/$defs/fx_input_group"}
         },
         "cpi": {
           "description": "Monthly CPI history from parameters.cpi_from (CPI_RU_MOM rosstat, CPI_RU_YOY cbr) as Fixing objects; label published_on_unknown (1.5, H10)",

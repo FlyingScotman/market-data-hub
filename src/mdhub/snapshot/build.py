@@ -104,6 +104,12 @@ class Provenance:
     _runs: dict[tuple[str, str], set[int]] = field(default_factory=dict)
     _times: dict[tuple[str, str], list[datetime]] = field(default_factory=dict)
 
+    def discard_dataset(self, dataset: str) -> None:
+        """Remove a dataset's provisional provenance before restoring its pinned selection."""
+        for key in [key for key in self._runs if key[0] == dataset]:
+            self._runs.pop(key, None)
+            self._times.pop(key, None)
+
     def add(
         self, dataset: str, source: str | None, run_id: int | None, at: datetime | None
     ) -> None:

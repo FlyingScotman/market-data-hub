@@ -10930,6 +10930,7 @@
    }
   ],
   "futures_prices_intraday": [],
+  "fx_input_pairs": [],
   "fx_rates": [
    {
     "board": null,
@@ -26110,6 +26111,19 @@
   },
   {
    "coverage": {
+    "complete_four": 0,
+    "groups": 0
+   },
+   "name": "fx_input_pairs",
+   "rows": 0,
+   "sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+   "stale": true,
+   "stale_reasons": [
+    "no_completed_capture"
+   ]
+  },
+  {
+   "coverage": {
     "latest_month": {
      "CPI_RU_MOM": "2026-09-01",
      "CPI_RU_YOY": "2026-09-01"
@@ -29207,7 +29221,7 @@
   "name": "market-data-hub",
   "version": "0.1.0"
  },
- "schema_version": "market_snapshot/1.8",
+ "schema_version": "market_snapshot/1.9",
  "sources": [
   {
    "dataset": "bond_quotes",
@@ -29350,6 +29364,6 @@
    "source": "moex_iss"
   }
  ],
- "static_snapshot_id": "296a3319cb9adbc44a455b37df25717913a4eded57b9101ed0e95fb756d95f9a",
+ "static_snapshot_id": "0b211a910a4ea17f141be2cca7d63bcc03378639a0713f587f453e1324d0b864",
  "supersedes": null
 }

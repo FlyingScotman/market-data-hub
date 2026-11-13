@@ -25,6 +25,7 @@ from psycopg.types.json import Jsonb
 from mdhub.db.pool import DictConnection
 from mdhub.snapshot.build import Build
 from mdhub.snapshot.canonical import canonical_bytes, gzip_bytes, sha256_hex
+from mdhub.snapshot.fx_input_pairs import pin_for_publication
 from mdhub.snapshot.schema import validate_bundle
 
 __all__ = [
@@ -65,7 +66,8 @@ def _current_of_cut(conn: DictConnection, build: Build) -> dict[str, Any] | None
     c = build.cut
     row: dict[str, Any] | None = conn.execute(
         """
-        SELECT p.id, p.content_sha256 FROM ops.published_snapshot p
+        SELECT p.id, p.content_sha256, p.known_at, p.datasets, p.sources
+        FROM ops.published_snapshot p
         WHERE p.kind = %(k)s AND p.cut_type = %(ct)s AND p.business_date = %(d)s
           AND p.cut_ts = %(ts)s
           AND NOT EXISTS (SELECT 1 FROM ops.published_snapshot n WHERE n.supersedes = p.id)
@@ -164,10 +166,22 @@ def publish(
 
     Runs in the caller's transaction (the caller commits)."""
     _lock(conn)
+    if build.cut.kind == "market":
+        pin_for_publication(conn, build)
     content = build.content_sha256()
     current = _current_of_cut(conn, build)
     c = build.cut
-    if current is not None and current["content_sha256"] == content:
+    fx = next((dataset for dataset in build.datasets if dataset.name == "fx_input_pairs"), None)
+    fx_unchanged = current is not None and (
+        fx is None
+        or (
+            current["known_at"] <= c.known_at
+            and next((d for d in current["datasets"] if d["name"] == fx.name), None) == fx.entry()
+            and [s for s in current["sources"] if s["dataset"] == fx.name]
+            == [s for s in build.provenance.wire() if s["dataset"] == fx.name]
+        )
+    )
+    if current is not None and current["content_sha256"] == content and fx_unchanged:
         return PublishResult(current["id"], "unchanged", c.kind, c.cut_type, c.business_date)
     supersedes = current["id"] if current is not None else None
     return _insert(

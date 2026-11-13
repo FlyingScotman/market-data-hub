@@ -17,7 +17,8 @@ EXPECTED_JOBS = {
     "bonds_static", "bonds_static_probe", "issuers_static", "cbonds_enrich",
     "ratings_agencies", "bond_terms_curated", "zcyc_floater_fit", "bonds_eod",
     "bonds_intraday",
-    "fx_moex_intraday", "fx_moex_eod", "fx_indicative", "futures_intraday", "futures_eod",
+    "fx_moex_intraday", "fx_input_pairs", "fx_moex_eod", "fx_indicative",
+    "futures_intraday", "futures_eod",
     "algopack_fx_futures", "zcyc_securities", "index_intraday", "index_constituents",
     "repo_ccp_bond", "repo_gc_term", "bond_close_quote", "indices_eod", "zcyc", "cbr_daily",
     "cbr_meetings", "ecb_fx",
@@ -40,6 +41,13 @@ def test_rules_reference_only_known_jobs_and_parse() -> None:
     problems = check_rules(bad)
     assert any("not in KNOWN_JOBS" in p for p in problems)
     assert any("bad cron" in p for p in problems)
+
+
+def test_fx_input_pairs_poll_once_per_minute_during_forts_sessions() -> None:
+    rules = RULES["fx_input_pairs"]
+    assert [rule.cron for rule in rules] == ["* 7-22 * * *", "0-50 23 * * *"]
+    assert all(rule.days == "trading" and rule.calendar == "MOEX_FORTS" for rule in rules)
+    assert all(not rule.catch_up for rule in rules)
 
 
 def test_registered_jobs_accept_rule_params() -> None:
