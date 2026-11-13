@@ -1,7 +1,7 @@
 # market-data-hub — design
 
 Status: living design, first written 2026-10-15 (v0.1) and kept current with `main` (contract
-`market_snapshot/1.9`, 55 migrations; production v0.4.0 = contract 1.5). Owner: FiveLimaGolf. Target: a single VPS that is the
+`market_snapshot/1.9`, 55 migrations; 0.9.0 is the release target). Owner: FiveLimaGolf. Target: a single VPS that is the
 market data hub for the trading desk backend (trading_desk_monitor + rub-fixed-income-core).
 
 Inputs to this design (audits, 2026-10-15): market-data-store (curves/FX/fixings loaders),
