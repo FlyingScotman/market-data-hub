@@ -17,7 +17,7 @@ import copy
 import gzip
 import json
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -74,9 +74,28 @@ def _http(**kw: Any) -> HttpClient:
     )
 
 
-def _poll(payload: dict[str, Any], settings: Settings, db: Database) -> None:
+def _poll(
+    answer: dict[str, Any],
+    doc: dict[str, Any],
+    settings: Settings,
+    db: Database,
+    conn: Conn,
+    at: datetime,
+) -> None:
+    """One run of the real ``futures_intraday`` loader against the APIM answer ``doc``. The rows
+    it inserts are stamped as stored at ``at`` (the DB clock is the test's, not the feed's): the
+    cut reads row versions known at the cut."""
+    answer.clear()
+    answer.update(doc)
+    started = utc_now()
     out = run_job("futures_intraday", {}, settings=settings, db=db, http_factory=_http)
     assert out.status == "succeeded", out
+    conn.commit()
+    # ingested_at is a meta column: no row-history image; a row updated in place is left as is
+    conn.execute(
+        "UPDATE md.futures_intraday SET ingested_at = %s WHERE ingested_at >= %s", (at, started)
+    )
+    conn.commit()
 
 
 def _requote(
@@ -108,10 +127,21 @@ def _entry(doc: dict[str, Any], name: str) -> dict[str, Any]:
     return entry
 
 
-def _publish(db: Database, cut_type: str, cut_ts: datetime = CUT) -> Any:
+def _publish(
+    db: Database, cut_type: str, cut_ts: datetime = CUT, known_at: datetime | None = None
+) -> Any:
     return publish_market_snapshot(
-        db, cut_type=cut_type, business_date=DAY, cut_ts=cut_ts, known_at=utc_now()
+        db,
+        cut_type=cut_type,
+        business_date=DAY,
+        cut_ts=cut_ts,
+        known_at=known_at or utc_now(),
     )
+
+
+def _msk(hhmmss: str) -> datetime:
+    h, m, sec = (int(x) for x in hhmmss.split(":"))
+    return datetime(DAY.year, DAY.month, DAY.day, h, m, sec, tzinfo=MSK)
 
 
 @respx.mock
@@ -123,19 +153,25 @@ def test_preliminary_cut_carries_the_last_intraday_quotes_before_the_cut(
     recorded = load("forts_md_apim.json")  # every contract quoted at 10:50 MSK
     answer: dict[str, Any] = {}
     respx.get(APIM_FORTS).mock(side_effect=lambda _r: httpx.Response(200, json=answer))
-    for doc in (
-        recorded,
+    for doc, at in (
+        (recorded, _msk("10:50:20")),
         # SiZ6 requoted at 19:30 (before the cut): the last quote at the cut
-        _requote(recorded, "SiZ6", bid=85100, updated="19:30:00", sysdate_time="19:30:01"),
+        (
+            _requote(recorded, "SiZ6", bid=85100, updated="19:30:00", sysdate_time="19:30:01"),
+            _msk("19:30:02"),
+        ),
         # quote time before the cut, SYSTIME after it: not known at the cut
-        _requote(recorded, "SiZ6", bid=85200, updated="19:44:59", sysdate_time="19:45:30"),
+        (
+            _requote(recorded, "SiZ6", bid=85200, updated="19:44:59", sysdate_time="19:45:30"),
+            _msk("19:45:31"),
+        ),
         # after the cut
-        _requote(recorded, "SiZ6", bid=85300, updated="20:10:00", sysdate_time="20:10:01"),
+        (
+            _requote(recorded, "SiZ6", bid=85300, updated="20:10:00", sysdate_time="20:10:01"),
+            _msk("20:10:02"),
+        ),
     ):
-        answer.clear()
-        answer.update(doc)
-        _poll(doc, apim_settings, db)
-    conn.commit()
+        _poll(answer, doc, apim_settings, db, conn, at)
     rows = conn.execute(
         "SELECT secid, ts, source_ts FROM md.futures_intraday WHERE secid = 'SiZ6' ORDER BY ts"
     ).fetchall()
@@ -222,8 +258,7 @@ def test_preliminary_cut_without_quotes_before_the_cut_says_so(
         row[cols.index("UPDATETIME")] = "20:10:00"
         row[cols.index("SYSTIME")] = f"{DAY.isoformat()} 20:10:01"
     respx.get(APIM_FORTS).mock(return_value=httpx.Response(200, json=late))
-    _poll(late, apim_settings, db)
-    conn.commit()
+    _poll({}, late, apim_settings, db, conn, _msk("20:10:02"))
 
     doc = _bundle(conn, _publish(db, "eod_preliminary").market.id)
     validate_bundle(doc)
@@ -239,3 +274,74 @@ def test_preliminary_cut_without_quotes_before_the_cut_says_so(
         "latest_ts": None,
         "latest_source_ts": None,
     }
+
+
+def _published_before_the_rebuild(
+    apim_settings: Settings, db: Database, conn: Conn
+) -> tuple[dict[str, Any], dict[str, Any], Any]:
+    """The live timeline up to the publication: the 10:50 and 19:30 quotes are stored, the
+    preliminary cut is built. The seed rows of the other datasets are stored "now", so the build
+    runs with ``known_at`` = now; the futures dataset reads the versions known at
+    ``min(known_at, cut_ts)`` whatever the build time (the scheduler builds at cut + 0.1 s)."""
+    seed(conn)
+    seed_ref(conn)
+    recorded = load("forts_md_apim.json")
+    answer: dict[str, Any] = {}
+    respx.get(APIM_FORTS).mock(side_effect=lambda _r: httpx.Response(200, json=answer))
+    _poll(answer, recorded, apim_settings, db, conn, _msk("10:50:20"))
+    requoted = _requote(recorded, "SiZ6", bid=85100, updated="19:30:00", sysdate_time="19:30:01")
+    _poll(answer, requoted, apim_settings, db, conn, _msk("19:30:02"))
+    first = _publish(db, "eod_preliminary")
+    doc = _bundle(conn, first.market.id)
+    assert {r["secid"]: r["bid"] for r in doc["data"]["futures_prices_intraday"]}["SiZ6"] == "85100"
+    return recorded, answer, first
+
+
+@respx.mock
+def test_rebuild_ignores_a_poll_after_the_publication_with_source_ts_at_the_cut(
+    apim_settings: Settings, db: Database, conn: Conn
+) -> None:
+    """The 19:45:00 poll: quote time and SYSTIME at the cut, but stored after the build (known_at
+    = cut + 0.1 s). A rebuild later must not see it as part of the cut (no daily correction)."""
+    recorded, answer, first = _published_before_the_rebuild(apim_settings, db, conn)
+    at_cut = _requote(recorded, "SiZ6", bid=85150, updated="19:44:50", sysdate_time="19:45:00")
+    _poll(answer, at_cut, apim_settings, db, conn, CUT + timedelta(milliseconds=500))
+    row = conn.execute(
+        "SELECT ts, source_ts, bid FROM md.futures_intraday WHERE secid = 'SiZ6' "
+        "AND source_ts = %s",
+        (CUT,),
+    ).fetchone()
+    assert row is not None and row["bid"] == 85150 and row["ts"] <= CUT  # in the table
+
+    again = _publish(db, "eod_preliminary")  # known_at = now
+    assert (again.market.status, again.market.id) == ("unchanged", first.market.id)
+
+
+@respx.mock
+def test_rebuild_ignores_an_in_place_update_after_the_publication(
+    apim_settings: Settings, db: Database, conn: Conn
+) -> None:
+    """The loader updates a row of the same key in place (values and ``source_ts`` change,
+    ``ingested_at`` stays; the old image is only in ``ops.row_history``): the rebuild reads the
+    version known at the cut."""
+    recorded, answer, first = _published_before_the_rebuild(apim_settings, db, conn)
+    revised = _requote(recorded, "SiZ6", bid=85999, updated="19:30:00", sysdate_time="19:46:00")
+    _poll(answer, revised, apim_settings, db, conn, _msk("19:46:01"))
+    conn.execute(
+        "UPDATE ops.row_history SET replaced_at = %s WHERE table_name = 'md.futures_intraday'",
+        (_msk("19:46:01"),),
+    )
+    conn.commit()
+    live = conn.execute(
+        "SELECT bid, source_ts FROM md.futures_intraday WHERE secid = 'SiZ6' "
+        "AND ts = '2026-10-16 19:30:00+03'"
+    ).fetchone()
+    assert live is not None and live["bid"] == 85999  # updated in place
+    assert live["source_ts"] == _msk("19:46:00")
+    history = conn.execute(
+        "SELECT count(*) AS n FROM ops.row_history WHERE table_name = 'md.futures_intraday'"
+    ).fetchone()
+    assert history is not None and history["n"] == 1  # the old image
+
+    again = _publish(db, "eod_preliminary")
+    assert (again.market.status, again.market.id) == ("unchanged", first.market.id)

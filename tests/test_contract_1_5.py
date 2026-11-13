@@ -126,13 +126,13 @@ INSERT INTO md.fx_settle_date (trade_date, secid, board, settle_date) VALUES
   ('2026-10-15', 'CNYRUB_TOM1W', 'CETS', '2026-10-16'),
   ('2026-10-14', 'CHFRUBTODTOM', 'CETS', '2026-10-14');
 INSERT INTO md.futures_intraday (ts, secid, source, source_variant, trade_date, bid, offer,
-    last, settle_price, latency, source_ts) VALUES
+    last, settle_price, latency, source_ts, ingested_at) VALUES
   ('2026-10-15 10:00Z', 'SiZ6', 'moex_apim', 'apim_marketdata', '2026-10-15', 82400, 82410,
-   82405, 82406, 'realtime', '2026-10-15 10:00Z'),
+   82405, 82406, 'realtime', '2026-10-15 10:00Z', '2026-10-15 10:00:01Z'),
   ('2026-10-15 11:00Z', 'SiZ6', 'moex_iss', 'iss_public', '2026-10-15', 82500, 82510, 82505,
-   82506, 'delayed', '2026-10-15 11:15Z'),
+   82506, 'delayed', '2026-10-15 11:15Z', '2026-10-15 11:15:01Z'),
   ('2026-10-14 11:00Z', 'USDRUBF', 'moex_iss', 'iss_public', '2026-10-14', 81, 82, 81.5, NULL,
-   'delayed', '2026-10-14 11:15Z');
+   'delayed', '2026-10-14 11:15Z', '2026-10-14 11:15:01Z');
 INSERT INTO md.fixing (index_code, fixing_date, source, value, unit, published_on, details)
 VALUES
   ('CPI_RU_MOM', '2015-01-01', 'rosstat', 103.85, 'index', NULL, '{"period": "2015-01"}'),
