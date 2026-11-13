@@ -220,6 +220,38 @@ def _finish(db: Database, run: JobRun, status: str, error: str | None) -> None:
         log.exception("could not finalize job_run %d (status %s)", run.id, status)
         if status != "failed":
             raise
+        return
+    if run.job == "fx_input_pairs":
+        try:
+            _observe_fx_completion(db, run.id)
+        except Exception as exc:
+            # The terminal job status is already committed. Do not rewrite it or mask the
+            # original job error: without evidence the FX snapshot reader fails closed.
+            log.error(
+                "fx_input_pairs run %d: completion evidence failed (%s)", run.id, type(exc).__name__
+            )
+
+
+def _observe_fx_completion(db: Database, run_id: int) -> None:
+    """Observe the committed terminal status, then record a visibility upper bound.
+
+    ``observed_at`` is measured *after* a separate transaction read the committed row. It is
+    an observation clock, not the database transaction's commit timestamp.
+    """
+    with db.connection() as conn:
+        row = conn.execute(
+            "SELECT status, finished_at FROM ops.job_run WHERE id = %s", (run_id,)
+        ).fetchone()
+        if row is None or row["finished_at"] is None:
+            raise ValueError("committed terminal job row not found")
+        clock = conn.execute("SELECT clock_timestamp() AS observed_at").fetchone()
+        assert clock is not None
+        conn.execute(
+            """INSERT INTO md.fx_input_pair_completion_evidence
+               (run_id, status, finished_at, observed_at) VALUES (%s, %s, %s, %s)
+               ON CONFLICT (run_id, status, finished_at) DO NOTHING""",
+            (run_id, row["status"], row["finished_at"], clock["observed_at"]),
+        )
 
 
 ORPHAN_RUN_HOURS: Final = 12

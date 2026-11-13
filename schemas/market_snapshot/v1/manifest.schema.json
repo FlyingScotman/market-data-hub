@@ -8,7 +8,7 @@
       "type": "object",
       "properties": {
         "schema_version": {
-          "const": "market_snapshot/1.8"
+          "const": "market_snapshot/1.9"
         },
         "kind": {
           "enum": [
@@ -419,7 +419,7 @@
       ]
     },
     "schema_version": {
-      "const": "market_snapshot/1.8"
+      "const": "market_snapshot/1.9"
     },
     "kind": {
       "enum": [

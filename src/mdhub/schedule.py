@@ -103,6 +103,7 @@ KNOWN_JOBS: Final = (
     "bonds_eod",
     "bonds_intraday",
     "fx_moex_intraday",
+    "fx_input_pairs",
     "fx_moex_eod",
     "fx_indicative",
     "futures_intraday",
@@ -300,6 +301,15 @@ RULES: Final[Mapping[str, tuple[Rule, ...]]] = {
     ),
     "fx_moex_intraday": (
         _poll("*/5 7-23 * * *", calendar="MOEX_FX", note="every 5 min 07:00-23:55"),
+    ),
+    "fx_input_pairs": (
+        _poll(
+            "* 7-22 * * *",
+            days="trading",
+            calendar="MOEX_FORTS",
+            note="indicative inputs every minute",
+        ),
+        _poll("0-50 23 * * *", days="trading", calendar="MOEX_FORTS"),
     ),
     "fx_moex_eod": (
         Rule(

@@ -111,6 +111,7 @@ def _mock_sources(router: respx.MockRouter) -> dict[str, respx.Route]:
             200, json={"engines": {}}
         ),
         "moex_apim": router.get("https://apim.moex.com/iss/engines.json").respond(401),
+        "ntpro_public": router.get(sp.ntpro.URL).respond(200, json={"status": "ok", "data": []}),
         "cbr": router.get("https://www.cbr.ru/scripts/XML_daily.asp").respond(
             200, text="<ValCurs/>"
         ),
@@ -165,6 +166,7 @@ def test_source_probe_job_records_every_source(
     assert {k: (r["ok"], r["auth"], r["http_status"]) for k, r in rows.items()} == {
         "moex_iss": (True, "n/a", 200),
         "moex_apim": (False, "rejected", 401),
+        "ntpro_public": (True, "n/a", 200),
         "cbr": (True, "n/a", 200),
         "ecb": (False, "n/a", None),
         "rosstat": (False, "n/a", 503),

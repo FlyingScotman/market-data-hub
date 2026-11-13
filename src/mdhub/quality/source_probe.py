@@ -22,7 +22,8 @@ result body. ``auth=ok`` with ``ok=false`` means no explicit credential rejectio
 access; the sanitized error explains the failed check.
 
 Sources and requests (:data:`PROBES`): ``moex_iss`` ``/iss/engines.json``, ``moex_apim``
-``/iss/engines.json`` with ``MOEX_API_KEY``, ``cbr`` ``XML_daily.asp``, ``ecb``
+``/iss/engines.json`` with ``MOEX_API_KEY``, ``ntpro_public`` public snapshot at most hourly,
+``cbr`` ``XML_daily.asp``, ``ecb``
 ``eurofxref-daily.xml``, ``rosstat`` ``/statistics/price``, the reference-rate sources (WEB-16:
 ``ecb_data_portal`` / ``bundesbank`` / ``dbnomics`` the latest €STR, ``fred`` SOFR of the last 10
 days, ``nyfed`` the latest SOFR, ``snb`` the dimensions of the SARON cube, ``us_treasury`` the
@@ -67,6 +68,7 @@ from mdhub.sources import (
     fred,
     nkr,
     nra,
+    ntpro,
     nyfed,
     otc_monitor,
     raexpert,
@@ -215,6 +217,7 @@ def ratescalcs_hours(now: datetime) -> bool:
 PROBES: Final = (
     ProbeSpec("moex_iss", _public(f"{ISS_BASE_URL}/engines.json?iss.meta=off")),
     ProbeSpec("moex_apim", _apim),
+    ProbeSpec(ntpro.SOURCE, _public(ntpro.URL), min_interval_s=3600.0),
     ProbeSpec("cbr", _public(cbr.BASE_URL + cbr.XML_DAILY_PATH)),
     ProbeSpec("ecb", _public(ecb.DAILY_URL)),
     ProbeSpec("rosstat", _public(rosstat.BASE_URL + rosstat.PRICE_PAGE_PATH)),
