@@ -23,7 +23,7 @@ never removes, renames or changes the meaning or unit of an existing field. A co
 reads `1.x` and ignores unknown additive fields stays correct; a new major (`2.0`) is refused.
 
 First hub release with each version: 1.0 = 0.1.3, 1.1 = 0.1.7, 1.2 = 0.2.0, 1.3 = 0.3.2,
-1.4 = 0.3.4, 1.5 = 0.4.0 (in production since 2026-10-23); 1.6 = 0.6.0, 1.7 = 0.7.0; 1.8 is in `main`, not yet released.
+1.4 = 0.3.4, 1.5 = 0.4.0 (in production since 2026-10-23); 1.6 = 0.6.0, 1.7 = 0.7.0, 1.8 = 0.8.0.
 
 | Version | Change (all additive) |
 |---|---|
