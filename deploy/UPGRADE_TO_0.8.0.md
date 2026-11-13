@@ -158,8 +158,8 @@ Each is shown in full where it is used; this is what its parts mean.
 
 ### 0.5 A read token for the API checks (used in section 5)
 
-Console, page **Tokens**, form "New token": Name `upgrade-check`, scope `read`, "Expires after (days)" `3`,
-**Create**. Copy the token (it is shown once). In the server shell:
+Console, page **Tokens**, card "New token": field "Name" `upgrade-check`, group "Scopes": checkbox `read`
+(ticked by default; leave the others unticked), field "Expires after (days)" `5`, button **Create**. Copy the token (it is shown once). In the server shell:
 
 ```bash
 CURLRC=$(mktemp)
@@ -174,9 +174,10 @@ read -rs MDHUB_TOKEN && printf 'header = "Authorization: Bearer %s"\n' "$MDHUB_T
   format (`%s` is replaced by the value, `\n` is a line break) and `> "$CURLRC"` writes it into the file instead
   of the screen (`printf` is built into the shell, so the token never appears in a process list). `;`
   starts the next command; `unset MDHUB_TOKEN` forgets the variable.
-- The variable `CURLRC` lives only in this shell session. The first check of section 5 comes the evening
-  after the install, so the token lives for 3 days and the shell must be kept (or the file made again from a
-  new token).
+- The variable `CURLRC` lives only in this shell session. The first check (5.1) comes right after the install; the
+  last one (5.3, the `eod_final` of the evening cut's day) comes on the morning after the first evening cut, and if the install
+  was on a Thursday after 19:45 MSK, that is the Monday morning after the weekend. The token therefore lives for 5
+  days. Keep the shell, or make the file again from a new token.
 
 Revoke the token on the Tokens page and delete the file at the end (section 7).
 
@@ -330,10 +331,11 @@ Only signed releases (signature by a key pinned in the running version) can be i
 2. Click **Review and install** on that row. The confirmation page must say **"No new migrations: a rollback
    only switches the image tag back."** If it lists any migration: stop and report, this document does not cover
    that build. Read the release notes shown there.
-3. Click **Install 0.8.0**. The page shows the log of the steps (refreshes every 2 seconds): verifying (the line
-   `0.7.0 -> 0.8.0; new migrations: none`), backing up (a `pre-update-*.dump` in the backup directory), staging
-   (the image is built), draining (the worker finishes running jobs, at most 10 minutes), migrating (nothing to
-   apply), starting, checking (up to 3 minutes), done.
+3. Click **Install 0.8.0**. The page shows the log (refreshes every 2 seconds); each line is tagged with its step in square
+   brackets: `[verifying]` (the line `0.7.0 -> 0.8.0; new migrations: none`), `[backing_up]` (a `pre-update-*.dump` in
+   the backup directory), `[staging]` (the image is built), `[draining]` (the worker finishes running jobs, at most
+   10 minutes), `[migrating]` (nothing to apply), `[starting]`, `[checking]` (up to 3 minutes); the request state
+   ends as `done`.
 4. The request ends **done**. If it ends **failed** (nothing changed) or **rolled_back** (the updater went
    back to 0.7.0 by itself), copy the error text from the "Requests" table and stop: report it. Do not
    retry before the owner has seen it.
@@ -359,14 +361,30 @@ Only signed releases (signature by a key pinned in the running version) can be i
   ls -l /opt/mdhub/shared/backups/
   ```
   lists a `pre-update-...-0.7.0-to-0.8.0-....dump`. The directory is `shared/backups/` in the release layout.
-- Overview shows nothing new in red. The worker log (0.4) contains `scheduler 0.8.0 starting with ... trigger(s)`
-  and no `invalid configuration`.
+- Overview shows nothing new in red. The worker log shows the start of 0.8.0 and no configuration error:
+  ```bash
+  docker compose logs worker | grep -F 'scheduler 0.8.0 starting'
+  docker compose logs --tail 100 worker | grep -F 'invalid configuration'
+  ```
+  `docker compose logs worker` prints the whole kept log of the service `worker` (0.4); `|` passes it to the next
+  command; `grep` prints the lines that contain a text; `-F` takes the text literally (without it the dots of `0.8.0`
+  would mean "any character"); the quotes make the shell pass the text as one argument. The whole log is searched in
+  the first command and not only its last lines, because `futures_intraday` writes a line every minute and the start line
+  can be far above. The first command must print a line like `scheduler 0.8.0 starting with N trigger(s)`; the
+  second one, which looks only at the last 100 lines (`--tail 100`: a worker that cannot read its settings stops, so
+  the error is at the end), must print nothing.
 
 ### 4.4 When the console path is not available
 
 - GitHub cannot be reached or the release is not listed: download the three release files on another
-  machine and use **Upload a release** on the same page (the archive and its `.minisig`; 200 MB at most),
-  then continue with step 2 above.
+  machine. Console, page **Updates**, card "Upload a release" (it shows the form only after the step-up and while no
+  update is in progress; otherwise it shows the link "Confirm your identity" or "An update is in progress."). In
+  the field "Archive" choose `market-data-hub-0.8.0.tar.gz`, in the field "Signature" choose
+  `market-data-hub-0.8.0.SHA256SUMS.minisig` (200 MB at most for the archive), click the button **Upload and verify**.
+  An archive that is unsigned, signed with an unknown key or damaged is refused with the text "Upload refused: ...":
+  stop and report it. If it is accepted, **the confirmation page "Install 0.8.0" opens at once**: there is no row and no
+  "Review and install" on this path. Continue with the checks of step 2 from "The confirmation page must say ..."
+  (the release notes are not shown for an upload), then step 3 and step 4.
 - The console itself is down: [README_DEPLOY.md](README_DEPLOY.md) §8 ("Upgrading") is the manual path
   for the plain layout, and §13 "Manual recovery" for the release layout. Check the archive first with
   `mdhub release verify` (§11). Do not restore the `db/mdhub.dump` of a bundle on an upgrade. If you
@@ -402,7 +420,8 @@ print("schema_version", m["schema_version"], "| produced by", m["producer"]["ver
   the `'` on the last line closes it.
 - Expected: `schema_version market_snapshot/1.8` and `produced by 0.8.0`, and a `cut_ts` after the install. If the newest
   snapshot is still from before the install (`1.7`, `produced by 0.7.0`), wait for the next 30-minute cut; if it has not appeared
-  within an hour, look at the Jobs page (filter job `snapshot_market`) and report the status and error of the last runs.
+  within an hour, look at the Jobs page (section "Run history", field "Job" = `snapshot_market`, button "Filter") and report the
+  columns "Status" and "Error" of the last runs.
 - Outside 10:00-19:00 MSK there is no new intraday cut; do 5.3 instead.
 
 ### 5.2 What to expect in the evening, and when
@@ -434,7 +453,9 @@ for x in m["datasets"]:
   - the entry `futures_prices_intraday` has `"rows"` **greater than 0** (an evening cut of 0.7.0 and before had no such rows),
     `"stale": false`, and
     in `"coverage"`: **`"basis": "intraday_last_at_cut"`**, `"contracts"` equal to `"rows"`, and `"latest_ts"` and
-    `"latest_source_ts"` **not later than `cut_ts`** (typically a minute or a few before it; both are UTC);
+    `"latest_source_ts"` **not later than `cut_ts`** (typically a minute or a few before it; both are UTC). If the primary feed was down that evening, the quotes
+    come from the public delayed feed ~15 minutes behind (`source_variant` `iss_public` in the rows), and `latest_ts` can
+    be about 15 minutes before `cut_ts`: that is not a failure, report it as a note;
   - the entries `futures_prices` and `fx_swaps` still have `"rows": 0` and `"stale": true` with reasons like
     `no FORTS futures history on <date>` and `no MOEX FX swap rows on <date>`: ISS publishes the history of the day
     only for `eod_final`. **That is expected and is not a fault**; it is the reason for this change.
@@ -448,11 +469,11 @@ for x in m["datasets"]:
 
 | what you see | probable cause | action |
 |---|---|---|
-| after 19:55 MSK the newest `eod_preliminary` is still of the previous day or says `1.7` | the cut has not run yet or failed; or the server was installed after 19:45 (3.4) | Jobs page, filter job `snapshot_market`: the run of 16:45 UTC, its status and Error. If it is `failed`, copy the text and stop: report it. Do not run it by hand |
-| `futures_prices_intraday` has `"rows": 0`, `"stale": true`, reason `no intraday FORTS futures quotes on <date> at or before the cut` | no quote was stored before the cut: the job `futures_intraday` did not work that evening | Jobs page, filter job `futures_intraday`: statuses and Error of the runs before 16:45 UTC; page Sources for the futures sources. Report what you see. **Do not rebuild the cut by hand to fix it**: rows stored after the cut are "not known at the cut", so a rebuild gives the same empty set |
+| after 19:55 MSK the newest `eod_preliminary` is still of the previous day or says `1.7` | the cut has not run yet or failed; or the server was installed after 19:45 (3.4) | Jobs page, "Run history": field "Job" = `snapshot_market`, button "Filter"; the run of 16:45 UTC, its Status and the column "Error". If it is `failed`, copy the text and stop: report it. Do not run it by hand |
+| `futures_prices_intraday` has `"rows": 0`, `"stale": true`, reason `no intraday FORTS futures quotes on <date> at or before the cut` | no quote was stored before the cut: the job `futures_intraday` did not work that evening | Jobs page, "Run history": field "Job" = `futures_intraday`, button "Filter"; Status and the column "Error" of the runs before 16:45 UTC; page Sources for the futures sources. Report what you see. **Do not rebuild the cut by hand to fix it**: rows stored after the cut are "not known at the cut", so a rebuild gives the same empty set |
 | rows are there, but `coverage` has no `basis` | you looked at an `intraday` cut, not at `eod_preliminary` (intraday cuts have no `basis`) | repeat the first command of 5.3 with `cut_type=eod_preliminary` |
 | `latest_ts` or `latest_source_ts` later than `cut_ts` | not expected: the cut must not hold a quote from after it | stop and report, with the two values and the `snapshot_id` |
-| Python error `IndexError` or `KeyError` | the answer holds no snapshot of that kind, or an error text instead of data | run the `curl` part alone and read the answer: `401` = the token of 0.5 is missing, expired or not `read`; an empty `data` = no such snapshot yet |
+| Python error `IndexError` or `KeyError` | the answer holds no snapshot of that kind, or an error text instead of data | run the `curl` part alone and read the answer (`curl -sS` prints only the body, not the status): `{"detail":"unauthorized"}` = the token of 0.5 is missing, expired or revoked; `{"detail":"forbidden: token scope"}` = the token lacks the scope `read`; an empty `data` = no such snapshot yet |
 
 ### 5.5 What not to do
 
@@ -478,8 +499,8 @@ Decide with the owner; do not roll back on your own unless the update did it by 
   `rolled_back`): the services go back to 0.7.0. There are no migrations to undo, so it does not restore the
   database: it only switches the image tag and the `current` link back.
 - **Later**, Updates page, "Installed versions": **Roll back to 0.7.0**; the confirmation page must say "No
-  migration has to be undone: the rollback switches the image tag back and takes seconds." Then the red
-  button. The link exists because the install recorded 0.7.0 as the previous version; the rollback needs the
+  migration has to be undone: the rollback switches the image tag back and takes seconds." Then the button
+  **Roll back to 0.7.0** on that page. The link exists because the install recorded 0.7.0 as the previous version; the rollback needs the
   release directory `/opt/mdhub/releases/0.7.0` (3.2). If it is missing, the request ends `failed` with nothing
   changed: **stop and ask the owner**; do not look for another way. If the confirmation page instead lists
   migrations that 0.7.0 does not know, or warns that a dump will be restored, **stop**: something that this
