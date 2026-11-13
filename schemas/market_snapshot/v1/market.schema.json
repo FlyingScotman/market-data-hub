@@ -1355,7 +1355,7 @@
       ]
     },
     "futures_price_intraday": {
-      "description": "FuturesPriceIntraday: latest stored FORTS FX futures quote per contract on the business date (md.futures_intraday: APIM realtime, else public ISS delayed) with its contract static (1.5, H11)",
+      "description": "FuturesPriceIntraday: latest stored FORTS FX futures quote per contract on the business date (md.futures_intraday: APIM realtime, else public ISS delayed) with its contract static (1.5, H11); 1.8: in eod_preliminary the latest quote with ts and source_ts at or before cut_ts (intraday quotes, not end-of-day data: coverage basis = intraday_last_at_cut)",
       "type": "object",
       "additionalProperties": false,
       "properties": {

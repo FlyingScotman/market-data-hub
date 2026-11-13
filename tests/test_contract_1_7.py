@@ -137,7 +137,8 @@ def dataset_entry(doc: dict[str, Any]) -> dict[str, Any]:
 
 
 def test_version_and_defaults() -> None:
-    assert SCHEMA_VERSION == "market_snapshot/1.7"
+    assert SCHEMA_VERSION.startswith("market_snapshot/1.")  # the 1.7 rules hold in later minors
+    assert int(SCHEMA_VERSION.rsplit(".", 1)[1]) >= 7
     assert DEFAULT_CARRY_DATASETS == ("key_rate_swap", "ruonia_ois")
     assert DEFAULT_CARRY_MAX_AGE == 5
     assert MarketParams().curve_carry_datasets == DEFAULT_CARRY_DATASETS

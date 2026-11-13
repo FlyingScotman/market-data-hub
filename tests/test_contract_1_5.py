@@ -126,13 +126,13 @@ INSERT INTO md.fx_settle_date (trade_date, secid, board, settle_date) VALUES
   ('2026-10-15', 'CNYRUB_TOM1W', 'CETS', '2026-10-16'),
   ('2026-10-14', 'CHFRUBTODTOM', 'CETS', '2026-10-14');
 INSERT INTO md.futures_intraday (ts, secid, source, source_variant, trade_date, bid, offer,
-    last, settle_price, latency, source_ts) VALUES
+    last, settle_price, latency, source_ts, ingested_at) VALUES
   ('2026-10-15 10:00Z', 'SiZ6', 'moex_apim', 'apim_marketdata', '2026-10-15', 82400, 82410,
-   82405, 82406, 'realtime', '2026-10-15 10:00Z'),
+   82405, 82406, 'realtime', '2026-10-15 10:00Z', '2026-10-15 10:00:01Z'),
   ('2026-10-15 11:00Z', 'SiZ6', 'moex_iss', 'iss_public', '2026-10-15', 82500, 82510, 82505,
-   82506, 'delayed', '2026-10-15 11:15Z'),
+   82506, 'delayed', '2026-10-15 11:15Z', '2026-10-15 11:15:01Z'),
   ('2026-10-14 11:00Z', 'USDRUBF', 'moex_iss', 'iss_public', '2026-10-14', 81, 82, 81.5, NULL,
-   'delayed', '2026-10-14 11:15Z');
+   'delayed', '2026-10-14 11:15Z', '2026-10-14 11:15:01Z');
 INSERT INTO md.fixing (index_code, fixing_date, source, value, unit, published_on, details)
 VALUES
   ('CPI_RU_MOM', '2015-01-01', 'rosstat', 103.85, 'index', NULL, '{"period": "2015-01"}'),
@@ -221,7 +221,12 @@ def test_futures_datasets(market: tuple[dict[str, Any], dict[str, Any]]) -> None
     assert (si["is_fx"], si["base_ccy"], si["last_trade_date"]) == (True, "USD", "2026-12-17")
     assert "perpetual" in fut["USDRUBF"]["labels"] and fut["BRZ6"]["is_fx"] is False
     assert _ds(eod, "futures_prices")["coverage"]["fx_contracts"] == 2
-    assert eod["data"]["futures_prices_intraday"] == []
+    # 1.8: eod_preliminary holds the last intraday quote at or before its cut (19:45 MSK)
+    # (tests/test_contract_1_8.py); the same quote as the intraday cut of 15:00 MSK here
+    assert [(r["secid"], r["settle_price"]) for r in eod["data"]["futures_prices_intraday"]] == [
+        ("SiZ6", "82506")
+    ]
+    assert _ds(eod, "futures_prices_intraday")["coverage"]["basis"] == "intraday_last_at_cut"
     assert intraday["data"]["futures_prices"] == []
     live = intraday["data"]["futures_prices_intraday"]
     assert [(r["secid"], r["source"], r["settle_price"]) for r in live] == [

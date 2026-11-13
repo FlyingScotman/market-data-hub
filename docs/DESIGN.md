@@ -1,7 +1,7 @@
 # market-data-hub — design
 
 Status: living design, first written 2026-10-15 (v0.1) and kept current with `main` (contract
-`market_snapshot/1.7`, 46 migrations; production v0.4.0 = contract 1.5). Owner: FiveLimaGolf. Target: a single VPS that is the
+`market_snapshot/1.8`, 46 migrations; production v0.4.0 = contract 1.5). Owner: FiveLimaGolf. Target: a single VPS that is the
 market data hub for the trading desk backend (trading_desk_monitor + rub-fixed-income-core).
 
 Inputs to this design (audits, 2026-10-15): market-data-store (curves/FX/fixings loaders),
@@ -494,7 +494,9 @@ The hub's dispatch layer (system ADR-002, doc 02 §3/§6; milestone M1). The des
 only immutable snapshots; the TDM CSV export stays until it does.
 
 **Contract.** JSON Schema and golden fixtures in `schemas/market_snapshot/v1/` (see its
-README; `schema_version` `market_snapshot/1.7` since market-data-hub#143: curves carried forward
+README; `schema_version` `market_snapshot/1.8` since market-data-hub#154: `futures_prices_intraday` also in
+`eod_preliminary` (the last intraday quotes at or before the cut, labelled `basis = intraday_last_at_cut`);
+1.7 since market-data-hub#143: curves carried forward
 from the latest earlier day, flagged (`carried_forward` per quote set, `carried_curves` in the
 manifest); 1.6 since TDM brief H17: the calendars of RUB swaps and
 fixings `MOEX_SPFI`, `CBR_RUONIA`, `MOEX_RUSFAR` in `calendars`; 1.5 since package P6 (TDM brief H10-H13): FX value

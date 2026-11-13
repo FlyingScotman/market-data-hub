@@ -380,7 +380,7 @@ version in `.git_archival.txt` (`export-subst`); a Docker build from a plain che
 version is shown by `mdhub --version`, `/health/ready` and every worker heartbeat.
 
 **Release numbering.** A new contract minor version, table, source or job is a minor hub version
-(0.4.0 = contract 1.5, 0.5.0 = contract 1.6); a fix without a contract change is a patch (0.3.3,
+(0.4.0 = contract 1.5, 0.6.0 = contract 1.6, 0.7.0 = contract 1.7); a fix without a contract change is a patch (0.3.3,
 0.3.4). Each release gets an owner note `deploy/UPGRADE_TO_X.Y.Z.md` (state before, what comes,
 install and post-install steps) and a release issue that records the verification.
 
