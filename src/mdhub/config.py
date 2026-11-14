@@ -452,6 +452,10 @@ class Settings(BaseSettings):
     api_tokens: SecretStr | None = Field(
         default=None, validation_alias=AliasChoices("MDHUB_API_TOKENS", "api_tokens")
     )
+    rating_history_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("MDHUB_RATING_HISTORY_ENABLED", "rating_history_enabled"),
+    )
     ops_log_retention_days: int = Field(
         default=90,
         ge=1,
