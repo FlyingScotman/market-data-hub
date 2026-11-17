@@ -725,7 +725,7 @@ def test_no_lookahead_and_consumer_reads_closed_schema_snapshot(
         assert len(aligned) == 1
         assert aligned[0]["content_sha256"] == "0" * 64
     validate_bundle(doc)
-    assert doc["schema_version"] == "market_snapshot/1.9"
+    assert doc["schema_version"] == "market_snapshot/1.10"
     groups = {group["currency"]: group for group in doc["data"]["fx_input_pairs"]}
     assert set(groups) == {"USD", "EUR", "CNY"}
     assert groups["USD"]["coverage"]["all_four_observed"] is True

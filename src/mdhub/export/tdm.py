@@ -26,7 +26,7 @@ import hashlib
 import io
 import json
 import zipfile
-from collections import Counter
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -35,8 +35,9 @@ from pathlib import Path
 from typing import Any, Final
 
 from mdhub import __version__
-from mdhub.core.timeutil import utc_now
+from mdhub.core.timeutil import msk_today, utc_now
 from mdhub.db.pool import DictConnection
+from mdhub.snapshot.redemptions import SchedulePlan, plan_schedule
 from mdhub.sources.moex_market import ZCYC_PARAM_NAMES, kbd_yield_pct
 
 __all__ = [
@@ -316,6 +317,11 @@ class TdmExport:
     withheld: Counter[str] = field(default_factory=Counter)
     """Rows exported with a value left empty because the hub does not know it (yet)."""
     notes: list[str] = field(default_factory=list)
+    schedules: dict[str, SchedulePlan] = field(default_factory=dict)
+    """SECID -> redemption schedule (MOEX rows, manual override) judged on ``date_to``."""
+    unreliable: Counter[tuple[str, str, str, tuple[str, ...]]] = field(default_factory=Counter)
+    """(dataset, column, instrument_id, reasons) -> rows whose exported value MOEX derived from
+    an inconsistent redemption schedule (values are kept, only listed in the manifest)."""
     generated_at: datetime = field(default_factory=utc_now)
 
     def add(self, dataset: str, rows: list[tuple[Any, ...]], name: str | None = None) -> None:
@@ -330,6 +336,18 @@ class TdmExport:
             self.manifest(out), ensure_ascii=False, indent=2, sort_keys=False
         ).encode("utf-8")
         return out
+
+    def redemption_overrides(self) -> dict[str, Any]:
+        """Bonds whose principal schedule in ``bond_cashflows`` is a manual override, and
+        those whose override disagrees with MOEX and was not applied (with the reason)."""
+        return {
+            "applied": sorted(s for s, p in self.schedules.items() if p.override == "applied"),
+            "stale": [
+                {"secid": s, "reason": p.stale_reason}
+                for s, p in sorted(self.schedules.items())
+                if p.override == "stale"
+            ],
+        }
 
     def manifest(self, rendered: dict[str, bytes] | None = None) -> dict[str, Any]:
         rendered = rendered or {f.name: f.to_bytes() for f in self.files}
@@ -361,6 +379,20 @@ class TdmExport:
                     "have empty rate and amount; future amortization/redemption amounts of "
                     "indexed-face bonds are empty"
                 ),
+                "bond_cashflows.amortization": (
+                    "amort / redemption rows are the MOEX principal schedule, or - for a bond "
+                    "with a reviewed manual override that agrees with MOEX (same dates, amounts "
+                    "within rounding, same currency, sum equal to the face) - the override "
+                    "amounts; manifest redemption_overrides lists both cases"
+                ),
+                "unreliable_values": (
+                    "values exported unchanged that MOEX derived from a redemption schedule "
+                    "that is inconsistent with the face (future_redemptions_differ_from_face / "
+                    "redemptions_rounded_by_source, judged on the day of the export run on the "
+                    "MOEX rows even where a manual override corrects bond_cashflows): do not "
+                    "use them for "
+                    "pricing or risk; md_bond_quotes.ytm of those instruments"
+                ),
                 "md_bond_quotes.ytm": (
                     "MOEX effective yield (history yields EFFECTIVEYIELD / "
                     "EFFECTIVEYIELDWAPRICE) at the exported price, only for fixed/zero coupon "
@@ -380,6 +412,17 @@ class TdmExport:
             ],
             "excluded": dict(sorted(self.excluded.items())),
             "withheld_values": dict(sorted(self.withheld.items())),
+            "unreliable_values": [
+                {
+                    "dataset": dataset,
+                    "column": column,
+                    "instrument_id": iid,
+                    "reasons": list(reasons),
+                    "rows": rows,
+                }
+                for (dataset, column, iid, reasons), rows in sorted(self.unreliable.items())
+            ],
+            "redemption_overrides": self.redemption_overrides(),
             "absent": ABSENT,
             "notes": self.notes,
         }
@@ -532,7 +575,7 @@ def _static(export: TdmExport, conn: DictConnection, ids: dict[str, str]) -> Non
                b.bond_class, b.coupon_type, b.is_fx_face, b.face_unit, b.face_value,
                b.issue_date, b.maturity_date, b.coupon_frequency, b.day_count,
                b.is_amortizing, b.is_subordinated, b.coupon_benchmark,
-               b.coupon_benchmark_spread_pct,
+               b.coupon_benchmark_spread_pct, b.initial_face_value, b.is_face_indexed,
                f.benchmark, f.spread_bp, nxt.value_prc AS next_coupon_pct,
                offer.offer_date, call.offer_date AS call_date,
                i.inn, i.name AS issuer_name, i.short_name AS issuer_short_name,
@@ -549,6 +592,8 @@ def _static(export: TdmExport, conn: DictConnection, ids: dict[str, str]) -> Non
         {"asof": asof, "horizon": horizon},
     ).fetchall()
 
+    # the bond rows hold today's MOEX face: judge the schedule on today, not on date_to
+    export.schedules = _schedules(conn, bonds, msk_today())
     issuers: dict[str, tuple[Any, ...]] = {}
     instruments: list[tuple[Any, ...]] = []
     exported: dict[str, str] = {}
@@ -622,6 +667,31 @@ def _static(export: TdmExport, conn: DictConnection, ids: dict[str, str]) -> Non
     export.add("bond_cashflows", _cashflows(export, conn, exported, horizon, indexed))
 
 
+def _schedules(
+    conn: DictConnection, bonds: Sequence[dict[str, Any]], asof: date
+) -> dict[str, SchedulePlan]:
+    """Redemption schedule of every bond: its MOEX rows, or the manual override that agrees
+    with them (``mdhub.snapshot.redemptions.plan_schedule``, judged on ``asof``)."""
+    secids = [b["secid"] for b in bonds]
+    moex: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for r in conn.execute(
+        "SELECT * FROM ref.bond_amortization WHERE NOT is_deleted AND secid = ANY(%s) "
+        "ORDER BY secid, amort_date, data_source",
+        (secids,),
+    ).fetchall():
+        moex[r["secid"]].append(r)
+    override: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for r in conn.execute(
+        "SELECT * FROM ref.bond_amortization_override WHERE NOT is_deleted AND secid = ANY(%s) "
+        "ORDER BY secid, amort_date",
+        (secids,),
+    ).fetchall():
+        override[r["secid"]].append(r)
+    return {
+        b["secid"]: plan_schedule(b, moex[b["secid"]], override[b["secid"]], asof) for b in bonds
+    }
+
+
 KNOWN_COUPON_STATUSES: Final = frozenset({"known"})
 """``ref.bond_coupon.status`` values exported with rate/amount; ``projected_by_moex``,
 ``current_published`` and ``unknown`` coupons are exported with empty rate and amount (TDM
@@ -643,10 +713,6 @@ def _cashflows(
                status
         FROM ref.bond_coupon WHERE NOT is_deleted AND pay_date >= %(h)s
         UNION ALL
-        SELECT secid, amort_date, CASE WHEN data_source = 'maturity' THEN 'redemption'
-                                       ELSE 'amort' END, NULL, value, 0, NULL
-        FROM ref.bond_amortization WHERE NOT is_deleted AND amort_date >= %(h)s
-        UNION ALL
         SELECT secid, offer_date, 'offer', NULL, value,
                CASE WHEN source = 'moex_iss' THEN 0 ELSE 1 END, NULL
         FROM ref.bond_offer
@@ -656,6 +722,24 @@ def _cashflows(
         """,
         {"h": horizon},
     ).fetchall()
+    # principal: the schedule of the bond - MOEX rows, or the manual override that agrees with
+    # them (the same effective rows as the static snapshot's redemptions)
+    for secid, plan in export.schedules.items():
+        for a in plan.rows:
+            if a["amort_date"] >= horizon:
+                kind = "redemption" if a["data_source"] == "maturity" else "amort"
+                rows.append(
+                    {
+                        "secid": secid,
+                        "date": a["amort_date"],
+                        "type": kind,
+                        "rate": None,
+                        "amount": a["value"],
+                        "prio": 0,
+                        "status": None,
+                    }
+                )
+    rows.sort(key=lambda r: (r["secid"], r["date"], r["type"], r["prio"]))
     merged: dict[tuple[str, date, str], list[Any]] = {}
     for r in rows:
         iid = exported.get(r["secid"])
@@ -855,6 +939,10 @@ def _bond_quotes(export: TdmExport, conn: DictConnection, ids: dict[str, str]) -
         ytm = _ytm(o.price_basis, clean, r, target)
         if ytm is None and r["effective_yield_pct"] is not None:
             export.withheld["md_bond_quotes: ytm left empty (basis/price/coupon type)"] += 1
+        plan = export.schedules.get(r["secid"])
+        if ytm is not None and plan is not None and plan.unreliable_reasons:
+            iid = str(ids.get(r["secid"]) or r["secid"])
+            export.unreliable[("md_bond_quotes", "ytm", iid, plan.unreliable_reasons)] += 1
         out.append(
             (
                 r["trade_date"],

@@ -5717,6 +5717,7 @@
     "sec_type": "exchange_bond",
     "secid": "RU000A0JXQ44",
     "short_name": "РЖД Б01P2R",
+    "source_analytics_unreliable_reasons": [],
     "status": "active"
    },
    {
@@ -5786,6 +5787,7 @@
     "sec_type": "corporate_bond",
     "secid": "RU000A100GW5",
     "short_name": "АЛЬФА-БС01",
+    "source_analytics_unreliable_reasons": [],
     "status": "active"
    },
    {
@@ -5855,6 +5857,7 @@
     "sec_type": "corporate_bond",
     "secid": "RU000A1034P7",
     "short_name": "ВТБСУБТ1-5",
+    "source_analytics_unreliable_reasons": [],
     "status": "active"
    },
    {
@@ -5922,6 +5925,7 @@
     "sec_type": "exchange_bond",
     "secid": "RU000A107KV4",
     "short_name": "СИБАВТО1Р3",
+    "source_analytics_unreliable_reasons": [],
     "status": "active"
    },
    {
@@ -5989,6 +5993,7 @@
     "sec_type": "exchange_bond",
     "secid": "RU000A109XR1",
     "short_name": "Акрон Б1P5",
+    "source_analytics_unreliable_reasons": [],
     "status": "active"
    },
    {
@@ -6071,6 +6076,7 @@
     "sec_type": "exchange_bond",
     "secid": "RU000A10BRM5",
     "short_name": "Акрон Б1P9",
+    "source_analytics_unreliable_reasons": [],
     "status": "active"
    },
    {
@@ -6139,6 +6145,7 @@
     "sec_type": "exchange_bond",
     "secid": "RU000A10GCT1",
     "short_name": "iСелкт1Р10",
+    "source_analytics_unreliable_reasons": [],
     "status": "active"
    },
    {
@@ -6206,6 +6213,7 @@
     "sec_type": "ofz_bond",
     "secid": "SU26238RMFS4",
     "short_name": "ОФЗ 26238",
+    "source_analytics_unreliable_reasons": [],
     "status": "active"
    },
    {
@@ -6273,6 +6281,7 @@
     "sec_type": "ofz_bond",
     "secid": "SU29008RMFS8",
     "short_name": "ОФЗ 29008",
+    "source_analytics_unreliable_reasons": [],
     "status": "active"
    },
    {
@@ -6340,6 +6349,7 @@
     "sec_type": "ofz_bond",
     "secid": "SU46020RMFS2",
     "short_name": "ОФЗ 46020",
+    "source_analytics_unreliable_reasons": [],
     "status": "active"
    },
    {
@@ -6422,6 +6432,7 @@
     "sec_type": "ofz_bond",
     "secid": "SU52005RMFS4",
     "short_name": "ОФЗ 52005",
+    "source_analytics_unreliable_reasons": [],
     "status": "active"
    }
   ],
@@ -6665,7 +6676,9 @@
     "face_value": "1000",
     "initial_face_value": "1000",
     "kind": "maturity",
+    "override": null,
     "secid": "RU000A0JXQ44",
+    "source": "moex_iss",
     "value_pct_of_initial": "100",
     "value_per_bond": "1000",
     "value_rub_per_bond": "1000"
@@ -6676,7 +6689,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A107KV4",
+    "source": "moex_iss",
     "value_pct_of_initial": "5",
     "value_per_bond": "50",
     "value_rub_per_bond": "50"
@@ -6687,7 +6702,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A107KV4",
+    "source": "moex_iss",
     "value_pct_of_initial": "5",
     "value_per_bond": "50",
     "value_rub_per_bond": "50"
@@ -6698,7 +6715,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A107KV4",
+    "source": "moex_iss",
     "value_pct_of_initial": "5",
     "value_per_bond": "50",
     "value_rub_per_bond": "50"
@@ -6709,7 +6728,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A107KV4",
+    "source": "moex_iss",
     "value_pct_of_initial": "5",
     "value_per_bond": "50",
     "value_rub_per_bond": "50"
@@ -6720,7 +6741,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A107KV4",
+    "source": "moex_iss",
     "value_pct_of_initial": "7.5",
     "value_per_bond": "75",
     "value_rub_per_bond": "75"
@@ -6731,7 +6754,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A107KV4",
+    "source": "moex_iss",
     "value_pct_of_initial": "7.5",
     "value_per_bond": "75",
     "value_rub_per_bond": "75"
@@ -6742,7 +6767,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A107KV4",
+    "source": "moex_iss",
     "value_pct_of_initial": "7.5",
     "value_per_bond": "75",
     "value_rub_per_bond": "75"
@@ -6753,7 +6780,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A107KV4",
+    "source": "moex_iss",
     "value_pct_of_initial": "7.5",
     "value_per_bond": "75",
     "value_rub_per_bond": "75"
@@ -6764,7 +6793,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A107KV4",
+    "source": "moex_iss",
     "value_pct_of_initial": "10",
     "value_per_bond": "100",
     "value_rub_per_bond": "100"
@@ -6775,7 +6806,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A107KV4",
+    "source": "moex_iss",
     "value_pct_of_initial": "10",
     "value_per_bond": "100",
     "value_rub_per_bond": "100"
@@ -6786,7 +6819,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A107KV4",
+    "source": "moex_iss",
     "value_pct_of_initial": "10",
     "value_per_bond": "100",
     "value_rub_per_bond": "100"
@@ -6797,7 +6832,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A107KV4",
+    "source": "moex_iss",
     "value_pct_of_initial": "10",
     "value_per_bond": "100",
     "value_rub_per_bond": "100"
@@ -6808,7 +6845,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A107KV4",
+    "source": "moex_iss",
     "value_pct_of_initial": "10",
     "value_per_bond": "100",
     "value_rub_per_bond": "100"
@@ -6819,7 +6858,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A109XR1",
+    "source": "moex_iss",
     "value_pct_of_initial": "10",
     "value_per_bond": "100",
     "value_rub_per_bond": "100"
@@ -6830,7 +6871,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A109XR1",
+    "source": "moex_iss",
     "value_pct_of_initial": "10",
     "value_per_bond": "100",
     "value_rub_per_bond": "100"
@@ -6841,7 +6884,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A109XR1",
+    "source": "moex_iss",
     "value_pct_of_initial": "10",
     "value_per_bond": "100",
     "value_rub_per_bond": "100"
@@ -6852,7 +6897,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A109XR1",
+    "source": "moex_iss",
     "value_pct_of_initial": "10",
     "value_per_bond": "100",
     "value_rub_per_bond": "100"
@@ -6863,7 +6910,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A109XR1",
+    "source": "moex_iss",
     "value_pct_of_initial": "10",
     "value_per_bond": "100",
     "value_rub_per_bond": "100"
@@ -6874,7 +6923,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A109XR1",
+    "source": "moex_iss",
     "value_pct_of_initial": "10",
     "value_per_bond": "100",
     "value_rub_per_bond": "100"
@@ -6885,7 +6936,9 @@
     "face_value": "800",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A109XR1",
+    "source": "moex_iss",
     "value_pct_of_initial": "40",
     "value_per_bond": "400",
     "value_rub_per_bond": "400"
@@ -6896,7 +6949,9 @@
     "face_value": "1000",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A10BRM5",
+    "source": "moex_iss",
     "value_pct_of_initial": "12.5",
     "value_per_bond": "125",
     "value_rub_per_bond": null
@@ -6907,7 +6962,9 @@
     "face_value": "1000",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A10BRM5",
+    "source": "moex_iss",
     "value_pct_of_initial": "12.5",
     "value_per_bond": "125",
     "value_rub_per_bond": null
@@ -6918,7 +6975,9 @@
     "face_value": "1000",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A10BRM5",
+    "source": "moex_iss",
     "value_pct_of_initial": "12.5",
     "value_per_bond": "125",
     "value_rub_per_bond": null
@@ -6929,7 +6988,9 @@
     "face_value": "1000",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A10BRM5",
+    "source": "moex_iss",
     "value_pct_of_initial": "12.5",
     "value_per_bond": "125",
     "value_rub_per_bond": null
@@ -6940,7 +7001,9 @@
     "face_value": "1000",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A10BRM5",
+    "source": "moex_iss",
     "value_pct_of_initial": "12.5",
     "value_per_bond": "125",
     "value_rub_per_bond": null
@@ -6951,7 +7014,9 @@
     "face_value": "1000",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A10BRM5",
+    "source": "moex_iss",
     "value_pct_of_initial": "12.5",
     "value_per_bond": "125",
     "value_rub_per_bond": null
@@ -6962,7 +7027,9 @@
     "face_value": "1000",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A10BRM5",
+    "source": "moex_iss",
     "value_pct_of_initial": "12.5",
     "value_per_bond": "125",
     "value_rub_per_bond": null
@@ -6973,7 +7040,9 @@
     "face_value": "1000",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A10BRM5",
+    "source": "moex_iss",
     "value_pct_of_initial": "12.5",
     "value_per_bond": "125",
     "value_rub_per_bond": null
@@ -6984,7 +7053,9 @@
     "face_value": "1000",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A10GCT1",
+    "source": "moex_iss",
     "value_pct_of_initial": "40",
     "value_per_bond": "400",
     "value_rub_per_bond": "400"
@@ -6995,7 +7066,9 @@
     "face_value": "1000",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "RU000A10GCT1",
+    "source": "moex_iss",
     "value_pct_of_initial": "60",
     "value_per_bond": "600",
     "value_rub_per_bond": "600"
@@ -7006,7 +7079,9 @@
     "face_value": "1000",
     "initial_face_value": "1000",
     "kind": "maturity",
+    "override": null,
     "secid": "SU26238RMFS4",
+    "source": "moex_iss",
     "value_pct_of_initial": "100",
     "value_per_bond": "1000",
     "value_rub_per_bond": "1000"
@@ -7017,7 +7092,9 @@
     "face_value": "1000",
     "initial_face_value": "1000",
     "kind": "maturity",
+    "override": null,
     "secid": "SU29008RMFS8",
+    "source": "moex_iss",
     "value_pct_of_initial": "100",
     "value_per_bond": "1000",
     "value_rub_per_bond": "1000"
@@ -7028,7 +7105,9 @@
     "face_value": "1000",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "SU46020RMFS2",
+    "source": "moex_iss",
     "value_pct_of_initial": "25",
     "value_per_bond": "250",
     "value_rub_per_bond": "250"
@@ -7039,7 +7118,9 @@
     "face_value": "1000",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "SU46020RMFS2",
+    "source": "moex_iss",
     "value_pct_of_initial": "25",
     "value_per_bond": "250",
     "value_rub_per_bond": "250"
@@ -7050,7 +7131,9 @@
     "face_value": "1000",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "SU46020RMFS2",
+    "source": "moex_iss",
     "value_pct_of_initial": "25",
     "value_per_bond": "250",
     "value_rub_per_bond": "250"
@@ -7061,7 +7144,9 @@
     "face_value": "1000",
     "initial_face_value": "1000",
     "kind": "amortization",
+    "override": null,
     "secid": "SU46020RMFS2",
+    "source": "moex_iss",
     "value_pct_of_initial": "25",
     "value_per_bond": "250",
     "value_rub_per_bond": "250"
@@ -7072,7 +7157,9 @@
     "face_value": "1303.17",
     "initial_face_value": "1000",
     "kind": "maturity",
+    "override": null,
     "secid": "SU52005RMFS4",
+    "source": "moex_iss",
     "value_pct_of_initial": "130.32",
     "value_per_bond": "1303.17",
     "value_rub_per_bond": "1303.17"
@@ -7102,7 +7189,7 @@
    },
    "name": "instruments",
    "rows": 11,
-   "sha256": "a7e38cbbfda4e6ce20cd02442ed83a6950f88f5411155e1edc1b407836d945b4",
+   "sha256": "35607e2970a89b392f3c5ebfd0bde32e5341ecc9c7016a69da73e0f6f49930c4",
    "stale": false,
    "stale_reasons": []
   },
@@ -7122,10 +7209,16 @@
    "stale_reasons": []
   },
   {
-   "coverage": {},
+   "coverage": {
+    "by_source": {
+     "moex_iss": 38
+    },
+    "override_applied": [],
+    "override_stale": []
+   },
    "name": "redemptions",
    "rows": 38,
-   "sha256": "a7e9381d8ab8bd05f8b88a70012f39031bce2ecda360bef17fcb8f25633632ac",
+   "sha256": "422254dbaff73c027d8584af987e41a7cf55e8457ac696c047fbd5a7ab8826b2",
    "stale": false,
    "stale_reasons": []
   },
@@ -7259,7 +7352,7 @@
   "name": "market-data-hub",
   "version": "0.1.0"
  },
- "schema_version": "market_snapshot/1.9",
+ "schema_version": "market_snapshot/1.10",
  "sources": [
   {
    "dataset": "calendars",

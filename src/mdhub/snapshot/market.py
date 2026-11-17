@@ -53,6 +53,7 @@ from mdhub.snapshot.carry import marker as carry_marker
 from mdhub.snapshot.carry import source_days as carry_source_days
 from mdhub.snapshot.carry import summary_item as carry_summary
 from mdhub.snapshot.fx_input_pairs import fx_input_pairs
+from mdhub.snapshot.redemptions import unreliable_fields
 from mdhub.sources.moex_market import INDEX_GROUPS
 
 __all__ = [
@@ -73,6 +74,7 @@ __all__ = [
     "MarketParams",
     "build_market",
     "curve_eod_order",
+    "flag_unreliable_analytics",
     "rusfar_unit",
     "settlement_calendars",
 ]
@@ -1491,6 +1493,26 @@ def _meetings(conn: DictConnection, t: datetime, prov: Provenance) -> Dataset:
     )
 
 
+def flag_unreliable_analytics(quote_datasets: Sequence[Dataset], static: Build) -> None:
+    """Contract 1.10: ``source_analytics_unreliable`` of every bond quote - ``None`` when MOEX's
+    redemption schedule of the bond is consistent, else the ``source_analytics`` fields MOEX
+    derives from that schedule (:data:`mdhub.snapshot.redemptions.UNRELIABLE_FIELDS`) and the
+    reasons, taken from the instrument of the linked static snapshot
+    (``source_analytics_unreliable_reasons``). The values are published unchanged."""
+    reasons_of = {
+        i["secid"]: i["source_analytics_unreliable_reasons"]
+        for i in static.dataset("instruments").rows
+    }
+    for ds in quote_datasets:
+        for row in ds.rows:
+            reasons = reasons_of.get(row["secid"], [])
+            row["source_analytics_unreliable"] = (
+                {"fields": unreliable_fields(row["source_analytics"]), "reasons": list(reasons)}
+                if reasons
+                else None
+            )
+
+
 def build_market(
     conn: DictConnection,
     *,
@@ -1557,6 +1579,7 @@ def build_market(
     ]
     for ds in datasets:
         ds.stale_reasons.extend((extra_stale or {}).get(ds.name, ()))
+    flag_unreliable_analytics((quotes, quotes_intraday), static)
     return Build(
         cut=cut,
         datasets=datasets,

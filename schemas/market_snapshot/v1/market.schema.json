@@ -109,7 +109,8 @@
         "value_ccy",
         "num_trades",
         "trading_session",
-        "source_analytics"
+        "source_analytics",
+        "source_analytics_unreliable"
       ],
       "properties": {
         "secid": {
@@ -192,6 +193,41 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "source_analytics_unreliable": {
+          "description": "1.10 (market-data-hub#165): null, or the `source_analytics` fields MOEX derived from a redemption schedule that is inconsistent with the bond's face (yields, durations, spreads: `fields`) and why (`reasons`, as `source_analytics_unreliable_reasons` of the instrument in the linked static: `future_redemptions_differ_from_face`, `redemptions_rounded_by_source`). The values are published unchanged; do not use the listed fields for pricing or risk",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "fields",
+                "reasons"
+              ],
+              "properties": {
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "uniqueItems": true
+                },
+                "reasons": {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "future_redemptions_differ_from_face",
+                      "redemptions_rounded_by_source"
+                    ]
+                  },
+                  "uniqueItems": true
+                }
+              }
+            }
           ]
         },
         "source_analytics": {
@@ -333,7 +369,8 @@
         "val_today",
         "trading_status",
         "trading_session",
-        "source_analytics"
+        "source_analytics",
+        "source_analytics_unreliable"
       ],
       "properties": {
         "secid": {
@@ -404,6 +441,41 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "source_analytics_unreliable": {
+          "description": "1.10 (market-data-hub#165): null, or the `source_analytics` fields MOEX derived from a redemption schedule that is inconsistent with the bond's face (yields, durations, spreads: `fields`) and why (`reasons`, as `source_analytics_unreliable_reasons` of the instrument in the linked static: `future_redemptions_differ_from_face`, `redemptions_rounded_by_source`). The values are published unchanged; do not use the listed fields for pricing or risk",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "fields",
+                "reasons"
+              ],
+              "properties": {
+                "fields": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "uniqueItems": true
+                },
+                "reasons": {
+                  "type": "array",
+                  "items": {
+                    "enum": [
+                      "future_redemptions_differ_from_face",
+                      "redemptions_rounded_by_source"
+                    ]
+                  },
+                  "uniqueItems": true
+                }
+              }
+            }
           ]
         },
         "source_analytics": {

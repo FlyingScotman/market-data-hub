@@ -40,9 +40,20 @@ from typing import Any, Final, LiteralString
 from psycopg import sql
 
 from mdhub.core.bizday import CALENDARS
+from mdhub.core.timeutil import MSK
 from mdhub.db.pool import DictConnection
 from mdhub.snapshot.build import Build, Cut, Dataset, Excluded, Provenance, sorted_labels
 from mdhub.snapshot.canonical import canonical_bytes, sha256_hex, utc_str
+from mdhub.snapshot.redemptions import (
+    SOURCE_MANUAL_OVERRIDE,
+    SOURCE_MOEX,
+    SchedulePlan,
+    face_schedule_labels,
+    face_steps,
+    face_value_date,
+    plan_schedule,
+    redemption_pairs,
+)
 
 __all__ = [
     "BOND_CALENDAR",
@@ -130,89 +141,6 @@ def coupon_frequency_from_schedule(coupons: list[dict[str, Any]]) -> int | None:
 LARGE_ISSUER_RUB: Final = 5_000_000_000
 """Issuers whose active RUB bonds outstanding (face x issue size) reach this must have a
 curated group (TDM brief HS4); the others missing one are listed in the issuers coverage."""
-
-FACE_TOLERANCE: Final = Decimal("0.005")
-"""Per-bond amounts are rounded to kopecks / cents by MOEX: steps closer than this match."""
-
-
-def face_steps(
-    b: Mapping[str, Any], redemptions: list[dict[str, Any]]
-) -> list[tuple[date | None, Decimal]] | None:
-    """Outstanding face after each redemption date of the schedule, starting with
-    ``(issue_date, initial_face_value)``; ``None`` if the initial face or a redemption value
-    is missing (the steps cannot be established)."""
-    initial = b["initial_face_value"]
-    if initial is None:
-        return None
-    by_date: dict[date, Decimal] = defaultdict(Decimal)
-    for r in redemptions:
-        if r["value_per_bond"] is None:
-            return None
-        by_date[r["date"]] += r["value_per_bond"]
-    steps: list[tuple[date | None, Decimal]] = [(b["issue_date"], initial)]
-    left = initial
-    for d in sorted(by_date):
-        left -= by_date[d]
-        steps.append((d, left))
-    return steps
-
-
-def face_value_date(
-    b: Mapping[str, Any], redemptions: list[dict[str, Any]], business_date: date
-) -> date | None:
-    """HS11: date from which the published ``face_value`` is outstanding (see the contract
-    README): the latest schedule step on or before ``business_date`` whose outstanding face
-    equals ``face_value``, else the earliest later one; ``None`` without a match."""
-    face = b["face_value"]
-    steps = face_steps(b, redemptions)
-    if face is None or steps is None:
-        return None
-    hits = [d for d, left in steps if abs(left - face) <= FACE_TOLERANCE]
-    if not hits:
-        return None
-    past = [d for d in hits if d is None or d <= business_date]
-    return past[-1] if past else hits[0]
-
-
-def face_schedule_labels(
-    b: Mapping[str, Any], redemptions: list[dict[str, Any]], business_date: date
-) -> tuple[str | None, str | None]:
-    """HS13: MOEX inconsistencies between the face and the redemption schedule, as labels
-    (the published values are not corrected):
-
-    * ``face_value_not_in_schedule`` - ``initial_face_value`` minus the scheduled redemptions
-      never equals ``face_value`` (e.g. face 400, redemptions 300 + 400). Not for indexed-face
-      bonds (indexation explains the difference).
-    * ``future_redemptions_differ_from_face`` - the redemptions still to be paid do not add
-      up to ``face_value`` (on a payment day, today's redemption counts as still to be paid
-      only while ``face_value`` has not been reduced by it).
-
-    Bonds without redemption rows, or with a missing value, get neither label."""
-    face = b["face_value"]
-    if face is None or not redemptions or any(r["value_per_bond"] is None for r in redemptions):
-        return None, None
-    fd = face_value_date(b, redemptions, business_date)
-    not_in = (
-        "face_value_not_in_schedule"
-        if fd is None and b["initial_face_value"] is not None and not b.get("is_face_indexed")
-        else None
-    )
-
-    def owed(include_today: bool) -> Decimal:
-        return sum(
-            (r["value_per_bond"] for r in redemptions
-             if r["date"] > business_date or (include_today and r["date"] == business_date)),
-            Decimal(0),
-        )  # fmt: skip
-
-    candidates = [owed(fd < business_date)] if fd is not None else [owed(True), owed(False)]
-    differ = (
-        "future_redemptions_differ_from_face"
-        if all(abs(c - face) > FACE_TOLERANCE for c in candidates)
-        else None
-    )
-    return not_in, differ
-
 
 PUT_SUBTYPE: Final = "До оферты (put)"
 """MOEX BOND_SUBTYPE of bonds that trade to a put offer (HS10)."""
@@ -326,6 +254,7 @@ def _instrument(
     schedule_frequency: int | None = None,
     face_date: date | None = None,
     replacement: tuple[bool | None, str | None] = (None, None),
+    unreliable_reasons: tuple[str, ...] = (),
 ) -> dict[str, Any]:
     size, size_field = issue_size_moex(b)
     return {
@@ -393,6 +322,24 @@ def _instrument(
             for r in boards
         ],
         "labels": labels,
+        "source_analytics_unreliable_reasons": list(unreliable_reasons),
+    }
+
+
+def _redemption_coverage(
+    plans: Mapping[str, SchedulePlan], redemptions: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Coverage of ``redemptions``: rows by source, the bonds whose schedule is a manual
+    override, and the bonds whose override was not applied (it disagrees with MOEX) with the
+    reason."""
+    return {
+        "by_source": dict(sorted(Counter(r["source"] for r in redemptions).items())),
+        "override_applied": sorted(s for s, p in plans.items() if p.override == "applied"),
+        "override_stale": [
+            {"secid": s, "reason": p.stale_reason}
+            for s, p in sorted(plans.items())
+            if p.override == "stale"
+        ],
     }
 
 
@@ -711,6 +658,9 @@ def build_static(
     amort = _by_secid(
         conn, "bond_amortization_known_at", t, secids, "x.secid, x.amort_date, x.data_source"
     )
+    overrides = _by_secid(
+        conn, "bond_amortization_override_known_at", t, secids, "x.secid, x.amort_date"
+    )
     offers = _by_secid(conn, "bond_offer_known_at", t, secids, "x.secid, x.source, x.offer_key")
     formula_rows = _by_secid(conn, "bond_rate_formula_known_at", t, secids, "x.secid, x.source")
     formulas = conn.execute(
@@ -777,9 +727,20 @@ def build_static(
     documented: dict[tuple[str, str, str], dict[str, Any]] = {
         (c["secid"], c["term"], c["term_key"]): c for c in curated
     }
-    redemptions_of: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    amort_of: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for a in amort:
-        redemptions_of[a["secid"]].append({"date": a["amort_date"], "value_per_bond": a["value"]})
+        amort_of[a["secid"]].append(a)
+    override_of: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for o in overrides:
+        override_of[o["secid"]].append(o)
+    # the schedule is judged on the day the source rows describe (a historical static reads
+    # them as known now: its face is derived from the schedule, so only today's one is a fact)
+    judged_on = t.astimezone(MSK).date() if historical else cut.business_date
+    plans = {
+        b["secid"]: plan_schedule(b, amort_of[b["secid"]], override_of[b["secid"]], judged_on)
+        for b in bonds
+    }
+    redemptions_of = {secid: redemption_pairs(p.rows) for secid, p in plans.items()}
     if historical:
         bonds = [bond_as_of(b, redemptions_of[b["secid"]], cut.business_date) for b in bonds]
     instruments = []
@@ -814,7 +775,7 @@ def build_static(
             "no_issuer" if b["issuer_id"] is None or b["issuer_id"] not in issuer_set else None,
             "structured" if b["is_structured"] else None,
             "matured" if b["status"] == "matured" else None,
-            *face_schedule_labels(b, redemptions_of[b["secid"]], cut.business_date),
+            *plans[b["secid"]].labels(b, cut.business_date),
             "put_subtype_without_scheduled_offer"
             if b["bond_subtype"] == PUT_SUBTYPE
             and b["status"] == "active"
@@ -830,6 +791,7 @@ def build_static(
                 schedule_frequency=coupon_frequency_from_schedule(coupons_of[b["secid"]]),
                 face_date=face_value_date(b, redemptions_of[b["secid"]], cut.business_date),
                 replacement=_replacement(b, documented.get((b["secid"], "replacement_bond", ""))),
+                unreliable_reasons=plans[b["secid"]].unreliable_reasons,
             )
         )
     prov.add_rows("instruments", bonds)
@@ -851,6 +813,7 @@ def build_static(
         for c in coupons
     ]
     prov.add_rows("coupon_periods", coupons)
+    plan_rows = [(secid, r) for secid in sorted(plans) for r in plans[secid].rows]
     redemptions = [
         {
             "secid": a["secid"],
@@ -862,10 +825,17 @@ def build_static(
             "face_value": a["face_value"],
             "initial_face_value": a["initial_face_value"],
             "face_unit": a["face_unit"],
+            "source": a["source"],
+            "override": a["override"],
         }
-        for a in amort
+        for _, a in plan_rows
     ]
-    prov.add_rows("redemptions", amort)
+    prov.add_rows("redemptions", [a for _, a in plan_rows if a["source"] == SOURCE_MOEX])
+    prov.add_rows(
+        "redemptions",
+        [a for _, a in plan_rows if a["source"] == SOURCE_MANUAL_OVERRIDE],
+        source=SOURCE_MANUAL_OVERRIDE,
+    )
     offer_rows = [
         {
             "secid": o["secid"],
@@ -995,7 +965,7 @@ def build_static(
             coupon_rows,
             {"by_status": dict(sorted(Counter(c["status"] for c in coupons).items()))},
         ),
-        Dataset("redemptions", redemptions),
+        Dataset("redemptions", redemptions, _redemption_coverage(plans, redemptions)),
         Dataset("offers", offer_rows),
         Dataset(
             "floater_formulas",

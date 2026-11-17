@@ -14,7 +14,7 @@ are in [`docs/DESIGN.md`](../../../docs/DESIGN.md) §11.
 | `common.schema.json` | Shared definitions: decimal strings, dates, UTC instants, sha256, labels |
 | `fixtures/` | Golden bundles built from public data (`index.json` lists their ids) |
 
-`schema_version` is `market_snapshot/1.9`. Every schema object has
+`schema_version` is `market_snapshot/1.10`. Every schema object has
 `additionalProperties: false`: a new field is a schema version bump, so a consumer pinned to
 an older version fails its conformance tests instead of silently ignoring it.
 
@@ -23,7 +23,7 @@ never removes, renames or changes the meaning or unit of an existing field. A co
 reads `1.x` and ignores unknown additive fields stays correct; a new major (`2.0`) is refused.
 
 First hub release with each version: 1.0 = 0.1.3, 1.1 = 0.1.7, 1.2 = 0.2.0, 1.3 = 0.3.2,
-1.4 = 0.3.4, 1.5 = 0.4.0 (in production since 2026-10-23); 1.6 = 0.6.0, 1.7 = 0.7.0, 1.8 = 0.8.0; 1.9 targets 0.9.0 (see [release state](../../../docs/SYSTEM_CONTEXT.md)).
+1.4 = 0.3.4, 1.5 = 0.4.0 (in production since 2026-10-23); 1.6 = 0.6.0, 1.7 = 0.7.0, 1.8 = 0.8.0, 1.9 = 0.9.0; 1.10 is not released yet (see [release state](../../../docs/SYSTEM_CONTEXT.md)).
 
 | Version | Change (all additive) |
 |---|---|
@@ -38,6 +38,7 @@ First hub release with each version: 1.0 = 0.1.3, 1.1 = 0.1.7, 1.2 = 0.2.0, 1.3 
 | 1.7 (market-data-hub#143; owner decision of 2026-11-11) | **Curves carried forward.** When no source stored a curve of the carried set (default `ruonia_ois`, `key_rate_swap`; setting `MDHUB_CURVE_CARRY_DATASETS`) on the business date of a market cut, the cut holds that curve - every quote set of it, per source - from the latest earlier day that has it, flagged. New optional fields, present **only** when something is carried: CurveQuoteSet `carried_forward` (`source_day`, `age_working_days`, `age_limit_working_days`, `age_limit_exceeded`, `reason` = `no_quote_set_on_business_date`; also the label `carried_forward`; `snapshot_date` is the source day) and the snapshot-level list `carried_curves` (envelope and manifest: `dataset`, `source`, `quote_set_id` and the same marker fields); the manifest parameters then also record `curve_carry_datasets` and `curve_carry_max_age_working_days`; `curve_quote_sets` coverage gains `carried_forward` (the datasets). A snapshot of a day without a gap has none of these and is byte for byte what a 1.6 hub published, apart from `schema_version` |
 | 1.8 (market-data-hub#154; owner decision of 2026-11-13) | **`futures_prices_intraday` in `eod_preliminary`.** At the preliminary cut ISS has not published the FORTS history of the day, so `futures_prices` is empty. The cut now carries `futures_prices_intraday` instead of `not_in_cut: eod`: per contract the latest intraday quote on the business date whose quote time (`ts`) and `source_ts` are at or before `cut_ts`, same row shape as in an intraday cut. The rows are intraday quotes, not end-of-day data: coverage `basis = intraday_last_at_cut` and `latest_source_ts` (with `contracts`, `latest_ts`) say so; with no such quote the dataset is empty and stale (`no intraday FORTS futures quotes on <date> at or before the cut`). No new field and no schema change beyond the version: a consumer that ignores unknown coverage keys and reads `futures_prices_intraday` rows by cut type keeps working; one that takes the dataset to mean "intraday cut" must read `cut_type`. **Reproducible:** the rows are the row versions *known at the cut* (version time `ingested_at`, in-place updates through the row history, `md.futures_intraday_known_at(min(known_at, cut_ts), ...)`), so a rebuild of the cut later - a retry, a catch-up run - gives the same snapshot: a poll after the cut with `source_ts` equal to `cut_ts`, or a later update of a row, does not change it. Trade-off: quotes stored after the cut (a legacy import, a backfill of a historical day) are "not known at the cut", so a rebuild of such a day gives an empty, stale set. `intraday` and `eod_final` cuts are unchanged (`eod_final`: `not_in_cut: eod`) apart from `schema_version` |
 | 1.9 (market-data-hub#153) | `fx_input_pairs`: retained indicative spot observations with up to four individually clocked, normalized FORTS input observations; missing nodes and missing information remain explicit. These are inputs only; they do not declare a curve, an executable quote, or rate suitability. See below. |
+| 1.10 (market-data-hub#165; owner decision of 2026-11-17) | **Rounded MOEX redemption schedules.** MOEX ISS publishes the principal schedule rounded (`value` in steps of 0.01, `valueprc` in whole percent): a bond with a low face shows amounts that do not add up to its face (XS0114288789: seven future redemptions of 0.005 USD read 0.01), and the yields and durations MOEX derives from that schedule are wrong (EFFECTIVEYIELD 53.567 % against ~6.8 %). Additive: Redemption `source` (`moex_iss` / `manual_override`) and `override` (null, or `note`, `confirmed_by`, `confirmed_on`, `file_version`); Instrument labels `redemptions_rounded_by_source`, `redemptions_manual_override`, `redemptions_override_stale` and the field `source_analytics_unreliable_reasons`; BondQuote and BondQuoteIntraday `source_analytics_unreliable` (null, or `fields` + `reasons`); `redemptions` coverage `by_source`, `override_applied`, `override_stale`. A snapshot of a day with no such bond differs from a 1.9 one only by these always-present fields (`source` = `moex_iss`, `override` = null, empty reasons, `source_analytics_unreliable` = null). See below. |
 
 ## Identity
 
@@ -111,11 +112,11 @@ rate lists nor the index list, so its unit is not known).
 
 | Array | Object | Notes |
 |---|---|---|
-| `instruments` | Instrument | `ref.bond` + boards. Universe: `active`, plus `matured` with maturity within `parameters.matured_lookback_days`, plus alive bonds MOEX no longer trades (`delisted` with `maturity_date >= business_date`, or perpetual; label `not_traded`; `parameters.universe = active_or_recently_matured_or_alive`); linked EOD static also retains known instruments with price/yield on the market date, even if now matured/delisted. All reads respect `known_at`; stored terms/status are not rewritten. `labels`: `retained_for_market_quote` (outside default universe), `not_traded` (alive but delisted: no MOEX board lists it), `coupon_type_unknown`, `perpetual`, `perpetual_no_call_date`, `day_count_not_published`, `floater_formula_missing`, `floater_formula_partial`, `coupon_schedule_empty`, `no_issuer`, `structured`, `matured`, `face_value_not_in_schedule` (initial face minus the scheduled redemptions never equals `face_value`; not for indexed face), `future_redemptions_differ_from_face` (redemptions still to be paid do not add up to `face_value`) — MOEX values are published unchanged |
+| `instruments` | Instrument | `ref.bond` + boards. Universe: `active`, plus `matured` with maturity within `parameters.matured_lookback_days`, plus alive bonds MOEX no longer trades (`delisted` with `maturity_date >= business_date`, or perpetual; label `not_traded`; `parameters.universe = active_or_recently_matured_or_alive`); linked EOD static also retains known instruments with price/yield on the market date, even if now matured/delisted. All reads respect `known_at`; stored terms/status are not rewritten. `labels`: `retained_for_market_quote` (outside default universe), `not_traded` (alive but delisted: no MOEX board lists it), `coupon_type_unknown`, `perpetual`, `perpetual_no_call_date`, `day_count_not_published`, `floater_formula_missing`, `floater_formula_partial`, `coupon_schedule_empty`, `no_issuer`, `structured`, `matured`, `face_value_not_in_schedule` (initial face minus the scheduled redemptions never equals `face_value`; not for indexed face), `future_redemptions_differ_from_face` (redemptions still to be paid do not add up to `face_value`) — MOEX values are published unchanged. 1.10: `redemptions_rounded_by_source`, `redemptions_manual_override`, `redemptions_override_stale` and `source_analytics_unreliable_reasons`, see "Rounded redemption schedules" |
 | | | 1.1: `lat_name` (MOEX LATNAME); `coupon_frequency_schedule` = `round(365.25 / median period)` of the published coupon schedule (null with < 2 dated periods) next to `coupon_frequency` as MOEX states it (MOEX omits it when the first period is irregular) |
 | | | 1.3: `replacement_bond` / `replacement_basis` (P1-6): `document` (an issue-document entry of `mdhub/data/bond_terms_curated.json`, true or false) or `name_rule` (MOEX NAME carries a `ЗО` / `БЗО` / `СЗО` / `СУБ-ЗО` token, or a sovereign `ОВОЗ`; true only, otherwise null = not established); `issue_size_moex` / `issue_size_moex_field` (P1-10): the number of bonds MOEX publishes (`ISSUESIZE`, else `ISSUESIZEPLACED`) - **not** the amount outstanding (buybacks, offer redemptions, partial placements are not deducted) |
 | `coupon_periods` | CouponPeriod | `status`: only `known` is a fact; `current_published`, `projected_by_moex`, `unknown` are MOEX projections / gaps |
-| `redemptions` | Redemption | `kind` amortization / maturity |
+| `redemptions` | Redemption | `kind` amortization / maturity. 1.10: `source` `moex_iss` (the row as MOEX publishes it) or `manual_override`, `override` (evidence of a manual row); coverage `by_source`, `override_applied` (SECIDs), `override_stale` (`secid`, `reason`). See "Rounded redemption schedules" |
 | `offers` | Offer | every source; `labels`: `date_missing`. 1.3: source `curated` (calls of perpetuals, dated offers read from issue documents, `type_basis = document`) with `evidence_document_url` |
 | `floater_formulas` | FloaterFormula | resolved formula; `benchmark` and `benchmark_raw` verbatim, `status` curated / inferred / partial. 1.3: a formula read from an issue document (`mdhub/data/bond_terms_curated.json`, job `bond_terms_curated`) is `curated` with `evidence_document_url` / `evidence_page`; coverage `key_rate_ruonia_floaters` vs `key_rate_ruonia_floaters_curated`, `active_perpetuals` vs `active_perpetuals_with_scheduled_call`. 1.4, benchmark `ZCYC` (MOEX `ZR_YLD_CRV`): `rate % = round(Y_KBD(T; d_fix), rate_rounding_decimals) + margin_bp / 100`; `Y_KBD(T; d)` = MOEX effective annual zero yield at the **fixed** tenor `T = benchmark_tenor_years` from the end-of-day KBD parameters of day `d` (`zcyc_params`, `/v1/history/zcyc`; `(exp(G(T)/1e4) - 1) * 100`); `d_fix` = the `fixing_offset`-th day of `fixing_offset_unit` before `fixing_anchor` (`accrual_start` = coupon period start; `0` = the anchor itself or the last such day before it); the coupon is fixed in advance, amount = face x rate x days / 365. `zcyc_publication_days` = the days of `/v1/history/zcyc` rows with `is_eod = true` (rule `eod` also returns a day without an end-of-day publication, labelled `not_end_of_day_publication`: not a fixing day); since 2018 they are the `MOEX_STOCK` business days of `calendars` (one gap: 2022-01-07), which serves for future fixing days. Margin of a period: the last `spread_schedule` step with `effective_from <= period start` (a reset at an offer is a step). `fixing_basis`: `document` (curated from an issue document) or `coupon_history_fit` (job `zcyc_floater_fit` fitted `T` and `N` over 0.25..15 years x 0..15 days to the published rates; published only when `reproduction.accepted`); `reproduction` is always the hub's own check |
 | `issuers` | Issuer | `short_name`, `ogrn`, `country` (ISO 3166-1 alpha-2) from the MOEX emitter card; `sector` = a code of the desk taxonomy in `mdhub/data/sector_map.json` (`banks`, `leasing`, `oil_gas`, `metals_mining`, `utilities`, `telecom`, `real_estate`, `transport`, `retail`, `agro`, `chemicals`, `it`, `financial_spv`, `securitization_spv`, `sovereign`, `subfederal`, `municipal`, `supranational`, `other`) or `null` when no versioned rule assigns one (never guessed). 1.1: `sector_source` (`okved` / `curated` / `group` / `rule`; 1.3: `agency` = industry published by a rating agency), `okved` + `okved_version` (null: OKVED not loaded, FNS registers unreachable), `group_id`, `group_name`, `group_relation` (`parent`, `subsidiary`, `spv`, `securitization_spv`, `affiliate`), `is_state_owned` (only where an evidence document states it) from the curated `mdhub/data/issuer_groups_curated.json` (evidence per row). `coverage`: `with_group`, `large_issuers_without_group` (active RUB bonds outstanding ≥ 5 bn RUB), fill rates over all issuers and over issuers of active non-structured bonds, `by_sector`, `by_sector_source`, `without_sector` |
@@ -137,6 +138,69 @@ Rule for consumers: the face outstanding **before** the redemptions of day `D` i
 `face_value_date = business_date` means `face_value` is already **after** that day's
 redemption; an earlier `face_value_date` means it is still **before** it. The golden static
 fixture carries a payment-day amortizer (see `fixtures/index.json`).
+
+## Rounded redemption schedules (1.10)
+
+MOEX ISS publishes `value` of the principal schedule in steps of 0.01 and `valueprc` in whole
+percent. For a bond with a low face the rounding is not a rounding error: XS0114288789 (face 0.035
+USD) has seven future redemptions of 0.005, each published as 0.01, and MOEX computes its
+`effective_yield_*`, `duration_*`, `yield_*`, `zspread_bp` and `gspread_bp` from that schedule.
+There is no source of exact future amounts; the amounts of already paid redemptions can be read
+from the `FACEVALUE` history (not loaded yet, FlyingScotman/market-data-hub#166; the past rows of such a bond stay rounded). The hub
+publishes MOEX's values unchanged, labels the inconsistency, lets a **confirmed** schedule replace
+the rounded rows, and says which MOEX analytics cannot be trusted.
+
+**Label `redemptions_rounded_by_source`** (Instrument). The hub does not say "rounded" because the
+amounts are multiples of 0.01 (every kopeck amount is). All of the following must hold on the MOEX
+rows, for the redemptions still to be paid. On a payment day "today's redemption is / is not
+deducted from `face_value` yet" is not always known (two readings): condition 1 must hold for
+every reading, conditions 2 and 3 for at least one, so the label does not flicker with a face
+date the hub cannot resolve:
+
+1. `future_redemptions_differ_from_face` holds: the sum differs from `face_value` by more than
+   0.005;
+2. every amount lies on the 0.01 grid;
+3. `|sum - face_value| <= n * 0.005` for the `n` amounts. An amount rounded to 0.01 is off by at
+   most half a step, so a larger gap cannot come from rounding alone (XS0114288789: gap 0.035 =
+   7 x 0.005, the largest rounding can give).
+
+Not for indexed-face bonds. It is a necessary condition, not proof: the label says that rounding
+can explain the gap, not what the true amounts are. A gap beyond `n * 0.005` (a face that MOEX
+changed, a missing or extra row) carries `future_redemptions_differ_from_face` alone. The labels
+describe the published `redemptions`: while a manual override replaces the MOEX rows,
+`future_redemptions_differ_from_face` and `redemptions_rounded_by_source` are not set.
+
+**Manual override** (`source = manual_override`). A reviewed, versioned file
+(`mdhub/data/bond_amortization_overrides.json`, loaded by the job `bond_terms_curated` into
+`ref.bond_amortization_override`) lists the confirmed amounts of a bond: dates, amount per bond in
+the face currency, a note on the source, who confirmed and when. From the override's first date on
+it replaces the MOEX rows of the bond in `redemptions`, with label `redemptions_manual_override`;
+`override` carries the note, `confirmed_by`, `confirmed_on` and the file version;
+`value_pct_of_initial` and `value_rub_per_bond` are null on such rows; `kind` is `maturity` on the
+bond's maturity date. The hub applies it only while it agrees with what MOEX publishes: the same
+redemption dates from the first date on, every amount within 0.005 of the MOEX amount, the same
+face currency, the bond's face is not indexed, and the amounts still to be paid add up to the face MOEX states **exactly** (on a payment day, with or without today's amount: no HS13 tolerance, which for a face of 0.035 would be a whole payment). A date for which MOEX has not published an amount yet (`value` null) must still be a date of the override; its amount is not compared (MOEX may publish a date before its amount). Otherwise the MOEX
+rows are published as they are, the label `redemptions_override_stale` is set, the job reports the
+bond (run `partial`) and `redemptions` coverage lists it under `override_stale` with the reason.
+An override is never applied blindly, and an applied one stays applied after its dates have passed.
+The TDM export (`bond_cashflows` amortization / redemption rows) follows the same rule and lists
+applied and stale overrides in `manifest.json` under `redemption_overrides`.
+
+**Unreliable MOEX analytics.** MOEX derived its yields and durations from its own schedule, so an
+override that corrects the hub's `redemptions` does not correct them. `Instrument.
+source_analytics_unreliable_reasons` lists `future_redemptions_differ_from_face` and / or
+`redemptions_rounded_by_source` judged on the MOEX rows **as published** (empty: no known reason;
+for a bond whose override is applied the reasons stay). In market snapshots every BondQuote and
+BondQuoteIntraday has `source_analytics_unreliable`: `null`, or `{fields, reasons}` - `fields` are
+the keys of that quote's `source_analytics` that come from the cash flows (`yield_close_pct`,
+`yield_pct`, `yield_at_waprice_pct`, `yield_to_offer_pct`, `yield_last_coupon_pct`,
+`effective_yield_pct`, `effective_yield_waprice_pct`, `duration_days`, `duration_waprice_days`,
+`zspread_bp`, `gspread_bp`; not `yield_date`, `yield_date_type`, `icpi`, `ir`, `bei`, `cbr`),
+`reasons` as on the instrument. The values are published unchanged; a consumer must not use the
+listed fields for pricing or risk and computes its own yield from `redemptions`. In a static of a
+past business date (`static_basis`) the reasons describe the MOEX schedule as known now. In the
+TDM export the values stay and `manifest.json` lists them under `unreliable_values`
+(`md_bond_quotes.ytm` per instrument, with the reasons and the number of rows).
 
 ## Curves carried forward (1.7)
 
@@ -268,8 +332,8 @@ refuse an absent or mismatched image. No replacement RUONIA table or bootstrap i
 
 | Array | Object | Notes |
 |---|---|---|
-| `bond_quotes` | BondQuote (EOD) | `md.bond_eod` + `md.bond_eod_yield` of the business date; empty in intraday cuts. Coverage `basis`: `moex_history`, or in `eod_preliminary` before ISS publishes the history of D (overnight) `intraday_close` - the latest intraday marketdata of D in the same shape (`legal_close_pct` = LCLOSEPRICE, `close_pct` = LAST, `market_price3_pct` = MARKETPRICETODAY; accrued, face, `market_price2_pct` null), dataset stale (hub 0.3.1, no schema change). 1.2: `source_analytics.duration_waprice_days` (MOEX DURATIONWAPRICE), `yield_last_coupon_pct` (yields endpoint, else the history row), `icpi`, `ir`, `bei`, `cbr` (MOEX yields fields verbatim, not interpreted by the hub) |
-| `bond_quotes_intraday` | BondQuote (intraday) | latest stored quote per (secid, board) on the business date; empty in EOD cuts |
+| `bond_quotes` | BondQuote (EOD) | `md.bond_eod` + `md.bond_eod_yield` of the business date; empty in intraday cuts. Coverage `basis`: `moex_history`, or in `eod_preliminary` before ISS publishes the history of D (overnight) `intraday_close` - the latest intraday marketdata of D in the same shape (`legal_close_pct` = LCLOSEPRICE, `close_pct` = LAST, `market_price3_pct` = MARKETPRICETODAY; accrued, face, `market_price2_pct` null), dataset stale (hub 0.3.1, no schema change). 1.2: `source_analytics.duration_waprice_days` (MOEX DURATIONWAPRICE), `yield_last_coupon_pct` (yields endpoint, else the history row), `icpi`, `ir`, `bei`, `cbr` (MOEX yields fields verbatim, not interpreted by the hub). 1.10: `source_analytics_unreliable` (null, or the fields MOEX derived from an inconsistent redemption schedule), see "Rounded redemption schedules" |
+| `bond_quotes_intraday` | BondQuote (intraday) | latest stored quote per (secid, board) on the business date; empty in EOD cuts. 1.10: `source_analytics_unreliable`, as for `bond_quotes` |
 | `curve_quote_sets` | CurveQuoteSet | per (source, dataset) fetched on the business date: intraday cuts the latest snapshot; EOD cuts (hub 0.3.1) the latest one with bid/ask whose source clock is on the date at or before the cutoff (`coverage.eod_cutoff_msk`, default 19:00), else the latest one; `labels`: `mid_only`, `market_closed`, `source_clock_not_on_business_date`, and (1.3 data) `proxy_ust_par` / `proxy_ecb_aaa_par` / `proxy_bund_par` for the government par-yield proxies `usd_ust_par` / `eur_aaa_par` / `eur_bund_par` (not OIS; one end-of-day set per curve date). `coverage.required_without_any_source` lists `ruonia_ois` / `key_rate_swap` when no source delivered it on the date (the dataset is then `stale`) 1.7: such a curve is **carried forward** (see "Curves carried forward" below): its quote sets of the latest earlier day sit in the array with `carried_forward`, the coverage and the stale reason still say that no source delivered it on the date and name the day it was taken from |
 | `zcyc_params` | ZcycParams | EOD cuts: the end-of-day publication (else the latest, flagged stale); intraday: the latest |
 | `fixings` | Fixing | `md.fixing` and the RUSFAR family from `md.index_eod` (`origin`). 1.5: coverage `ruonia_unpublished_days` = the `RU_PRODUCTION` business days between the first and the latest CBR RUONIA fixing of the window without a fixing (CBR did not publish them, e.g. the last business day of a year; core's rate futures need them declared); `SARON` (source `snb`, % p.a., Zurich business days) is a 1.5 data addition. 1.2: RUSFAR rates (`RUSFAR`, `RUSFAR1W`, `RUSFAR2W`, `RUSFAR1M`, `RUSFAR3M`, `RUSFARCNY`, `RUSFARCN1W` and the 18:00 / compound variants `RUSFARRT`, `RUSFAR1WRT`, `RUSFAR2WRT`, `RUSFAR1MRT`, `RUSFAR3MRT`, `RUSFARCNRT`, `RUSFARC1WR`, `RUSFARN`, `RUSFAR1WN`, `RUSFAR2WN`, `RUSFAR1MN`, `RUSFAR3MN`, `RUSFARCNN`, `RUSFARC1WN`) `unit = pct`, `RUSFARIND` `unit = index`, others excluded; `hub_ingested_at` = when the hub first stored the published value (`md.fixing.ingested_at`; `md.index_eod`: `updated_at`, else `ingested_at`), UTC — not a publication time: `published_at` stays `null` unless the source states one |

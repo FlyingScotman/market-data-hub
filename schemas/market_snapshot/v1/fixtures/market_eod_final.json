@@ -42,6 +42,7 @@
      "yield_to_offer_pct": "16.4279",
      "zspread_bp": "200"
     },
+    "source_analytics_unreliable": null,
     "trade_date": "2026-10-15",
     "trading_session": "3",
     "value_ccy": "1715399.8",
@@ -82,6 +83,7 @@
      "yield_to_offer_pct": null,
      "zspread_bp": null
     },
+    "source_analytics_unreliable": null,
     "trade_date": "2026-10-15",
     "trading_session": "3",
     "value_ccy": "8000000",
@@ -122,6 +124,7 @@
      "yield_to_offer_pct": null,
      "zspread_bp": null
     },
+    "source_analytics_unreliable": null,
     "trade_date": "2026-10-15",
     "trading_session": "3",
     "value_ccy": "39920000",
@@ -162,6 +165,7 @@
      "yield_to_offer_pct": null,
      "zspread_bp": "1067"
     },
+    "source_analytics_unreliable": null,
     "trade_date": "2026-10-15",
     "trading_session": "3",
     "value_ccy": "155375611.92",
@@ -202,6 +206,7 @@
      "yield_to_offer_pct": null,
      "zspread_bp": "-526"
     },
+    "source_analytics_unreliable": null,
     "trade_date": "2026-10-15",
     "trading_session": "3",
     "value_ccy": "64711771.97",
@@ -242,6 +247,7 @@
      "yield_to_offer_pct": null,
      "zspread_bp": null
     },
+    "source_analytics_unreliable": null,
     "trade_date": "2026-10-15",
     "trading_session": "3",
     "value_ccy": null,
@@ -282,6 +288,7 @@
      "yield_to_offer_pct": null,
      "zspread_bp": "222"
     },
+    "source_analytics_unreliable": null,
     "trade_date": "2026-10-15",
     "trading_session": "3",
     "value_ccy": "45335051.2",
@@ -322,6 +329,7 @@
      "yield_to_offer_pct": null,
      "zspread_bp": "-11"
     },
+    "source_analytics_unreliable": null,
     "trade_date": "2026-10-15",
     "trading_session": "3",
     "value_ccy": "904977682.05",
@@ -362,6 +370,7 @@
      "yield_to_offer_pct": null,
      "zspread_bp": "-18"
     },
+    "source_analytics_unreliable": null,
     "trade_date": "2026-10-15",
     "trading_session": "3",
     "value_ccy": "86301998.22",
@@ -402,6 +411,7 @@
      "yield_to_offer_pct": null,
      "zspread_bp": "-56"
     },
+    "source_analytics_unreliable": null,
     "trade_date": "2026-10-15",
     "trading_session": "3",
     "value_ccy": "456097.49",
@@ -442,6 +452,7 @@
      "yield_to_offer_pct": null,
      "zspread_bp": "-1013"
     },
+    "source_analytics_unreliable": null,
     "trade_date": "2026-10-15",
     "trading_session": "3",
     "value_ccy": "10356348.68",
@@ -25897,7 +25908,7 @@
    },
    "name": "bond_quotes",
    "rows": 11,
-   "sha256": "fa4701c9976f8553276237d325aa5672eca1502c5ae665d0aaf759f7c0e46ea9",
+   "sha256": "3d9738206c9b43d36c7093cda66a7082a3f0adbd74f55459f1fdfdb9bca1eb05",
    "stale": false,
    "stale_reasons": []
   },
@@ -29221,7 +29232,7 @@
   "name": "market-data-hub",
   "version": "0.1.0"
  },
- "schema_version": "market_snapshot/1.9",
+ "schema_version": "market_snapshot/1.10",
  "sources": [
   {
    "dataset": "bond_quotes",
@@ -29364,6 +29375,6 @@
    "source": "moex_iss"
   }
  ],
- "static_snapshot_id": "0b211a910a4ea17f141be2cca7d63bcc03378639a0713f587f453e1324d0b864",
+ "static_snapshot_id": "f65b31a99fb364ab376cc035631cbee92ad56277c436046e1565a1925094a2d6",
  "supersedes": null
 }
