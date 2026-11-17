@@ -642,13 +642,17 @@ def build_bond_row(
     *,
     formula_secids: Set[str] = frozenset(),
     key_rate_changes: tuple[date, ...] = (),
+    cbonds_floating: Mapping[str, ms.CbondsFloating] | None = None,
 ) -> tuple[dict[str, Any], BondFacts]:
     """Merge directory / collection / description / market / schedule into a ``ref.bond`` row.
 
     Precedence (per field): collection > per-SECID description > directory > market list
     (primary board) > bondization (stubs and archived bonds only). ``formula_secids`` (bonds
     with a rate formula from any source) and ``key_rate_changes`` feed the
-    ``schedule_constant`` rule (:func:`mdhub.sources.moex_static.schedule_constant_fixed`).
+    ``schedule_constant`` rule (:func:`mdhub.sources.moex_static.schedule_constant_fixed`);
+    with ``cbonds_floating`` (SECID -> what Cbonds states, :func:`cbonds_floating_flags`) also the
+    ``schedule_tail_constant`` rule (:func:`mdhub.sources.moex_static.schedule_tail_constant_fixed`:
+    only for an explicit ``floating_rate = false`` with no base rate stated).
     """
     d = u.directory.get(secid)
     c = u.collection.get(secid)
@@ -739,6 +743,8 @@ def build_bond_row(
         coupon_rates=summary.coupon_rates if summary else (),
         has_formula=secid in formula_secids,
         key_rate_changes=key_rate_changes,
+        cbonds_floating_rate=cb.floating if (cb := (cbonds_floating or {}).get(secid)) else None,
+        cbonds_base_rate_present=cb.base_rate_present if cb else None,
         today=today,
     )
     bond_class = ms.classify_bond(inp)
@@ -931,6 +937,18 @@ def formula_secids(conn: psycopg.Connection[Any]) -> frozenset[str]:
             "SELECT DISTINCT secid FROM ref.bond_rate_formula WHERE NOT is_deleted"
         ).fetchall()
     return frozenset(str(r[0]) for r in rows)
+
+
+def cbonds_floating_flags(conn: psycopg.Connection[Any]) -> dict[str, ms.CbondsFloating]:
+    """SECID -> what Cbonds states (``ref.bond.floating_rate`` / ``floating_rate_base_present``,
+    written by ``cbonds_enrich``) for the bonds where Cbonds states a floating flag; no entry =
+    no statement."""
+    with conn.cursor(row_factory=tuple_row) as cur:
+        rows = cur.execute(
+            "SELECT secid, floating_rate, floating_rate_base_present FROM ref.bond "
+            "WHERE floating_rate IS NOT NULL AND floating_rate_source = 'cbonds'"
+        ).fetchall()
+    return {str(r[0]): ms.CbondsFloating(bool(r[1]), r[2]) for r in rows}
 
 
 def key_rate_change_dates(conn: psycopg.Connection[Any]) -> tuple[date, ...]:
@@ -1273,6 +1291,7 @@ def write_universe(
     facts: dict[str, BondFacts] = {}
     with_formula = formula_secids(conn)
     kr_changes = key_rate_change_dates(conn)
+    cb_floating = cbonds_floating_flags(conn)
     for secid in sorted(scope):
         summary = _schedule_summary(u, secid) or db_summaries.get(secid)
         row, f = build_bond_row(
@@ -1283,6 +1302,7 @@ def write_universe(
             run_id,
             formula_secids=with_formula,
             key_rate_changes=kr_changes,
+            cbonds_floating=cb_floating,
         )
         bonds.append(row)
         facts[secid] = f

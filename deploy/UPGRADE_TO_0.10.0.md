@@ -27,16 +27,41 @@ The contract is `market_snapshot/1.10`, additive; see the
 From a 0.9.0 database with **55 applied migrations**, the release adds exactly:
 
 - `0122_bond_amortization_override` — table `ref.bond_amortization_override` with row history;
-- `0542_amortization_override_known_at` — its as-known-at reader.
+- `0542_amortization_override_known_at` — its as-known-at reader;
+- `0436_coupon_basis_schedule_tail` — the new `ref.bond.coupon_type_basis` value `schedule_tail_constant`;
+- `0123_bond_floating_rate_flag` — columns `ref.bond.floating_rate`, `floating_rate_source`, `floating_rate_updated_on`, `floating_rate_base_present`: Cbonds's `floating_rate` as true / false / no statement, and whether it states a base rate or margin.
 
 After the update, `/health/ready` should report version `0.10.0`, `status: ok` and migrations
-`applied: 57`, `known: 57`, `pending: 0`, `checksum_mismatch: 0`. If the starting database has
+`applied: 59`, `known: 59`, `pending: 0`, `checksum_mismatch: 0`. If the starting database has
 additional or missing migrations, investigate the difference before applying this expectation.
 
 The updater takes a pre-update database dump. **Once the new migrations have run, rolling back
 to 0.9.0 restores that dump:** database changes made after the backup are lost until reloaded,
 including unrelated data and snapshots. This applies to an automatic rollback after a failed
 check as well as a later rollback.
+
+## Coupon type of bonds whose rate stepped up long ago
+
+MOEX has no coupon-type field. An active bond without a coupon label was `fixed` only if one rate
+ran over its **whole** schedule, so a bond that paid 2.25 → 2.5 → 5 → 7.5 % until 2007 and 7.5 %
+since (XS0114288789) stayed `unknown` and its future coupons `projected_by_moex`, although MOEX
+publishes the rate of every future period. The schedule alone cannot tell such a bond from a
+floater whose rate MOEX carries forward (a capped floater, a stale fixing), so the rule needs the
+source's statement as well. `cbonds_enrich` now keeps Cbonds's `floating_rate` of every active
+bond it reads as true / false / no statement (`ref.bond.floating_rate`, with its source and Cbonds's
+update date); before, only "true" was used. A bond becomes `fixed` with
+`coupon_type_basis = schedule_tail_constant` only when **all** of these hold: it is active; Cbonds
+states `floating_rate` = false and no base rate or margin for it (true, no statement, or a stated base rate leaves it `unknown`); it has no
+COUPON_DETAILS, benchmark or rate formula; and the **tail** of its schedule (the paid coupons at the
+rate of the last coupon, plus all future ones) has at least two paid coupons, a rate above 0.1 %,
+every future coupon at that rate, and a CBR key-rate change inside it. Its future coupons then
+become `known`.
+
+Effect, from the static snapshot of 2026-11-17: 59 bonds matched the schedule-only tail test (28
+active, 31 delisted). Delisted bonds are excluded; at most the 28 active ones can change, and only
+those for which Cbonds states `floating_rate` = false, which the snapshot does not show. The flag
+is filled by the first `cbonds_enrich` run after the update (daily 07:30); `bonds_static` (06:30)
+applies it from the next day, so the reclassification appears one day after the update.
 
 ## Configuration and jobs
 

@@ -243,6 +243,26 @@ def test_enrichment_writes_and_conflicts(
     assert bonds["RU000A10A356"]["day_count_source"] == "cbonds"
     assert bonds["SU26238RMFS4"]["day_count"] == "ACT/ACT"
     assert bonds["RU000OLD0001"]["day_count"] is None  # matured bonds are not requested
+    # the source's own floating flag is kept three-valued: true / false / no statement
+    assert (
+        bonds["RU000A10A356"]["floating_rate"],
+        bonds["RU000A10A356"]["floating_rate_source"],
+    ) == (
+        True,
+        "cbonds",
+    )
+    assert bonds["RU000A10A356"]["floating_rate_updated_on"] == date(2026, 10, 1)
+    assert (
+        bonds["SU26238RMFS4"]["floating_rate"],
+        bonds["SU26238RMFS4"]["floating_rate_source"],
+    ) == (
+        False,
+        "cbonds",
+    )
+    assert bonds["RU000A10A356"]["floating_rate_base_present"] is True  # reference rate, margin
+    assert bonds["SU26238RMFS4"]["floating_rate_base_present"] is False
+    assert bonds["RU000OLD0001"]["floating_rate"] is None  # not requested: no statement
+    assert bonds["RU000OLD0001"]["floating_rate_base_present"] is None
     f = conn.execute(
         "SELECT * FROM ref.bond_rate_formula WHERE secid = 'RU000A10A356' AND source = 'cbonds'"
     ).fetchone()
@@ -287,6 +307,35 @@ def test_enrichment_writes_and_conflicts(
         "SELECT count(*) AS n FROM ops.row_history WHERE table_name = 'ref.static_conflict'"
     ).fetchone()
     assert hist is not None and hist["n"] == 1
+
+
+@respx.mock
+def test_floating_flag_without_statement_is_stored_as_null(
+    cb_settings: Settings, db: Database, conn: Conn, fixed_today: None
+) -> None:
+    seed(conn)
+    api = cbonds_api()
+    respx.post(url__startswith=BASE).mock(side_effect=api)
+    assert run(cb_settings, db).status == "succeeded"
+    row = conn.execute(
+        "SELECT floating_rate, floating_rate_source FROM ref.bond WHERE secid = 'SU26238RMFS4'"
+    ).fetchone()
+    assert row == {"floating_rate": False, "floating_rate_source": "cbonds"}
+
+    def silent(request: httpx.Request) -> httpx.Response:
+        res = api(request)
+        body = json.loads(res.content)
+        for item in body["items"]:
+            if item.get("isin_code") == "RU000A1038V6":
+                item["floating_rate"] = None  # Cbonds leaves the flag empty
+        return httpx.Response(200, json=body)
+
+    respx.post(url__startswith=BASE).mock(side_effect=silent)
+    assert run(cb_settings, db).status == "succeeded"
+    row = conn.execute(
+        "SELECT floating_rate, floating_rate_source FROM ref.bond WHERE secid = 'SU26238RMFS4'"
+    ).fetchone()
+    assert row == {"floating_rate": None, "floating_rate_source": None}
 
 
 @respx.mock
