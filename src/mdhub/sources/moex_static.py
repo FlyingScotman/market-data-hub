@@ -50,6 +50,11 @@ Normalization rules (documented here, tested in ``tests/test_bonds_static.py``):
   paid and future coupons, and a CBR key-rate change between the start of the first and the
   start of the last paid coupon period - a key-rate floater would have shown different paid
   rates, so only a genuinely fixed coupon passes (a floater on an unchanged key rate cannot).
+  Second exception (:func:`schedule_tail_constant_fixed`, basis ``schedule_tail_constant``,
+  market-data-hub#165): an *active* bond whose rate stepped up long ago has one rate only over
+  the tail of its schedule; the same test on the tail passes **only when Cbonds states
+  ``floating_rate`` = false** (the schedule cannot tell it from a floater whose rate MOEX
+  carries forward; no statement or true leaves it ``unknown``).
 * **A "fixed" MOEX label is overridden by the schedule** (:func:`unknown_future_coupons`): an
   *active* bond labelled fixed with known coupons (``COUPON_DETAILS`` ``Фиксированный с
   известными купонами`` or a fixed-known ``BOND_TYPE``) whose schedule has a future coupon
@@ -80,7 +85,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from datetime import date, timedelta
 from decimal import Decimal
-from typing import Any, Final
+from typing import Any, Final, NamedTuple
 
 import httpx
 
@@ -106,6 +111,7 @@ __all__ = [
     "AmortRow",
     "BondizationData",
     "BondizationPage",
+    "CbondsFloating",
     "ClassifyInput",
     "CouponRate",
     "CouponRow",
@@ -136,6 +142,7 @@ __all__ = [
     "parse_directory_rows",
     "parse_market",
     "schedule_constant_fixed",
+    "schedule_tail_constant_fixed",
     "settle_lag",
     "stable_view",
     "unknown_future_coupons",
@@ -1195,7 +1202,21 @@ class ClassifyInput:
     """A rate formula (``ref.bond_rate_formula``, any source) exists for the bond."""
     key_rate_changes: tuple[date, ...] = ()
     """Effective dates of CBR key-rate changes (``md.fixing`` KEY_RATE)."""
+    cbonds_floating_rate: bool | None = None
+    """Cbonds ``floating_rate`` of the bond (``ref.bond.floating_rate``): ``True`` / ``False`` as
+    stated, ``None`` = no statement (never read, or Cbonds leaves it empty)."""
+    cbonds_base_rate_present: bool | None = None
+    """Cbonds states a base rate (``reference_rate_name_rus``) or a margin for the bond
+    (``ref.bond.floating_rate_base_present``); ``None`` = not read."""
     today: date | None = None
+
+
+class CbondsFloating(NamedTuple):
+    """What Cbonds states about floating coupons of a bond (``ref.bond.floating_rate``,
+    ``floating_rate_base_present``)."""
+
+    floating: bool
+    base_rate_present: bool | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1242,6 +1263,62 @@ def schedule_constant_fixed(
     if first_start is None or last_start is None or last_start <= first_start:
         return False
     return any(first_start < c <= last_start for c in key_rate_changes)
+
+
+def schedule_tail_constant_fixed(inp: ClassifyInput) -> bool:
+    """Evidence that an unlabelled **active** bond pays a fixed coupon although its early
+    coupons paid other rates (basis ``schedule_tail_constant``, market-data-hub#165). A bond
+    whose rate stepped up years ago (XS0114288789: 2.25 -> 2.5 -> 5 -> 7.5 % until 2007, 7.5 %
+    since) never has one rate over the whole schedule, so :func:`schedule_constant_fixed`
+    rejects it and MOEX's published future coupons stayed ``projected_by_moex``.
+
+    The schedule alone cannot tell such a bond from a floater whose rate MOEX carries forward
+    (a capped floater, a floater with a stale fixing), so **the source must say it is not a
+    floater**: all of the following hold, otherwise the bond stays ``unknown``:
+
+    * the bond is active (``is_active``; a delisted bond's schedule is no evidence);
+    * Cbonds states ``floating_rate`` = false (``cbonds_floating_rate is False``: true, or no
+      statement, is not enough) and states no base rate or margin for it
+      (``cbonds_base_rate_present is False``: a "not floating" flag next to a stated base rate
+      is contradictory data, not evidence);
+    * no COUPON_DETAILS, COUPON_BENCHMARK or rate formula from any source;
+    * the **tail** of the schedule passes the :func:`schedule_constant_fixed` test: the longest
+      run of coupons at the end that carry the rate ``R`` of the last coupon holds every future
+      coupon (so each has the published rate ``R``; a future step-up or a future coupon
+      without a rate ends the tail before it), ``R`` is above :data:`AMORTIZER_MIN_RATE_PCT`
+      (the placeholder rate of an investment note is no coupon), at least two coupons of the
+      tail are paid, and a CBR key-rate change lies after the start of its first paid period
+      and on/before the start of its last paid period.
+
+    The key-rate history (``md.fixing`` KEY_RATE, source cbr) is what is loaded, from 2013 in
+    production. A tail that begins before the history is judged on the key-rate changes the
+    history holds inside it: none leaves the bond ``unknown`` (conservative), one is enough."""
+    if not inp.is_active or inp.cbonds_floating_rate is not False:
+        return False
+    if inp.cbonds_base_rate_present is not False:
+        return False
+    if inp.coupon_details is not None or inp.coupon_benchmark is not None or inp.has_formula:
+        return False
+    rates, today = inp.coupon_rates, inp.today
+    if today is None or len(rates) < 2:
+        return False
+    ordered = sorted(rates, key=lambda r: r.pay_date)
+    last = ordered[-1].value_prc
+    if last is None or last <= AMORTIZER_MIN_RATE_PCT:
+        return False
+    first = len(ordered) - 1
+    while first > 0 and ordered[first - 1].value_prc == last:
+        first -= 1
+    tail = [
+        CouponRate(_start_of(ordered, first + i), r.pay_date, r.value_prc)
+        for i, r in enumerate(ordered[first:])
+    ]
+    return schedule_constant_fixed(tail, today, inp.key_rate_changes)
+
+
+def _start_of(ordered: Sequence[CouponRate], i: int) -> date | None:
+    """Start of coupon ``i`` of an ordered schedule: its own, else the previous pay date."""
+    return ordered[i].start_date or (ordered[i - 1].pay_date if i > 0 else None)
 
 
 AMORTIZING_BOND_TYPES: Final = frozenset({"Амортизируемая облигация", "Амортизируемые облигации"})
@@ -1396,6 +1473,8 @@ def classify_coupon_type(inp: ClassifyInput, bond_class: str) -> tuple[str, str]
                 and schedule_constant_fixed(inp.coupon_rates, inp.today, inp.key_rate_changes)
             ):
                 return "fixed", "schedule_constant"
+            if bond_class != "structured" and schedule_tail_constant_fixed(inp):
+                return "fixed", "schedule_tail_constant"
             if bond_class != "structured" and amortizer_constant_fixed(inp):
                 return "fixed", "amortizer_constant_rate"
             return "unknown", "schedule"

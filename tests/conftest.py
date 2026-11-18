@@ -157,3 +157,14 @@ def today_is(monkeypatch: pytest.MonkeyPatch) -> Callable[[date], None]:
         monkeypatch.setattr(mdhub.quality.checks, "msk_today", lambda: day)
 
     return set_today
+
+
+@pytest.fixture(autouse=True)
+def no_packaged_amortization_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the packaged ``bond_amortization_overrides.json`` out of the tests: its bonds are not in
+    the test databases (the job would only log a warning, but its counters, the result and the
+    rows written would depend on the file); tests of the overrides set their own
+    (``tests/test_redemption_overrides.py``)."""
+    from mdhub.loaders import bond_terms
+
+    monkeypatch.setattr(bond_terms, "packaged_overrides", lambda: ("test", []))

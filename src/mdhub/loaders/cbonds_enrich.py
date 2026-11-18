@@ -9,7 +9,9 @@
    floaters (``flow_limit``) ``get_flow_new`` per ISIN.
 4. Writes with ``source = 'cbonds'`` and field-level precedence:
 
-   * conventions - Cbonds wins: ``ref.bond.day_count`` (+ ``day_count_source``), a
+   * conventions - Cbonds wins: ``ref.bond.day_count`` (+ ``day_count_source``), the
+     three-valued ``ref.bond.floating_rate`` (true / false / NULL = no statement, + source and
+     Cbonds's update date; the coupon type of an unlabelled bond uses the explicit "false"), a
      ``ref.bond_rate_formula`` row (benchmark, spread, floor/cap, variable rate type, fixing
      day; lag/averaging stay NULL - not stated by these fields);
    * exchange schedule data - MOEX wins: Cbonds offers are stored as separate rows
@@ -362,6 +364,20 @@ def _write(
                 }
             )
     _set_day_counts(ctx, conn, day_counts)
+    _set_floating_flags(
+        ctx,
+        conn,
+        [
+            (
+                bonds[e["isin"]]["secid"],
+                e["floating"],
+                e["updating_date"],
+                e["reference_rate"] is not None or e["margin_pct"] is not None,
+            )
+            for e in fetched["emissions"]
+            if e["isin"] in bonds
+        ],
+    )
     _add(
         ctx,
         upsert_rows(conn, "ref.bond_rate_formula", formulas, ["secid", "source"], run_id=run_id),
@@ -534,6 +550,47 @@ def _set_day_counts(
               AND (b.day_count, b.day_count_source) IS DISTINCT FROM (v.dc, 'cbonds')
             """,
             (ctx.run.id, secids, values),
+        )
+        ctx.run.add_counts(UpsertResult(updated=max(cur.rowcount, 0)))
+
+
+def _set_floating_flags(
+    ctx: JobContext,
+    conn: psycopg.Connection[Any],
+    rows: Sequence[tuple[str, bool | None, date | None, bool]],
+) -> None:
+    """Keep Cbonds's ``floating_rate`` of every emission read in this run on ``ref.bond`` as
+    true / false / NULL (the source says nothing): ``floating_rate``, ``floating_rate_source``
+    ``floating_rate_updated_on`` (Cbonds ``updating_date``) and ``floating_rate_base_present``
+    (Cbonds states a base rate or a margin: they are stored for floaters only otherwise). An
+    emission Cbonds did not return keeps what an earlier run stored."""
+    if not rows:
+        return
+    last: dict[str, tuple[bool | None, date | None, bool | None]] = {}
+    for secid, flag, updated, base in rows:
+        last[secid] = (flag, updated, None if flag is None else base)
+    secids = list(last)
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            UPDATE ref.bond b SET floating_rate = v.f,
+                                  floating_rate_source = CASE WHEN v.f IS NULL THEN NULL
+                                                              ELSE 'cbonds' END,
+                                  floating_rate_updated_on = v.d,
+                                  floating_rate_base_present = v.b,
+                                  run_id = %s, updated_at = now()
+            FROM unnest(%s::text[], %s::boolean[], %s::date[], %s::boolean[]) AS v(secid, f, d, b)
+            WHERE b.secid = v.secid
+              AND (b.floating_rate, b.floating_rate_updated_on, b.floating_rate_base_present)
+                  IS DISTINCT FROM (v.f, v.d, v.b)
+            """,
+            (
+                ctx.run.id,
+                secids,
+                [last[s][0] for s in secids],
+                [last[s][1] for s in secids],
+                [last[s][2] for s in secids],
+            ),
         )
         ctx.run.add_counts(UpsertResult(updated=max(cur.rowcount, 0)))
 

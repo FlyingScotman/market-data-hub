@@ -1,0 +1,23 @@
+{
+  "version": "2026-11-17.1",
+  "description": "Redemption amounts of bonds whose MOEX schedule is rounded (market-data-hub#165). MOEX ISS publishes the principal schedule with value in steps of 0.01 and valueprc in whole percent, so a bond with a low face shows amounts that do not add up to its face, and the yields MOEX derives from them are wrong. There is no source with the exact future amounts: a person confirms them and they enter through this file, changed only by a reviewed pull request. One entry per bond: secid (MOEX SECID), isin (optional, cross-checked against ref.bond), face_unit (currency of the amounts, must equal the bond's face currency), redemptions [{date (YYYY-MM-DD), value (decimal string, per bond, in face_unit)}] - the complete schedule from the first date on, source_note (where the amounts come from and how they were checked), confirmed_by (who confirmed: a role, not a private person), confirmed_on (YYYY-MM-DD). Loaded by job bond_terms_curated into ref.bond_amortization_override. The entry replaces the MOEX rows of the bond from its first date on - in the static snapshot (Redemption source manual_override) and the TDM export - but only while it agrees with MOEX: the same redemption dates from the first date on, amounts within rounding (0.005) of the MOEX amounts (an amount MOEX has not published yet is not compared, the date still must match), the same face currency, a bond whose face is not indexed, and the amounts still to be paid add up EXACTLY to the face MOEX states (no tolerance: a typo of one payment must not pass). If MOEX changes the face, a date or the number of redemptions and the entry no longer agrees, it is not applied (label redemptions_override_stale; the job reports it as partial) until the entry is reviewed: edit or delete it in a pull request. An entry that was applied once stays valid after its dates have passed. Never enter an amount nobody confirmed.",
+  "entries": [
+    {
+      "secid": "XS0114288789",
+      "isin": "XS0114288789",
+      "face_unit": "USD",
+      "redemptions": [
+        {"date": "2027-03-31", "value": "0.005"},
+        {"date": "2027-09-30", "value": "0.005"},
+        {"date": "2028-03-31", "value": "0.005"},
+        {"date": "2028-09-30", "value": "0.005"},
+        {"date": "2029-03-31", "value": "0.005"},
+        {"date": "2029-09-30", "value": "0.005"},
+        {"date": "2030-03-31", "value": "0.005"}
+      ],
+      "source_note": "Seven remaining redemptions of 0.005 USD per bond, remaining face 0.035 USD; consistent with the last four actual face steps of 0.005 (2025-03-31, 2025-09-30, 2026-03-31, 2026-09-30). MOEX ISS shows each as 0.01 (rounded).",
+      "confirmed_by": "owner",
+      "confirmed_on": "2026-11-17"
+    }
+  ]
+}

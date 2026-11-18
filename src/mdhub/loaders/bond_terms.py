@@ -35,6 +35,13 @@ coupons.
 Rows of this file that disappear from it are soft-deleted (``is_deleted``), never removed;
 rows of other writers with ``source = 'curated'`` (the legacy mapping) are not touched.
 Entries whose SECID is unknown are skipped (run ``partial``).
+
+The job also applies the manual redemption amounts of
+``mdhub/data/bond_amortization_overrides.json`` (market-data-hub#165) to
+``ref.bond_amortization_override``
+(:mod:`mdhub.loaders._amortization_override`) and ends ``partial`` when one of them no longer
+agrees with the MOEX schedule (the builders then do not apply it) or an entry has a mistyped
+SECID; an entry for a SECID the database does not hold is only a warning.
 """
 
 from __future__ import annotations
@@ -54,6 +61,7 @@ from psycopg.types.json import Jsonb
 
 from mdhub.core.upsert import upsert_rows
 from mdhub.jobs import JobContext, job
+from mdhub.loaders._amortization_override import apply_overrides, packaged_overrides
 
 __all__ = [
     "TERMS",
@@ -388,6 +396,23 @@ def bond_terms_curated(ctx: JobContext) -> dict[str, Any]:
             "unknown SECIDs in bond_terms_curated.json: "
             + ", ".join(sorted({t.secid for t in skipped}))[:300]
         )
+    amort_version, amort_entries = packaged_overrides()
+    with ctx.connection() as conn:
+        amort = apply_overrides(conn, amort_version, amort_entries, run_id=run_id, today=today)
+    ctx.run.add_counts(amort.counts)
+    if amort.skipped_unknown_secid:
+        # not partial: a bond the database does not hold (development seed, fresh install, a
+        # bond MOEX dropped) has nothing to correct; a typo is caught below by the ISIN
+        ctx.logger.warning(
+            "bond_amortization_overrides.json: SECIDs not in ref.bond, skipped: %s",
+            ", ".join(amort.skipped_unknown_secid),
+        )
+    for secid, other in amort.secid_typo.items():
+        ctx.run.mark_partial(
+            f"bond_amortization_overrides.json: {secid} is unknown but its ISIN belongs to {other}"
+        )
+    for secid, why in amort.stale.items():
+        ctx.run.mark_partial(f"amortization override of {secid} not applied: {why}"[:300])
     return {
         "version": version,
         "entries": len(terms),
@@ -396,4 +421,13 @@ def bond_terms_curated(ctx: JobContext) -> dict[str, Any]:
         "formulas": len(formulas),
         "offers": len(offers),
         "soft_deleted": deleted,
+        "amortization_overrides": {
+            "version": amort_version,
+            "entries": len(amort_entries),
+            "applied": amort.applied,
+            "skipped_unknown_secid": amort.skipped_unknown_secid,
+            "secid_typo": amort.secid_typo,
+            "stale": sorted(amort.stale),
+            "soft_deleted": amort.soft_deleted,
+        },
     }

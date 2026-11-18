@@ -55,7 +55,8 @@
         "status",
         "calendar",
         "boards",
-        "labels"
+        "labels",
+        "source_analytics_unreliable_reasons"
       ],
       "properties": {
         "secid": {
@@ -454,12 +455,23 @@
           }
         },
         "labels": {
-          "description": "Coverage labels, e.g. coupon_type_unknown, perpetual, perpetual_no_call_date, day_count_not_published, floater_formula_missing, floater_formula_partial, coupon_schedule_empty, no_issuer, structured, matured",
+          "description": "Coverage labels, e.g. coupon_type_unknown, perpetual, perpetual_no_call_date, day_count_not_published, floater_formula_missing, floater_formula_partial, coupon_schedule_empty, no_issuer, structured, matured. 1.10 adds redemptions_rounded_by_source, redemptions_manual_override, redemptions_override_stale",
           "allOf": [
             {
               "$ref": "common.schema.json#/$defs/labels"
             }
           ]
+        },
+        "source_analytics_unreliable_reasons": {
+          "description": "1.10 (market-data-hub#165): why the MOEX analytics of this bond (yields, durations, spreads in market `source_analytics`) are unreliable: MOEX derived them from its published redemption schedule, and that schedule is inconsistent with the face - `future_redemptions_differ_from_face` and / or `redemptions_rounded_by_source`. Judged on the MOEX rows as published: a manual override in `redemptions` does not make MOEX's analytics reliable. Empty = no known reason. The values are published unchanged",
+          "type": "array",
+          "items": {
+            "enum": [
+              "future_redemptions_differ_from_face",
+              "redemptions_rounded_by_source"
+            ]
+          },
+          "uniqueItems": true
         }
       }
     },
@@ -554,7 +566,9 @@
         "value_rub_per_bond",
         "face_value",
         "initial_face_value",
-        "face_unit"
+        "face_unit",
+        "source",
+        "override"
       ],
       "properties": {
         "secid": {
@@ -598,6 +612,45 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "source": {
+          "description": "1.10: moex_iss = the row as MOEX publishes it; manual_override = an amount confirmed by a person and applied by the hub (mdhub/data/bond_amortization_overrides.json) in place of the MOEX rows of the bond from the override's first date on; value_pct_of_initial and value_rub_per_bond are null on such rows",
+          "enum": [
+            "moex_iss",
+            "manual_override"
+          ]
+        },
+        "override": {
+          "description": "1.10: evidence of a manual_override row (null for moex_iss): where the amount comes from, who confirmed it and when, version of the overrides file",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "note",
+                "confirmed_by",
+                "confirmed_on",
+                "file_version"
+              ],
+              "properties": {
+                "note": {
+                  "type": "string"
+                },
+                "confirmed_by": {
+                  "type": "string"
+                },
+                "confirmed_on": {
+                  "$ref": "common.schema.json#/$defs/date"
+                },
+                "file_version": {
+                  "type": "string"
+                }
+              }
+            }
           ]
         }
       }
